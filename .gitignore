@@ -1,0 +1,16 @@
+node_modules
+.pnpm-store
+dist
+.next
+.turbo
+coverage
+playwright-report
+test-results
+.env
+.env.local
+.env.*.local
+*.log
+packages/db/src/generated
+.DS_Store
+.auth
+playwright/.auth

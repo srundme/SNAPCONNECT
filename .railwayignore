@@ -1,0 +1,15 @@
+node_modules
+.pnpm-store
+.next
+.git
+.env
+.env.*
+!.env.example
+coverage
+playwright-report
+test-results
+*.log
+.DS_Store
+.auth
+dist
+packages/db/src/generated

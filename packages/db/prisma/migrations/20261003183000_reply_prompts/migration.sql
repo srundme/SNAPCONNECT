@@ -1,0 +1,1 @@
+ALTER TABLE "Workspace" ADD COLUMN "replyPrompts" JSONB NOT NULL DEFAULT '{}';

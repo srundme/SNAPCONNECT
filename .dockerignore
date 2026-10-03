@@ -1,0 +1,15 @@
+node_modules
+.pnpm-store
+.next
+.git
+.env
+.env.*
+!.env.example
+docs/evaluation-result.json
+coverage
+playwright-report
+test-results
+*.log
+.DS_Store
+.auth
+terminals

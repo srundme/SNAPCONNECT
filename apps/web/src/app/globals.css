@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --color-paper: #f6f7f9;
+  --color-ink: #17212b;
+  --color-muted: #52606d;
+  --color-line: #e4e8ee;
+  --color-accent: #0f766e;
+  --color-accent-ink: #134e4a;
+  --color-ig: #9d174d;
+  --color-fb: #1d4ed8;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.55;
+  text-rendering: optimizeLegibility;
+}
+
+@layer base {
+  a { color: inherit; text-decoration: none; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+
+  input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    border: 1px solid var(--color-line);
+    border-radius: 8px;
+    background: #fff;
+    padding: 0.5rem 0.7rem;
+    line-height: 1.4;
+  }
+
+  form label :is(input, select, textarea) {
+    width: 100%;
+  }
+
+  textarea { min-height: 5.5rem; resize: vertical; }
+
+  input::placeholder,
+  textarea::placeholder { color: #8b98a5; }
+
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  button:focus-visible,
+  a:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  button {
+    border: 1px solid var(--color-line);
+    border-radius: 8px;
+    background: #fff;
+    padding: 0.45rem 0.75rem;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.3;
+    cursor: pointer;
+  }
+
+  button:hover { background: var(--color-paper); }
+
+  button[class*="text-white"] {
+    border-color: transparent;
+    background: var(--color-accent);
+  }
+
+  button[class*="text-white"]:hover { background: #115e59; }
+
+  form label {
+    display: grid;
+    gap: 0.35rem;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  form label input,
+  form label textarea,
+  form label select { font-weight: 400; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    font-size: 14px;
+  }
+
+  th {
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--color-line);
+    color: var(--color-muted);
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+  }
+
+  td {
+    padding: 0.8rem 0.85rem;
+    border-bottom: 1px solid var(--color-line);
+    vertical-align: middle;
+  }
+
+  tbody tr:hover { background: #fbfcfd; }
+
+  table a { font-weight: 500; }
+  table a:hover { color: var(--color-accent-ink); }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "snapsocial",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @snapsocial/web dev",
+    "dev:worker": "pnpm --filter @snapsocial/worker dev",
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "lint": "eslint .",
+    "test": "pnpm --filter @snapsocial/domain test && pnpm --filter @snapsocial/integrations test && pnpm --filter @snapsocial/db test",
+    "test:unit": "pnpm --filter @snapsocial/domain test && pnpm --filter @snapsocial/integrations test",
+    "test:integration": "pnpm --filter @snapsocial/db test",
+    "test:e2e": "pnpm --filter @snapsocial/web exec playwright test",
+    "db:generate": "pnpm --filter @snapsocial/db generate",
+    "db:migrate": "pnpm --filter @snapsocial/db migrate",
+    "db:seed": "pnpm --filter @snapsocial/db seed",
+    "bootstrap:owner": "pnpm --filter @snapsocial/web bootstrap",
+    "evaluate:llm": "pnpm --filter @snapsocial/worker evaluate",
+    "demo:simulate": "pnpm --filter @snapsocial/db simulate"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "eslint": "9.39.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.46.2"
+  }
+}

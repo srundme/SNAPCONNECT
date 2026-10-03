@@ -1,0 +1,632 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PlatformRole {
+  SUPER_ADMIN
+  STAFF
+}
+
+enum WorkspaceRole {
+  ADMIN
+  AGENT
+  VIEWER
+}
+
+enum WorkspaceMode {
+  SIMULATION
+  INTEGRATION
+}
+
+enum Channel {
+  INSTAGRAM
+  FACEBOOK
+}
+
+enum ConnectionMode {
+  SIMULATION
+  INTEGRATION
+}
+
+enum IdentityType {
+  COMMENT_AUTHOR
+  MESSAGING_PARTICIPANT
+}
+
+enum Qualification {
+  NEW
+  IN_PROGRESS
+  CONTACTABLE
+  QUALIFIED
+  DISQUALIFIED
+}
+
+enum SalesStage {
+  UNASSIGNED
+  ASSIGNED
+  CONTACTED
+  MEETING_BOOKED
+  WON
+  LOST
+}
+
+enum ConversationOwner {
+  AI
+  HUMAN
+  PAUSED
+}
+
+enum CrmState {
+  NOT_READY
+  PENDING
+  SYNCED
+  RETRYING
+  NEEDS_ATTENTION
+}
+
+enum OutboundState {
+  RESERVED
+  SENDING
+  ACCEPTED
+  RETRYABLE_FAILURE
+  PERMANENT_FAILURE
+  UNKNOWN
+}
+
+enum RuleCoverage {
+  ALL_POSTS
+  SELECTED_POSTS
+}
+
+enum CommentFilter {
+  KEYWORDS
+  ALL_ELIGIBLE_COMMENTS
+}
+
+enum MessageAuthor {
+  PROSPECT
+  AI
+  STAFF
+  SYSTEM
+}
+
+enum OutboxStatus {
+  PENDING
+  DISPATCHED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model User {
+  id            String       @id
+  name          String
+  email         String
+  emailVerified Boolean      @default(false)
+  image         String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  platformRole  PlatformRole @default(STAFF)
+  suspendedAt   DateTime?
+  sessions      Session[]
+  accounts      Account[]
+  memberships   Membership[]
+  invitations   Invitation[] @relation("InvitedBy")
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model PlatformSetting {
+  id                String  @id @default("platform")
+  automationPaused  Boolean @default(false)
+  productName       String  @default("SnapServe Social")
+}
+
+model Workspace {
+  id                 String        @id @default(uuid())
+  name               String
+  slug               String        @unique
+  mode               WorkspaceMode
+  status             String        @default("ACTIVE")
+  timezone           String        @default("Asia/Kolkata")
+  phoneRegion        String        @default("IN")
+  automationPaused   Boolean       @default(false)
+  retentionDays      Int           @default(365)
+  serviceAreas       String[]      @default([])
+  minimumBudgetMinor Int?
+  brandName          String        @default("Demo Interiors")
+  services           String        @default("Residential and commercial interiors")
+  tone               String        @default("Clear, brief and factual")
+  faqs               Json          @default("[]")
+  replyPrompts       Json          @default("{}")
+  createdAt          DateTime      @default(now())
+  memberships        Membership[]
+  connections        ChannelConnection[]
+  zoho               ZohoConnection?
+  leads              Lead[]
+  conversations      Conversation[]
+  rules              TriggerRule[]
+}
+
+model Membership {
+  id          String        @id @default(uuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole
+  createdAt   DateTime      @default(now())
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model Invitation {
+  id            String         @id @default(uuid())
+  email         String
+  workspaceId   String?
+  workspaceRole WorkspaceRole?
+  tokenHash     String         @unique
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdById   String
+  createdAt     DateTime       @default(now())
+  createdBy     User           @relation("InvitedBy", fields: [createdById], references: [id])
+
+  @@index([email])
+}
+
+model MetaAppConfig {
+  id                     String   @id @default(uuid())
+  scope                  String
+  appId                  String
+  secretCiphertext       String
+  secretKeyId            String
+  verifyTokenCiphertext  String
+  oauthRedirectUrl       String
+  webhookUrl             String
+  connections            ChannelConnection[]
+
+  @@unique([scope, appId])
+}
+
+model ChannelConnection {
+  id                    String         @id @default(uuid())
+  workspaceId           String
+  channel               Channel
+  mode                  ConnectionMode
+  externalAccountId     String
+  displayName           String
+  username              String?
+  appConfigId           String?
+  credentialCiphertext  String?
+  credentialKeyId       String?
+  scopes                String[]       @default([])
+  pageTasks             String[]       @default([])
+  subscribedFields      String[]       @default([])
+  automationPaused      Boolean        @default(true)
+  facebookReelsVerified Boolean        @default(false)
+  credentialCheckedAt   DateTime?
+  webhookVerifiedAt     DateTime?
+  accountSubscribedAt   DateTime?
+  lastRealCommentAt     DateTime?
+  lastRealMessageAt     DateTime?
+  lastSimulatedEventAt  DateTime?
+  revokedAt             DateTime?
+  workspace             Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  appConfig             MetaAppConfig? @relation(fields: [appConfigId], references: [id])
+  media                 Media[]
+  rules                 TriggerRule[]
+  contacts              Contact[]
+
+  @@unique([channel, mode, externalAccountId])
+  @@index([workspaceId, channel])
+}
+
+model ZohoConnection {
+  id                   String    @id @default(uuid())
+  workspaceId          String    @unique
+  mode                 ConnectionMode
+  accountsUrl          String?
+  apiDomain            String?
+  credentialCiphertext String?
+  credentialKeyId      String?
+  refreshCiphertext    String?
+  expiresAt            DateTime?
+  externalKeyField     String?
+  phoneField           String    @default("Phone")
+  instagramSource      String    @default("Instagram")
+  facebookSource       String    @default("Facebook")
+  verifiedAt           DateTime?
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model Media {
+  id                 String            @id @default(uuid())
+  workspaceId        String
+  connectionId       String
+  channel            Channel
+  externalId         String
+  contentType        String
+  caption            String?
+  supportStatus      String            @default("SUPPORTED")
+  unsupportedReason  String?
+  excluded           Boolean           @default(false)
+  connection         ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, externalId])
+}
+
+model TriggerRule {
+  id               String            @id @default(uuid())
+  workspaceId      String
+  connectionId     String
+  name             String
+  priority         Int
+  coverage         RuleCoverage
+  commentFilter    CommentFilter
+  keywords         String[]          @default([])
+  exclusions       String[]          @default([])
+  selectedMediaIds String[]          @default([])
+  openingTemplate  String
+  cooldownHours    Int               @default(24)
+  active           Boolean           @default(false)
+  activatedAt      DateTime?
+  version          Int               @default(1)
+  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connection       ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+}
+
+model Contact {
+  id              String            @id @default(uuid())
+  workspaceId     String
+  connectionId    String
+  channel         Channel
+  displayName     String?
+  username        String?
+  chosenName      String?
+  optedOutAt      DateTime?
+  lastOutboundAt  DateTime?
+  createdAt       DateTime          @default(now())
+  connection      ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  identities      ContactIdentity[]
+  conversations   Conversation[]
+  leads           Lead[]
+
+  @@index([workspaceId, channel])
+}
+
+model ContactIdentity {
+  id           String       @id @default(uuid())
+  workspaceId  String
+  connectionId String
+  contactId    String
+  channel      Channel
+  identityType IdentityType
+  externalId   String
+  evidence     String
+  contact      Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, channel, connectionId, identityType, externalId])
+  @@index([contactId])
+}
+
+model Conversation {
+  id                String            @id @default(uuid())
+  workspaceId       String
+  connectionId      String
+  contactId         String
+  channel           Channel
+  owner             ConversationOwner @default(AI)
+  revision          Int               @default(0)
+  lastUserMessageAt DateTime?
+  sourceMediaId     String?
+  sourceCommentId   String?
+  sandbox           Boolean           @default(false)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  workspace         Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact           Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  messages          Message[]
+  notes             InternalNote[]
+
+  @@index([workspaceId, updatedAt])
+}
+
+model Message {
+  id                String         @id @default(uuid())
+  workspaceId       String
+  connectionId      String
+  conversationId    String
+  author            MessageAuthor
+  body              String
+  externalMessageId String?
+  createdAt         DateTime       @default(now())
+  conversation      Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, externalMessageId])
+  @@index([conversationId, createdAt])
+}
+
+model Lead {
+  id                  String        @id @default(uuid())
+  workspaceId         String
+  contactId           String
+  channel             Channel
+  connectionId        String
+  activeContactKey    String?       @unique
+  qualification       Qualification @default(NEW)
+  salesStage          SalesStage    @default(UNASSIGNED)
+  crmState            CrmState      @default(NOT_READY)
+  assignedUserId      String?
+  city                String?
+  projectType         String?
+  propertyType        String?
+  workType            String?
+  requirement         String?
+  budgetRaw           String?
+  budgetAmountMinor   Int?
+  budgetMinMinor      Int?
+  budgetMaxMinor      Int?
+  budgetCurrency      String?
+  budgetDeclined      Boolean       @default(false)
+  timeframeRaw        String?
+  timeframeDeclined   Boolean       @default(false)
+  phoneRaw            String?
+  phoneE164           String?
+  phoneDeclined       Boolean       @default(false)
+  whatsappRaw         String?
+  whatsappE164        String?
+  whatsappDeclined    Boolean       @default(false)
+  sameNumberConfirmed Boolean       @default(false)
+  preferredChannel    String?
+  phonePermission     Boolean       @default(false)
+  whatsappPermission  Boolean       @default(false)
+  email               String?
+  sourceType          String
+  sourceMediaId       String?
+  sourceCommentId     String?
+  qualificationReasons String[]     @default([])
+  handoffReason       String?
+  revision            Int           @default(1)
+  archivedAt          DateTime?
+  contactableAt       DateTime?
+  qualifiedAt         DateTime?
+  testRecord          Boolean       @default(false)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  workspace           Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact             Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  evidence            LeadFieldEvidence[]
+  consents            ConsentRecord[]
+  crm                 CrmMapping?
+
+  @@index([workspaceId, qualification])
+}
+
+model LeadFieldEvidence {
+  id              String   @id @default(uuid())
+  leadId          String
+  field           String
+  value           String
+  sourceMessageId String?
+  evidence        String
+  createdAt       DateTime @default(now())
+  lead            Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+}
+
+model ConsentRecord {
+  id              String   @id @default(uuid())
+  leadId          String
+  channel         String
+  sourceMessageId String?
+  disclosure      String
+  createdAt       DateTime @default(now())
+  lead            Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+}
+
+model InternalNote {
+  id             String       @id @default(uuid())
+  conversationId String
+  authorId       String
+  body           String
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model WebhookEvent {
+  id                String    @id @default(uuid())
+  channel           Channel
+  mode              ConnectionMode
+  connectionId      String?
+  workspaceId       String?
+  dedupKey          String    @unique
+  eventType         String
+  externalAccountId String
+  payload           Json
+  status            String    @default("PENDING")
+  reason            String?
+  receivedAt        DateTime  @default(now())
+}
+
+model OutboxJob {
+  id          String       @id @default(uuid())
+  workspaceId String?
+  type        String
+  status      OutboxStatus @default(PENDING)
+  payload     Json
+  availableAt DateTime     @default(now())
+  attempts    Int          @default(0)
+  lastError   String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([status, availableAt])
+}
+
+model OutboundAttempt {
+  id                  String        @id @default(uuid())
+  workspaceId         String
+  connectionId        String
+  channel             Channel
+  commentExternalId   String
+  contactId           String
+  conversationId      String?
+  status              OutboundState @default(RESERVED)
+  providerMessageId   String?
+  providerRecipientId String?
+  simulated           Boolean       @default(false)
+  lastError           String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  @@unique([connectionId, commentExternalId])
+}
+
+model CommentDecision {
+  id                String   @id @default(uuid())
+  workspaceId       String
+  connectionId      String
+  commentExternalId String
+  outcome           String
+  reason            String
+  ruleId            String?
+  createdAt         DateTime @default(now())
+
+  @@index([connectionId, commentExternalId])
+}
+
+model CrmMapping {
+  id               String   @id @default(uuid())
+  leadId           String   @unique
+  crmId            String?
+  syncedRevision   Int      @default(0)
+  simulated        Boolean  @default(false)
+  lead             Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+}
+
+model CrmSyncAttempt {
+  id         String   @id @default(uuid())
+  leadId     String
+  revision   Int
+  status     String
+  error      String?
+  simulated  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([leadId, createdAt])
+}
+
+model AiConfigVersion {
+  id          String   @id @default(uuid())
+  workspaceId String
+  version     Int
+  active      Boolean  @default(false)
+  profile     Json
+  createdAt   DateTime @default(now())
+
+  @@unique([workspaceId, version])
+}
+
+model AiRun {
+  id             String   @id @default(uuid())
+  workspaceId    String
+  conversationId String
+  model          String
+  simulated      Boolean
+  latencyMs      Int
+  valid          Boolean
+  diagnostic     String?
+  createdAt      DateTime @default(now())
+}
+
+model AuditEvent {
+  id          String   @id @default(uuid())
+  actorId     String?
+  workspaceId String?
+  action      String
+  entityType  String
+  entityId    String?
+  summary     String
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+}
+
+model InferenceLease {
+  id        String    @id
+  holder    String?
+  expiresAt DateTime?
+}
+
+model WorkerHeartbeat {
+  id     String   @id
+  seenAt DateTime
+  detail String?
+}
+
+model OauthState {
+  id          String   @id @default(uuid())
+  stateHash   String   @unique
+  workspaceId String
+  userId      String
+  provider    String
+  expiresAt   DateTime
+  usedAt      DateTime?
+}

@@ -1,0 +1,32 @@
+{
+  "name": "@snapsocial/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "prisma generate",
+    "migrate": "prisma migrate deploy",
+    "seed": "tsx src/scripts/seed.ts",
+    "simulate": "tsx src/scripts/simulate.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "@snapsocial/domain": "workspace:*",
+    "@snapsocial/integrations": "workspace:*",
+    "pg": "8.16.3",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "prisma": "7.10.0",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3"
+  }
+}

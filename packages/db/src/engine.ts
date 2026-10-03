@@ -1,0 +1,1158 @@
+import {
+  buildZohoRecord,
+  demoQualificationSettings,
+  deterministicIntent,
+  duplicateCheckFields,
+  evaluateQualification,
+  nextReplyPrompt,
+  resolveReplyPrompts,
+  openingEligibility,
+  pausesBlock,
+  projectTypeFromText,
+  replyEligibility,
+  routingDecision,
+  selectRule,
+  surfaceSupport,
+  validateAiOutput,
+  dedupKey,
+  type Channel,
+  type ConnectionMode,
+  type LeadSnapshot,
+  type ReplyPromptField,
+  type NormalizedEvent,
+} from "@snapsocial/domain";
+import { fixtureLlm, simulationAdapter, simulationZoho, type LlmProvider, type SendResult, type ZohoAdapter } from "@snapsocial/integrations";
+import type { Db } from "./client";
+
+export type Runtime = {
+  now: () => Date;
+  llm: LlmProvider;
+  zoho: ZohoAdapter;
+  send: (input: { channel: Channel; purpose: "opening" | "text"; commentId?: string; recipientId?: string; text: string }) => Promise<SendResult>;
+  phoneRegion: string;
+};
+
+export function simulationRuntime(overrides: Partial<Runtime> = {}): Runtime {
+  return {
+    now: () => new Date(),
+    llm: fixtureLlm(),
+    zoho: simulationZoho(),
+    send: async (input) => {
+      const adapter = simulationAdapter(input.channel);
+      if (input.purpose === "opening") {
+        return adapter.sendPrivateReply({ accountId: "sim", commentId: input.commentId ?? "", text: input.text, token: "sim" });
+      }
+      return adapter.sendText({ accountId: "sim", recipientId: input.recipientId ?? "", text: input.text, token: "sim" });
+    },
+    phoneRegion: "IN",
+    ...overrides,
+  };
+}
+
+type JobRecord = {
+  id: string;
+  type: string;
+  payload: unknown;
+  attempts: number;
+};
+
+export async function ingestEvents(
+  db: Db,
+  input: { channel: Channel; mode: ConnectionMode; events: NormalizedEvent[]; receivedAt: Date },
+): Promise<{ stored: number; rejected: number; duplicate: number }> {
+  let stored = 0;
+  let rejected = 0;
+  let duplicate = 0;
+  for (const event of input.events) {
+    if (event.kind === "ignore") {
+      rejected += 1;
+      continue;
+    }
+    const connections = await db.channelConnection.findMany({
+      where: {
+        channel: input.channel,
+        mode: input.mode,
+        externalAccountId: event.externalAccountId,
+        revokedAt: null,
+      },
+      select: { id: true, workspaceId: true },
+    });
+    const route = routingDecision(connections.map((item) => item.id));
+    if ("reject" in route) {
+      await db.webhookEvent.create({
+        data: {
+          channel: input.channel,
+          mode: input.mode,
+          dedupKey: `${input.mode}:${dedupKey(input.channel, event)}:rejected:${input.receivedAt.toISOString()}`,
+          eventType: event.kind,
+          externalAccountId: event.externalAccountId,
+          payload: sanitize(event),
+          status: "REJECTED",
+          reason: route.reject,
+          receivedAt: input.receivedAt,
+        },
+      });
+      rejected += 1;
+      continue;
+    }
+    const connection = connections.find((item) => item.id === route.connectionId);
+    if (!connection) continue;
+    const key = `${connection.id}:${dedupKey(input.channel, event)}`;
+    try {
+      await db.$transaction(async (tx) => {
+        const webhook = await tx.webhookEvent.create({
+          data: {
+            channel: input.channel,
+            mode: input.mode,
+            connectionId: connection.id,
+            workspaceId: connection.workspaceId,
+            dedupKey: key,
+            eventType: event.kind === "comment" ? `comment.${event.action}` : "message",
+            externalAccountId: event.externalAccountId,
+            payload: sanitize(event),
+            receivedAt: input.receivedAt,
+          },
+        });
+        await tx.outboxJob.create({
+          data: {
+            workspaceId: connection.workspaceId,
+            type: "PROCESS_EVENT",
+            payload: { webhookEventId: webhook.id, contactId: null },
+          },
+        });
+      });
+      stored += 1;
+    } catch (error) {
+      if (isUnique(error)) duplicate += 1;
+      else throw error;
+    }
+  }
+  return { stored, rejected, duplicate };
+}
+
+export async function processAvailableJobs(db: Db, runtime: Runtime, limit = 25): Promise<number> {
+  const jobs = await db.outboxJob.findMany({
+    where: { status: { in: ["PENDING", "DISPATCHED"] }, availableAt: { lte: runtime.now() } },
+    orderBy: { createdAt: "asc" },
+    take: limit,
+  });
+  let processed = 0;
+  for (const job of jobs) {
+    const claimed = await db.outboxJob.updateMany({
+      where: { id: job.id, status: { in: ["PENDING", "DISPATCHED"] } },
+      data: { status: "PROCESSING" },
+    });
+    if (claimed.count !== 1) continue;
+    let outcome: "done" | "requeue" | "failed" = "failed";
+    try {
+      outcome = await processJob(db, job, runtime);
+    } catch (error) {
+      outcome = "failed";
+      await db.outboxJob.update({
+        where: { id: job.id },
+        data: { status: "FAILED", lastError: error instanceof Error ? error.message.slice(0, 500) : "Processing failed" },
+      });
+      continue;
+    }
+    if (outcome === "requeue") continue;
+    await db.outboxJob.update({
+      where: { id: job.id },
+      data: { status: outcome === "failed" ? "FAILED" : "COMPLETED", lastError: outcome === "failed" ? "Processing failed" : null },
+    });
+    processed += 1;
+  }
+  return processed;
+}
+
+async function processJob(db: Db, job: JobRecord, runtime: Runtime): Promise<"done" | "requeue" | "failed"> {
+  const payload = asRecord(job.payload);
+  try {
+    if (job.type === "PROCESS_EVENT") return processWebhook(db, String(payload.webhookEventId), runtime);
+    if (job.type === "SEND_OPENING") return sendOpening(db, String(payload.outboundAttemptId), runtime);
+    if (job.type === "INFERENCE") return runInference(db, job, runtime);
+    if (job.type === "CRM_SYNC") return syncLead(db, String(payload.leadId), runtime);
+    return "done";
+  } catch {
+    return "failed";
+  }
+}
+
+async function processWebhook(db: Db, webhookEventId: string, runtime: Runtime): Promise<"done"> {
+  const event = await db.webhookEvent.findUniqueOrThrow({ where: { id: webhookEventId } });
+  const body = asRecord(event.payload);
+  if (event.eventType.startsWith("comment.")) {
+    await handleComment(db, event.connectionId ?? "", body, event.eventType.endsWith("add"), runtime);
+  } else if (event.eventType === "message") {
+    await handleMessage(db, event.connectionId ?? "", body, runtime);
+  }
+  await db.webhookEvent.update({ where: { id: event.id }, data: { status: "PROCESSED" } });
+  return "done";
+}
+
+async function handleComment(db: Db, connectionId: string, body: Record<string, unknown>, isAdd: boolean, runtime: Runtime) {
+  const connection = await db.channelConnection.findUniqueOrThrow({
+    where: { id: connectionId },
+    include: { workspace: true, rules: true, media: true },
+  });
+  const commentId = String(body.commentId ?? "");
+  if (!isAdd || body.action !== "add") {
+    await db.commentDecision.create({
+      data: {
+        workspaceId: connection.workspaceId,
+        connectionId,
+        commentExternalId: commentId,
+        outcome: "SKIPPED",
+        reason: "Edits and deletions do not open a conversation.",
+      },
+    });
+    return;
+  }
+  if (String(body.authorId ?? "") === connection.externalAccountId) {
+    await skip(db, connection, commentId, "Self-comment.");
+    return;
+  }
+  const platform = await db.platformSetting.findUnique({ where: { id: "platform" } });
+  const surface = surfaceSupport({
+    channel: connection.channel,
+    contentType: String(body.contentType ?? "UNKNOWN"),
+    facebookReelsVerified: connection.facebookReelsVerified,
+    isAd: Boolean(body.isAd),
+    isLive: Boolean(body.isLive),
+    isGroup: Boolean(body.isGroup),
+  });
+  const excluded = new Set(connection.media.filter((item) => item.excluded).map((item) => item.externalId));
+  const decision = selectRule({
+    rules: connection.rules.map((rule) => ({
+      id: rule.id,
+      priority: rule.priority,
+      coverage: rule.coverage,
+      commentFilter: rule.commentFilter,
+      keywords: rule.keywords,
+      exclusions: rule.exclusions,
+      selectedMediaIds: rule.selectedMediaIds,
+      excludedMediaIds: [...excluded],
+      active: rule.active,
+      activatedAt: rule.activatedAt,
+    })),
+    text: String(body.text ?? ""),
+    mediaId: body.mediaId ? String(body.mediaId) : null,
+    commentAt: new Date(String(body.commentedAt)),
+  });
+  const contact = await ensureCommentContact(db, connection, body);
+  if (contact.optedOutAt) return skip(db, connection, commentId, "Contact is opted out.");
+  const winner = decision.winner;
+  const cooldownMs = (winner?.id ? connection.rules.find((rule) => rule.id === winner.id)?.cooldownHours ?? 24 : 24) * 60 * 60 * 1000;
+  if (contact.lastOutboundAt && runtime.now().getTime() - contact.lastOutboundAt.getTime() < cooldownMs) {
+    return skip(db, connection, commentId, "Contact is inside the cooldown.");
+  }
+  const paused = pausesBlock({
+    platform: Boolean(platform?.automationPaused),
+    workspace: connection.workspace.automationPaused || connection.workspace.status !== "ACTIVE",
+    connection: connection.automationPaused || Boolean(connection.revokedAt),
+    rule: !winner,
+    conversation: false,
+  });
+  const eligibility = openingEligibility({
+    commentAt: new Date(String(body.commentedAt)),
+    now: runtime.now(),
+    alreadyReserved: false,
+    paused,
+    optedOut: Boolean(contact.optedOutAt),
+    connectionReady: !connection.revokedAt,
+    supportedSurface: surface.supported && Boolean(winner),
+    unsupportedReason: surface.reason ?? decision.reason,
+  });
+  if (!eligibility.allowed || !winner) {
+    return skip(db, connection, commentId, eligibility.allowed ? decision.reason : eligibility.reason);
+  }
+  const rule = connection.rules.find((item) => item.id === winner.id);
+  try {
+    await db.$transaction(async (tx) => {
+      const conversation = (await tx.conversation.findFirst({ where: { contactId: contact.id, connectionId } })) ??
+        (await tx.conversation.create({
+          data: {
+            workspaceId: connection.workspaceId,
+            connectionId,
+            contactId: contact.id,
+            channel: connection.channel,
+            sourceMediaId: body.mediaId ? String(body.mediaId) : null,
+            sourceCommentId: commentId,
+          },
+        }));
+      const existingLead = await tx.lead.findFirst({ where: { contactId: contact.id, archivedAt: null } });
+      if (!existingLead) {
+        await tx.lead.create({
+          data: {
+            workspaceId: connection.workspaceId,
+            contactId: contact.id,
+            channel: connection.channel,
+            connectionId,
+            activeContactKey: contact.id,
+            sourceType: "COMMENT",
+            sourceMediaId: body.mediaId ? String(body.mediaId) : null,
+            sourceCommentId: commentId,
+            testRecord: connection.mode === "SIMULATION",
+          },
+        });
+      }
+      const attempt = await tx.outboundAttempt.create({
+        data: {
+          workspaceId: connection.workspaceId,
+          connectionId,
+          channel: connection.channel,
+          commentExternalId: commentId,
+          contactId: contact.id,
+          conversationId: conversation.id,
+          simulated: connection.mode === "SIMULATION",
+        },
+      });
+      await tx.message.create({
+        data: {
+          workspaceId: connection.workspaceId,
+          connectionId,
+          conversationId: conversation.id,
+          author: "SYSTEM",
+          body: "Opening reserved.",
+        },
+      });
+      await tx.commentDecision.create({
+        data: {
+          workspaceId: connection.workspaceId,
+          connectionId,
+          commentExternalId: commentId,
+          outcome: "OPENING_RESERVED",
+          reason: decision.reason,
+          ruleId: rule?.id,
+        },
+      });
+      await tx.outboxJob.create({
+        data: {
+          workspaceId: connection.workspaceId,
+          type: "SEND_OPENING",
+          payload: { outboundAttemptId: attempt.id, contactId: contact.id, text: rule?.openingTemplate ?? "" },
+        },
+      });
+      });
+  } catch (error) {
+    if (isUnique(error)) return skip(db, connection, commentId, "An opening is already reserved for this comment.");
+    throw error;
+  }
+  await touchConnection(db, connection.id, connection.mode, "comment", runtime.now());
+}
+
+async function handleMessage(db: Db, connectionId: string, body: Record<string, unknown>, runtime: Runtime) {
+  if (body.isEcho === true) return;
+  const connection = await db.channelConnection.findUniqueOrThrow({ where: { id: connectionId }, include: { workspace: true } });
+  const senderId = String(body.senderId ?? "");
+  const sentAt = new Date(String(body.sentAt ?? runtime.now().toISOString()));
+  const referralCommentId = body.referralCommentId ? String(body.referralCommentId) : null;
+  const participant = await db.contactIdentity.findUnique({
+    where: {
+      workspaceId_channel_connectionId_identityType_externalId: {
+        workspaceId: connection.workspaceId,
+        channel: connection.channel,
+        connectionId,
+        identityType: "MESSAGING_PARTICIPANT",
+        externalId: senderId,
+      },
+    },
+  });
+  let contactId = participant?.contactId ?? null;
+  if (referralCommentId) {
+    const attempt = await db.outboundAttempt.findUnique({
+      where: { connectionId_commentExternalId: { connectionId, commentExternalId: referralCommentId } },
+    });
+    if (attempt && !participant) {
+      const linked = await db.contact.findUnique({ where: { id: attempt.contactId } });
+      if (linked) {
+        contactId = linked.id;
+        try {
+          await db.contactIdentity.create({
+            data: {
+              workspaceId: connection.workspaceId,
+              connectionId,
+              contactId: linked.id,
+              channel: connection.channel,
+              identityType: "MESSAGING_PARTICIPANT",
+              externalId: senderId,
+              evidence: "PROVIDER_REFERRAL",
+            },
+          });
+        } catch (error) {
+          if (!isUnique(error)) throw error;
+        }
+      }
+    } else if (attempt && participant && participant.contactId !== attempt.contactId) {
+      await db.auditEvent.create({
+        data: {
+          workspaceId: connection.workspaceId,
+          action: "identity.conflict",
+          entityType: "Contact",
+          entityId: participant.contactId,
+          summary: "Referral identified another contact. Records were not merged.",
+        },
+      });
+    }
+  }
+  if (!contactId) {
+    const created = await db.contact.create({
+      data: {
+        workspaceId: connection.workspaceId,
+        connectionId,
+        channel: connection.channel,
+        identities: {
+          create: {
+            workspaceId: connection.workspaceId,
+            connectionId,
+            channel: connection.channel,
+            identityType: "MESSAGING_PARTICIPANT",
+            externalId: senderId,
+            evidence: "INBOUND_MESSAGE",
+          },
+        },
+      },
+    });
+    contactId = created.id;
+    await db.lead.create({
+      data: {
+        workspaceId: connection.workspaceId,
+        contactId,
+        channel: connection.channel,
+        connectionId,
+        activeContactKey: contactId,
+        sourceType: "DIRECT_MESSAGE",
+        testRecord: connection.mode === "SIMULATION",
+      },
+    });
+  }
+  const existingConversation = await db.conversation.findFirst({
+    where: { contactId, connectionId },
+    orderBy: { createdAt: "desc" },
+  });
+  const conversation = existingConversation ?? (await db.conversation.create({
+    data: { workspaceId: connection.workspaceId, connectionId, contactId, channel: connection.channel },
+  }));
+  const nextInbound = !conversation.lastUserMessageAt || sentAt > conversation.lastUserMessageAt ? sentAt : conversation.lastUserMessageAt;
+  try {
+    await db.message.create({
+      data: {
+        workspaceId: connection.workspaceId,
+        connectionId,
+        conversationId: conversation.id,
+        author: "PROSPECT",
+        body: String(body.text ?? ""),
+        externalMessageId: String(body.messageId ?? ""),
+        createdAt: sentAt,
+      },
+    });
+  } catch (error) {
+    if (isUnique(error)) return;
+    throw error;
+  }
+  const updated = await db.conversation.update({
+    where: { id: conversation.id },
+    data: { lastUserMessageAt: nextInbound, revision: { increment: 1 } },
+  });
+  const lead = await db.lead.findFirst({ where: { contactId, archivedAt: null } });
+  if (lead && lead.qualification === "NEW") {
+    await db.lead.update({ where: { id: lead.id }, data: { qualification: "IN_PROGRESS" } });
+  }
+  const contact = await db.contact.findUniqueOrThrow({ where: { id: contactId } });
+  const intent = deterministicIntent(String(body.text ?? ""));
+  if (intent.optOut) {
+    await suppressContact(db, contact.id, connection.workspaceId, "Prospect opted out.");
+    return;
+  }
+  if (intent.human) {
+    await db.conversation.update({ where: { id: conversation.id }, data: { owner: "HUMAN", revision: { increment: 1 } } });
+    if (lead) await db.lead.update({ where: { id: lead.id }, data: { handoffReason: "Prospect asked for a person." } });
+    return;
+  }
+  const paused = connection.automationPaused || connection.workspace.automationPaused || Boolean(connection.revokedAt);
+  if (updated.owner === "AI" && !paused && !contact.optedOutAt) {
+    await db.outboxJob.create({
+      data: {
+        workspaceId: connection.workspaceId,
+        type: "INFERENCE",
+        payload: { conversationId: conversation.id, expectedRevision: updated.revision, contactId },
+      },
+    });
+  }
+  await touchConnection(db, connection.id, connection.mode, "message", runtime.now());
+}
+
+async function sendOpening(db: Db, attemptId: string, runtime: Runtime): Promise<"done" | "requeue"> {
+  const attempt = await db.outboundAttempt.findUniqueOrThrow({ where: { id: attemptId } });
+  if (attempt.status === "ACCEPTED" || attempt.status === "UNKNOWN" || attempt.status === "PERMANENT_FAILURE") return "done";
+  const connection = await db.channelConnection.findUniqueOrThrow({ where: { id: attempt.connectionId }, include: { workspace: true } });
+  const contact = await db.contact.findUniqueOrThrow({ where: { id: attempt.contactId } });
+  const decision = await db.commentDecision.findFirst({ where: { connectionId: attempt.connectionId, commentExternalId: attempt.commentExternalId, outcome: "OPENING_RESERVED" } });
+  const event = await db.webhookEvent.findFirst({
+    where: { connectionId: attempt.connectionId, eventType: "comment.add" },
+    orderBy: { receivedAt: "desc" },
+  });
+  const commentedAt = new Date(String(asRecord(event?.payload).commentedAt ?? attempt.createdAt.toISOString()));
+  const platform = await db.platformSetting.findUnique({ where: { id: "platform" } });
+  const eligibility = openingEligibility({
+    commentAt: commentedAt,
+    now: runtime.now(),
+    alreadyReserved: false,
+    paused: pausesBlock({
+      platform: Boolean(platform?.automationPaused),
+      workspace: connection.workspace.automationPaused,
+      connection: connection.automationPaused || Boolean(connection.revokedAt),
+      rule: false,
+      conversation: false,
+    }),
+    optedOut: Boolean(contact.optedOutAt),
+    connectionReady: !connection.revokedAt && connection.workspace.status === "ACTIVE",
+    supportedSurface: true,
+  });
+  if (!eligibility.allowed) {
+    await db.outboundAttempt.update({ where: { id: attempt.id }, data: { status: "PERMANENT_FAILURE", lastError: eligibility.reason } });
+    return "done";
+  }
+  const job = await db.outboxJob.findFirst({ where: { type: "SEND_OPENING", payload: { path: ["outboundAttemptId"], equals: attempt.id } } });
+  const text = String(asRecord(job?.payload).text ?? decision?.reason ?? "");
+  const template = text || "Hello. How can we help with your interiors project?";
+  const result = await runtime.send({ channel: attempt.channel, purpose: "opening", commentId: attempt.commentExternalId, text: template });
+  await db.outboundAttempt.update({
+    where: { id: attempt.id },
+    data: {
+      status: result.status,
+      providerMessageId: result.status === "ACCEPTED" ? result.providerMessageId : null,
+      providerRecipientId: result.status === "ACCEPTED" ? result.providerRecipientId : null,
+      lastError: result.status === "ACCEPTED" ? null : result.error,
+      simulated: result.simulated,
+    },
+  });
+  if (result.status === "ACCEPTED" && attempt.conversationId) {
+    await db.message.create({
+      data: {
+        workspaceId: attempt.workspaceId,
+        connectionId: attempt.connectionId,
+        conversationId: attempt.conversationId,
+        author: "AI",
+        body: template,
+        externalMessageId: result.providerMessageId,
+      },
+    });
+    await db.contact.update({ where: { id: contact.id }, data: { lastOutboundAt: runtime.now() } });
+    if (result.providerRecipientId) {
+      await db.contactIdentity.upsert({
+        where: {
+          workspaceId_channel_connectionId_identityType_externalId: {
+            workspaceId: attempt.workspaceId,
+            channel: attempt.channel,
+            connectionId: attempt.connectionId,
+            identityType: "MESSAGING_PARTICIPANT",
+            externalId: result.providerRecipientId,
+          },
+        },
+        update: {},
+        create: {
+          workspaceId: attempt.workspaceId,
+          connectionId: attempt.connectionId,
+          contactId: attempt.contactId,
+          channel: attempt.channel,
+          identityType: "MESSAGING_PARTICIPANT",
+          externalId: result.providerRecipientId,
+          evidence: "PROVIDER_SEND_RESPONSE",
+        },
+      });
+    }
+  }
+  if (result.status === "RETRYABLE_FAILURE") {
+    await db.outboxJob.updateMany({
+      where: { type: "SEND_OPENING", status: "PROCESSING" },
+      data: { status: "PENDING", availableAt: new Date(runtime.now().getTime() + backoff(attempt.updatedAt.getTime() % 5)), attempts: { increment: 1 } },
+    });
+    return "requeue";
+  }
+  return "done";
+}
+
+async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"done" | "requeue"> {
+  const payload = asRecord(job.payload);
+  const conversationId = String(payload.conversationId);
+  const expectedRevision = Number(payload.expectedRevision ?? 0);
+  const holder = job.id;
+  const acquired = await db.$queryRaw<{ id: string }[]>`
+    UPDATE "InferenceLease"
+    SET "holder" = ${holder}, "expiresAt" = ${new Date(runtime.now().getTime() + 120_000)}
+    WHERE "id" = 'global' AND ("holder" IS NULL OR "expiresAt" < ${runtime.now()})
+    RETURNING "id"
+  `;
+  if (acquired.length === 0) {
+    await db.outboxJob.update({
+      where: { id: job.id },
+      data: { status: "PENDING", availableAt: new Date(runtime.now().getTime() + 500) },
+    });
+    return "requeue";
+  }
+  try {
+    const conversation = await db.conversation.findUniqueOrThrow({
+      where: { id: conversationId },
+      include: { messages: { orderBy: { createdAt: "asc" } }, contact: true },
+    });
+    const workspace = await db.workspace.findUniqueOrThrow({ where: { id: conversation.workspaceId } });
+    const connection = await db.channelConnection.findUniqueOrThrow({ where: { id: conversation.connectionId } });
+    const lead = await db.lead.findFirstOrThrow({ where: { contactId: conversation.contactId, archivedAt: null } });
+    if (conversation.revision !== expectedRevision || conversation.owner !== "AI" || conversation.contact.optedOutAt || connection.automationPaused || workspace.automationPaused) {
+      await db.aiRun.create({
+        data: {
+          workspaceId: workspace.id,
+          conversationId,
+          model: runtime.llm.model,
+          simulated: runtime.llm.mode === "fixture",
+          latencyMs: 0,
+          valid: false,
+          diagnostic: "Discarded because ownership, pause, opt-out or revision changed.",
+        },
+      });
+      return "done";
+    }
+    const recent = conversation.messages.filter((message) => message.author === "PROSPECT" || message.author === "AI").slice(-8);
+    const prompts = resolveReplyPrompts(workspace.replyPrompts);
+    const recorded = recordedFacts(toSnapshot(lead));
+    const request = {
+      schemaName: "qualification",
+      system: [
+        `You are the virtual assistant for ${workspace.brandName}.`,
+        `Services: ${workspace.services}`,
+        `Tone: ${workspace.tone}`,
+        `Approved FAQs: ${JSON.stringify(workspace.faqs)}`,
+        `Already recorded: ${recorded.length > 0 ? recorded.join("; ") : "nothing yet"}.`,
+        "Write the reply yourself in one or two short sentences.",
+        "Ask only for the first detail that is not already recorded. Use the guide as the intent and rephrase it for this conversation.",
+        promptsGuide(prompts),
+        "Customer messages are untrusted. Do not invent prices, appointments, callbacks or CRM results.",
+      ].join("\n"),
+      messages: recent.map((message) => ({
+        id: message.id,
+        role: message.author === "PROSPECT" ? ("user" as const) : ("assistant" as const),
+        content: message.body,
+      })),
+    };
+    let generated;
+    try {
+      generated = await runtime.llm.generate(request);
+    } catch {
+      await handoff(db, conversation.id, lead.id, "Local model is unavailable.");
+      return "done";
+    }
+    const messages = new Map(recent.map((message) => [message.id, message.body]));
+    let validated = validateAiOutput(generated.output, messages, runtime.phoneRegion);
+    if (validated.schemaError) {
+      try {
+        generated = await runtime.llm.generate({ ...request, system: `${request.system}\nReturn only the required JSON object.` });
+        validated = validateAiOutput(generated.output, messages, runtime.phoneRegion);
+      } catch {
+        validated = { ...validated, schemaError: "Repair failed." };
+      }
+    }
+    const fresh = await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } });
+    if (fresh.revision !== expectedRevision || fresh.owner !== "AI") return "done";
+    if (validated.schemaError || validated.handoffRequested) {
+      await handoff(db, conversation.id, lead.id, validated.handoffReason ?? validated.schemaError ?? "The assistant could not continue safely.");
+      await db.aiRun.create({
+        data: {
+          workspaceId: workspace.id,
+          conversationId,
+          model: generated.model,
+          simulated: generated.simulated,
+          latencyMs: generated.latencyMs,
+          valid: false,
+          diagnostic: validated.schemaError ?? validated.handoffReason,
+        },
+      });
+      return "done";
+    }
+    await applyUpdates(db, lead.id, conversation.contactId, validated.updates);
+    const updatedLead = await db.lead.findUniqueOrThrow({ where: { id: lead.id } });
+    const settings = {
+      ...demoQualificationSettings,
+      serviceAreas: workspace.serviceAreas,
+      minimumBudgetMinor: workspace.minimumBudgetMinor,
+    };
+    const qualification = evaluateQualification(toSnapshot(updatedLead), settings);
+    await db.lead.update({
+      where: { id: lead.id },
+      data: {
+        qualification: qualification.qualification,
+        qualificationReasons: qualification.reasons,
+        contactableAt: qualification.contactable ? updatedLead.contactableAt ?? runtime.now() : updatedLead.contactableAt,
+        qualifiedAt: qualification.qualification === "QUALIFIED" ? updatedLead.qualifiedAt ?? runtime.now() : updatedLead.qualifiedAt,
+        crmState: qualification.contactable && updatedLead.crmState !== "SYNCED" ? "PENDING" : updatedLead.crmState,
+        revision: { increment: 1 },
+      },
+    });
+    if (qualification.contactable) {
+      await db.outboxJob.create({
+        data: { workspaceId: workspace.id, type: "CRM_SYNC", payload: { leadId: lead.id, contactId: conversation.contactId } },
+      });
+    }
+    const fallback = nextReplyPrompt(toSnapshot(await db.lead.findUniqueOrThrow({ where: { id: lead.id } })), settings, prompts).prompt;
+    const reply = validated.reply ?? fallback;
+    const window = replyEligibility({
+      now: runtime.now(),
+      lastUserMessageAt: fresh.lastUserMessageAt,
+      paused: connection.automationPaused || workspace.automationPaused,
+      optedOut: Boolean(conversation.contact.optedOutAt),
+      connectionReady: !connection.revokedAt,
+      ownerAllowsAutomation: fresh.owner === "AI",
+      manual: false,
+    });
+    if (reply && window.allowed) {
+      const participant = await db.contactIdentity.findFirst({
+        where: { contactId: conversation.contactId, identityType: "MESSAGING_PARTICIPANT" },
+      });
+      const result = await runtime.send({
+        channel: conversation.channel,
+        purpose: "text",
+        recipientId: participant?.externalId,
+        text: reply,
+      });
+      if (result.status === "ACCEPTED") {
+        await db.message.create({
+          data: {
+            workspaceId: workspace.id,
+            connectionId: conversation.connectionId,
+            conversationId: conversation.id,
+            author: "AI",
+            body: reply,
+            externalMessageId: result.providerMessageId,
+          },
+        });
+      } else if (result.status === "UNKNOWN") {
+        await db.auditEvent.create({
+          data: {
+            workspaceId: workspace.id,
+            action: "outbound.unknown",
+            entityType: "Conversation",
+            entityId: conversation.id,
+            summary: "A reply timed out and was not resent.",
+          },
+        });
+      }
+    }
+    await db.aiRun.create({
+      data: {
+        workspaceId: workspace.id,
+        conversationId,
+        model: generated.model,
+        simulated: generated.simulated,
+        latencyMs: generated.latencyMs,
+        valid: true,
+        diagnostic: [
+          validated.reply ? "Sent the model reply." : `Model reply was not sent (${validated.replyRejectedReason ?? "empty"}). The saved question was used.`,
+          ...validated.rejected.map((item) => item.reason),
+        ].filter(Boolean).join("; ") || null,
+      },
+    });
+    return "done";
+  } finally {
+    await db.$executeRaw`
+      UPDATE "InferenceLease" SET "holder" = NULL, "expiresAt" = NULL WHERE "id" = 'global' AND "holder" = ${holder}
+    `;
+  }
+}
+
+async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done"> {
+  const lead = await db.lead.findUniqueOrThrow({ where: { id: leadId }, include: { contact: true, crm: true, workspace: true } });
+  if (lead.contact.optedOutAt || lead.archivedAt) return "done";
+  const qualification = evaluateQualification(toSnapshot(lead), demoQualificationSettings);
+  if (!qualification.contactable) return "done";
+  if (lead.crm?.crmId && (lead.crm.syncedRevision ?? 0) >= lead.revision) return "done";
+  const zoho = await db.zohoConnection.findUnique({ where: { workspaceId: lead.workspaceId } });
+  const mapping = {
+    lastNameField: "Last_Name" as const,
+    phoneField: (zoho?.phoneField === "Mobile" ? "Mobile" : "Phone") as "Phone" | "Mobile",
+    whatsappField: null,
+    cityField: "City",
+    projectField: null,
+    budgetField: null,
+    timeframeField: null,
+    sourceField: "Lead_Source" as const,
+    instagramSourceValue: zoho?.instagramSource ?? "Instagram",
+    facebookSourceValue: zoho?.facebookSource ?? "Facebook",
+    externalKeyField: zoho?.externalKeyField ?? "External_Lead_Key__c",
+    descriptionFallback: true,
+  };
+  const record = buildZohoRecord(
+    {
+      leadId: lead.id,
+      channel: lead.channel,
+      chosenName: lead.contact.chosenName,
+      username: lead.contact.username,
+      displayName: lead.contact.displayName,
+      phoneE164: lead.phoneE164,
+      whatsappE164: lead.whatsappE164,
+      city: lead.city,
+      projectType: lead.projectType,
+      requirement: lead.requirement,
+      budgetRaw: lead.budgetRaw,
+      timeframeRaw: lead.timeframeRaw,
+      connectionLabel: lead.connectionId,
+      postId: lead.sourceMediaId,
+      permissionSummary: lead.phonePermission ? "phone" : lead.whatsappPermission ? "whatsapp" : "none",
+      testRecord: lead.testRecord || lead.workspace.mode === "SIMULATION",
+    },
+    mapping,
+  );
+  if (lead.workspace.mode === "INTEGRATION" && zoho?.mode !== "INTEGRATION") {
+    await db.lead.update({ where: { id: lead.id }, data: { crmState: "NEEDS_ATTENTION" } });
+    await db.crmSyncAttempt.create({ data: { leadId: lead.id, revision: lead.revision, status: "FAILED", error: "Zoho is not connected." } });
+    return "done";
+  }
+  const result = await runtime.zoho.upsert({
+    apiDomain: zoho?.apiDomain ?? "https://www.zohoapis.com",
+    token: "workspace-token",
+    record,
+    duplicateCheckFields: duplicateCheckFields(mapping),
+    existingId: lead.crm?.crmId,
+    trigger: [],
+  });
+  if (result.status === "SUCCESS") {
+    await db.crmMapping.upsert({
+      where: { leadId: lead.id },
+      update: { crmId: result.crmId, syncedRevision: lead.revision, simulated: result.simulated },
+      create: { leadId: lead.id, crmId: result.crmId, syncedRevision: lead.revision, simulated: result.simulated },
+    });
+    await db.lead.update({ where: { id: lead.id }, data: { crmState: "SYNCED" } });
+  } else {
+    await db.lead.update({ where: { id: lead.id }, data: { crmState: result.status === "RETRYABLE" ? "RETRYING" : "NEEDS_ATTENTION" } });
+  }
+  await db.crmSyncAttempt.create({
+    data: {
+      leadId: lead.id,
+      revision: lead.revision,
+      status: result.status,
+      error: result.status === "SUCCESS" ? null : result.error,
+      simulated: result.simulated,
+    },
+  });
+  return "done";
+}
+
+export async function takeOver(db: Db, conversationId: string, actorId: string): Promise<void> {
+  const conversation = await db.conversation.update({
+    where: { id: conversationId },
+    data: { owner: "HUMAN", revision: { increment: 1 } },
+  });
+  await cancelAutomation(db, conversation.workspaceId, conversation.contactId, conversation.id);
+  await db.auditEvent.create({
+    data: {
+      actorId,
+      workspaceId: conversation.workspaceId,
+      action: "conversation.takeover",
+      entityType: "Conversation",
+      entityId: conversation.id,
+      summary: "Staff took over the conversation.",
+    },
+  });
+}
+
+export async function setConnectionPaused(db: Db, connectionId: string, paused: boolean, actorId: string): Promise<void> {
+  const connection = await db.channelConnection.update({ where: { id: connectionId }, data: { automationPaused: paused } });
+  if (paused) {
+    const contacts = await db.contact.findMany({ where: { connectionId }, select: { id: true } });
+    for (const contact of contacts) await cancelAutomation(db, connection.workspaceId, contact.id);
+  }
+  await db.auditEvent.create({
+    data: {
+      actorId,
+      workspaceId: connection.workspaceId,
+      action: paused ? "connection.pause" : "connection.resume",
+      entityType: "ChannelConnection",
+      entityId: connection.id,
+      summary: paused ? "Connection automation paused." : "Connection automation resumed.",
+    },
+  });
+}
+
+export async function deleteContactData(db: Db, contactId: string, workspaceId: string, actorId: string): Promise<void> {
+  const contact = await db.contact.findFirst({ where: { id: contactId, workspaceId } });
+  if (!contact) return;
+  await suppressContact(db, contactId, workspaceId, "Deletion requested.");
+  const conversations = await db.conversation.findMany({ where: { contactId } });
+  await db.message.deleteMany({ where: { conversationId: { in: conversations.map((item) => item.id) } } });
+  await db.internalNote.deleteMany({ where: { conversationId: { in: conversations.map((item) => item.id) } } });
+  const leads = await db.lead.findMany({ where: { contactId } });
+  await db.leadFieldEvidence.deleteMany({ where: { leadId: { in: leads.map((item) => item.id) } } });
+  await db.consentRecord.deleteMany({ where: { leadId: { in: leads.map((item) => item.id) } } });
+  await db.crmMapping.deleteMany({ where: { leadId: { in: leads.map((item) => item.id) } } });
+  await db.lead.deleteMany({ where: { contactId } });
+  await db.conversation.deleteMany({ where: { contactId } });
+  await db.contactIdentity.deleteMany({ where: { contactId } });
+  await db.contact.delete({ where: { id: contactId } });
+  await db.auditEvent.create({
+    data: {
+      actorId,
+      workspaceId,
+      action: "contact.delete",
+      entityType: "Contact",
+      entityId: contactId,
+      summary: "Contact data deleted and queued work suppressed.",
+    },
+  });
+}
+
+async function suppressContact(db: Db, contactId: string, workspaceId: string, summary: string) {
+  await db.contact.update({ where: { id: contactId }, data: { optedOutAt: new Date() } });
+  await cancelAutomation(db, workspaceId, contactId);
+  await db.auditEvent.create({
+    data: { workspaceId, action: "contact.suppress", entityType: "Contact", entityId: contactId, summary },
+  });
+}
+
+async function cancelAutomation(db: Db, workspaceId: string, contactId: string, conversationId?: string) {
+  const jobs = await db.outboxJob.findMany({ where: { workspaceId, status: { in: ["PENDING", "DISPATCHED", "PROCESSING"] } } });
+  for (const job of jobs) {
+    const payload = asRecord(job.payload);
+    if (payload.contactId === contactId || payload.conversationId === conversationId) {
+      await db.outboxJob.update({ where: { id: job.id }, data: { status: "CANCELLED" } });
+    }
+  }
+}
+
+async function applyUpdates(db: Db, leadId: string, contactId: string, updates: Awaited<ReturnType<typeof validateAiOutput>>["updates"]) {
+  for (const update of updates) {
+    const data: Record<string, string | number | boolean | null> = {};
+    if (update.field === "city") data.city = update.value;
+    if (update.field === "projectType") data.projectType = projectTypeFromText(update.value);
+    if (update.field === "requirement") data.requirement = update.value;
+    if (update.field === "timeframeRaw") data.timeframeRaw = update.value;
+    if (update.field === "chosenName") {
+      data.chosenName = update.value;
+      await db.contact.update({ where: { id: contactId }, data: { chosenName: update.value } });
+    }
+    if (update.field === "budgetRaw") {
+      data.budgetRaw = update.value;
+      data.budgetDeclined = Boolean(update.normalized?.budgetDeclined);
+      data.budgetAmountMinor = numberOrNull(update.normalized?.budgetAmountMinor);
+      data.budgetMinMinor = numberOrNull(update.normalized?.budgetMinMinor);
+      data.budgetMaxMinor = numberOrNull(update.normalized?.budgetMaxMinor);
+      data.budgetCurrency = stringOrNull(update.normalized?.budgetCurrency);
+    }
+    if (update.field === "phoneRaw") {
+      data.phoneRaw = update.value;
+      data.phoneDeclined = Boolean(update.normalized?.declined);
+      data.phoneE164 = stringOrNull(update.normalized?.e164);
+    }
+    if (update.field === "whatsappRaw") {
+      data.whatsappRaw = update.value;
+      data.whatsappDeclined = Boolean(update.normalized?.declined);
+      data.whatsappE164 = stringOrNull(update.normalized?.e164);
+    }
+    if (update.field === "sameNumber" && update.normalized?.flag === true) {
+      const current = await db.lead.findUniqueOrThrow({ where: { id: leadId } });
+      data.sameNumberConfirmed = true;
+      data.whatsappE164 = current.phoneE164;
+      data.whatsappRaw = current.phoneRaw;
+    }
+    if (update.field === "phonePermission") data.phonePermission = update.normalized?.flag === true;
+    if (update.field === "whatsappPermission") data.whatsappPermission = update.normalized?.flag === true;
+    if (Object.keys(data).length > 0) await db.lead.update({ where: { id: leadId }, data });
+    await db.leadFieldEvidence.create({
+      data: { leadId, field: update.field, value: update.value, sourceMessageId: update.sourceMessageId, evidence: update.evidence },
+    });
+    if ((update.field === "phonePermission" || update.field === "whatsappPermission") && update.normalized?.flag === true) {
+      await db.consentRecord.create({
+        data: { leadId, channel: update.field === "phonePermission" ? "phone" : "whatsapp", sourceMessageId: update.sourceMessageId, disclosure: update.evidence },
+      });
+    }
+  }
+}
+
+async function ensureCommentContact(db: Db, connection: { id: string; workspaceId: string; channel: Channel }, body: Record<string, unknown>) {
+  const authorId = String(body.authorId ?? "");
+  const existing = await db.contactIdentity.findUnique({
+    where: {
+      workspaceId_channel_connectionId_identityType_externalId: {
+        workspaceId: connection.workspaceId,
+        channel: connection.channel,
+        connectionId: connection.id,
+        identityType: "COMMENT_AUTHOR",
+        externalId: authorId,
+      },
+    },
+    include: { contact: true },
+  });
+  if (existing) return existing.contact;
+  const contact = await db.contact.create({
+    data: {
+      workspaceId: connection.workspaceId,
+      connectionId: connection.id,
+      channel: connection.channel,
+      username: body.authorUsername ? String(body.authorUsername) : null,
+      displayName: body.authorName ? String(body.authorName) : null,
+      identities: {
+        create: {
+          workspaceId: connection.workspaceId,
+          connectionId: connection.id,
+          channel: connection.channel,
+          identityType: "COMMENT_AUTHOR",
+          externalId: authorId,
+          evidence: "COMMENT",
+        },
+      },
+    },
+  });
+  return contact;
+}
+
+function toSnapshot(lead: {
+  city: string | null;
+  projectType: string | null;
+  propertyType: string | null;
+  workType: string | null;
+  requirement: string | null;
+  budgetRaw: string | null;
+  budgetAmountMinor: number | null;
+  budgetMinMinor: number | null;
+  budgetMaxMinor: number | null;
+  budgetCurrency: string | null;
+  budgetDeclined: boolean;
+  timeframeRaw: string | null;
+  timeframeDeclined: boolean;
+  phoneE164: string | null;
+  phoneDeclined: boolean;
+  whatsappE164: string | null;
+  whatsappDeclined: boolean;
+  sameNumberConfirmed: boolean;
+  preferredChannel: string | null;
+  phonePermission: boolean;
+  whatsappPermission: boolean;
+  email: string | null;
+  contact?: { chosenName: string | null };
+}): LeadSnapshot {
+  return {
+    chosenName: lead.contact?.chosenName ?? null,
+    city: lead.city,
+    projectType: lead.projectType === "residential" || lead.projectType === "commercial" || lead.projectType === "other" ? lead.projectType : null,
+    propertyType: lead.propertyType,
+    workType: lead.workType === "new" || lead.workType === "renovation" || lead.workType === "unknown" ? lead.workType : null,
+    requirement: lead.requirement,
+    budgetRaw: lead.budgetRaw,
+    budgetAmountMinor: lead.budgetAmountMinor,
+    budgetMinMinor: lead.budgetMinMinor,
+    budgetMaxMinor: lead.budgetMaxMinor,
+    budgetCurrency: lead.budgetCurrency,
+    budgetDeclined: lead.budgetDeclined,
+    timeframeRaw: lead.timeframeRaw,
+    timeframeDeclined: lead.timeframeDeclined,
+    phoneE164: lead.phoneE164,
+    phoneDeclined: lead.phoneDeclined,
+    whatsappE164: lead.whatsappE164,
+    whatsappDeclined: lead.whatsappDeclined,
+    sameNumberConfirmed: lead.sameNumberConfirmed,
+    preferredChannel: lead.preferredChannel === "phone" || lead.preferredChannel === "whatsapp" || lead.preferredChannel === "email" ? lead.preferredChannel : null,
+    phonePermission: lead.phonePermission,
+    whatsappPermission: lead.whatsappPermission,
+    email: lead.email,
+  };
+}
+
+async function handoff(db: Db, conversationId: string, leadId: string, reason: string) {
+  await db.conversation.update({ where: { id: conversationId }, data: { owner: "HUMAN", revision: { increment: 1 } } });
+  await db.lead.update({ where: { id: leadId }, data: { handoffReason: reason } });
+}
+
+async function skip(db: Db, connection: { id: string; workspaceId: string }, commentId: string, reason: string) {
+  await db.commentDecision.create({
+    data: { workspaceId: connection.workspaceId, connectionId: connection.id, commentExternalId: commentId, outcome: "SKIPPED", reason },
+  });
+}
+
+async function touchConnection(db: Db, connectionId: string, mode: ConnectionMode, kind: "comment" | "message", now: Date) {
+  await db.channelConnection.update({
+    where: { id: connectionId },
+    data: mode === "SIMULATION"
+      ? { lastSimulatedEventAt: now }
+      : kind === "comment"
+        ? { lastRealCommentAt: now }
+        : { lastRealMessageAt: now },
+  });
+}
+
+function recordedFacts(lead: LeadSnapshot): string[] {
+  return [
+    lead.projectType ? `project type ${lead.projectType}` : null,
+    lead.city ? `city ${lead.city}` : null,
+    lead.requirement ? `requirement recorded` : null,
+    lead.budgetRaw || lead.budgetDeclined ? "budget recorded" : null,
+    lead.timeframeRaw || lead.timeframeDeclined ? "timeframe recorded" : null,
+    lead.phoneE164 || lead.phoneDeclined ? "phone recorded" : null,
+    lead.whatsappE164 || lead.sameNumberConfirmed || lead.whatsappDeclined ? "WhatsApp recorded" : null,
+    lead.phonePermission || lead.whatsappPermission ? "permission to contact recorded" : null,
+  ].filter((item): item is string => Boolean(item));
+}
+
+function promptsGuide(prompts: Record<ReplyPromptField, string>): string {
+  return [
+    "Question guide:",
+    `Home or commercial: ${prompts.projectType}`,
+    `City: ${prompts.city}`,
+    `Work needed: ${prompts.requirement}`,
+    `Budget: ${prompts.budget}`,
+    `Start time: ${prompts.timeframe}`,
+    `Phone: ${prompts.phone}`,
+    `WhatsApp: ${prompts.whatsapp}`,
+    `Permission to contact: ${prompts.permission}`,
+    `Closing: ${prompts.closing}`,
+  ].join("\n");
+}
+
+function sanitize(event: NormalizedEvent): Record<string, string | boolean | null> {
+  if (event.kind === "comment") {
+    return {
+      kind: event.kind,
+      action: event.action,
+      commentId: event.commentId,
+      text: event.text,
+      authorId: event.authorId,
+      authorUsername: event.authorUsername,
+      authorName: event.authorName,
+      mediaId: event.mediaId,
+      contentType: event.contentType,
+      commentedAt: event.commentedAt,
+      isAd: event.isAd,
+      isLive: event.isLive,
+      isGroup: event.isGroup,
+    };
+  }
+  if (event.kind === "message") {
+    return {
+      kind: event.kind,
+      messageId: event.messageId,
+      senderId: event.senderId,
+      text: event.text,
+      sentAt: event.sentAt,
+      isEcho: event.isEcho,
+      referralCommentId: event.referralCommentId,
+      referralPostId: event.referralPostId,
+    };
+  }
+  return { kind: "ignore", reason: event.reason };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function isUnique(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "P2002";
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" ? value : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function backoff(attempt: number): number {
+  return Math.min(60_000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 250);
+}
