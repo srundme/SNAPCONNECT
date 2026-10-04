@@ -608,6 +608,12 @@ describe("ai validation", () => {
     expect(chatLanguageSample(["Enaku calls ah scale pannanum so", "20000", "Ok", "Yes"])).toBe("Enaku calls ah scale pannanum so");
     expect(chatLanguageSample(["En company la ipo 40 Peru irukanga", "I want to know the pricing details please"])).toBeNull();
     expect(chatLanguageSample(["Yes", "6383653279"])).toBeNull();
+    expect(chatLanguageSample(["Yes I wanted to know about how voice agent can help me in the business."])).toBeNull();
+    expect(chatLanguageSample(["Enaku calls ah scale pannanum so", "I don’t know Tamil"])).toBeNull();
+    expect(chatLanguageSample(["Enaku calls ah scale pannanum so", "Speak in English"])).toBeNull();
+    expect(chatLanguageSample(["Speak in English", "ok"])).toBeNull();
+    expect(chatLanguageSample(["bhai hamari team bahut calls miss karti hai"])).not.toBeNull();
+    expect(absorbTranscript({ questions, messages: [{ author: "AI", body: "What is going wrong with the calls today?" }, { author: "PROSPECT", body: "Speak in English" }], name: null, phoneE164: null, answers: {} }).answers).toEqual({});
     expect(languageName("Enaku calls ah scale pannanum so")).toMatch(/^Tanglish/);
     expect(humanizeReply("Sorry, wait panna. Unga details team-ku 21 minutes munnadiye pochu — Working hours-la call pannuvanga; enna-nu sollunga, appo correct-a theriyum.")).toBe(
       "Sorry, wait panna. Unga details team ku 21 minutes munnadiye pochu, Working hours la call pannuvanga, enna nu sollunga, appo correct a theriyum.",

@@ -775,7 +775,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const languageSample = chatLanguageSample(conversation.messages.filter((message) => message.author === "PROSPECT").map((message) => message.body));
     const languageLine = languageSample
       ? `This chat is in ${languageName(languageSample)}, like their message "${languageSample}". Keep every reply in exactly that language, script and casual style, never another Indian language, even when they answer with only ok, yes, a number or a short English word. Switch only if they write a full sentence in another language.`
-      : "This chat is in English. Short replies do not change that. Switch only if they write a full sentence in another language.";
+      : "This chat is in English. Reply only in plain, simple English, with no Tamil, Hindi or other Indian-language words at all. Short replies do not change that. Switch only if they write a full sentence in another language.";
     const scripted = questions.length
       ? scriptedReply({ questions, answers: recordedAnswers, name: recordedName, phoneE164: recordedPhone, latestUser: latestProspect })
       : "";

@@ -289,18 +289,43 @@ export function questionBrief(questions: LeadQuestion[]): string {
 const YES_ANSWER = /^(yes|yeah|yep|sure|ok|okay|interested|i am|we are|we would|sounds good|haan|han|haa|ha|ji|ji haan|bilkul|theek|thik|aama|aamaa|aamam|ama|amam|amha|aamha|seri|sari|venum)\b/i;
 const NO_ANSWER = /^(no|nope|not interested|not now|later|maybe later|nahi|nahin|nahi chahiye|abhi nahi|illa|illai|vendam|venam|vendaam|apram|aprom)\b/i;
 
-const ENGLISH_WORDS = /\b(the|is|are|i|we|you|my|our|what|how|want|need|have|team|calls?|yes|no|ok|okay|thanks?|please|company|name|number|demo|month)\b/gi;
+const ENGLISH_WORDS = /\b(the|a|an|is|are|was|were|be|am|i|we|you|he|she|it|they|me|my|our|your|this|that|what|how|why|when|where|who|which|want|wanted|need|have|has|had|do|does|did|can|could|will|would|should|know|help|about|for|to|of|in|on|at|with|from|and|or|but|not|if|so|team|calls?|yes|no|ok|okay|thanks?|thank|please|company|business|name|number|demo|month|work|works|use|get|like|more|tell|just|also|there|here)\b/gi;
+
+const WANTS_ENGLISH = /\b(speak|talk|reply|text|write|chat|message)\b.{0,20}\benglish\b|\benglish\s*(please|pls|plz|only)\b|\b(in|only)\s+english\b|\bdon'?t\s+(know|understand|speak|read)\s+(tamil|hindi|telugu|kannada|malayalam)\b|\b(no|not)\s+(tamil|hindi)\b|\bstill in (tamil|hindi)\b/i;
+const WANTS_LOCAL = /\b(tamil|hindi|telugu|kannada|malayalam)\s*(la|le|mein|me|lo)\s*(pesunga|pesu|baat|bolo|maatladu|matladandi|samsarikku)/i;
+
+export function asksForLanguage(text: string): "english" | "local" | null {
+  const plain = text.replace(/[‘’`]/g, "'");
+  if (WANTS_ENGLISH.test(plain)) return "english";
+  if (WANTS_LOCAL.test(plain)) return "local";
+  return null;
+}
 
 export function chatLanguageSample(prospectTexts: string[]): string | null {
   for (const raw of [...prospectTexts].reverse()) {
     const text = raw.trim();
     if (!text || text.startsWith("(")) continue;
+    const request = asksForLanguage(text);
+    if (request === "english") return null;
+    if (request === "local") return text.slice(0, 160);
     const words = text.split(/\s+/).filter((word) => /\p{L}/u.test(word));
     const native = /[^\x00-\x7F‘’“”…–—₹]/.test(text.replace(/\p{Extended_Pictographic}/gu, ""));
     if (!native && words.length < 3) continue;
-    return looksEnglish(text) ? null : text.slice(0, 160);
+    if (native) return looksEnglish(text) ? null : text.slice(0, 160);
+    const markers = indicMarkers(text);
+    const english = text.match(ENGLISH_WORDS)?.length ?? 0;
+    return markers >= 2 && markers * 2 >= english ? text.slice(0, 160) : null;
   }
   return null;
+}
+
+function indicMarkers(text: string): number {
+  return Math.max(
+    text.match(TANGLISH)?.length ?? 0,
+    text.match(HINGLISH)?.length ?? 0,
+    text.match(TELUGLISH)?.length ?? 0,
+    text.match(KANGLISH)?.length ?? 0,
+  );
 }
 
 const SCRIPTS: Array<[RegExp, string]> = [
@@ -382,7 +407,7 @@ export function absorbTranscript(input: {
     }
     if (message.author !== "PROSPECT") continue;
     const text = message.body.replace(/[‘’`]/g, "'").trim();
-    if (!text) continue;
+    if (!text || asksForLanguage(text)) continue;
     const plain = !YES_ANSWER.test(text) && !NO_ANSWER.test(text) && !/\?$/.test(text);
     const target = input.questions.find((question) => lastAi.includes(scriptQuestion(question)) || askedAbout(question, lastAi));
     if (target) {

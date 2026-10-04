@@ -194,8 +194,17 @@ export function sarvamLlm(options: {
           temperature: 0,
           max_tokens: 20,
           messages: [
-            { role: "system", content: "You decide how an Indian sales executive should address a customer, from their name or Instagram name. Answer with exactly one word: sir for a man, mam for a woman, bro if it is a brand, a page, or impossible to tell." },
-            { role: "user", content: name.normalize("NFKC").slice(0, 120) },
+            {
+              role: "system",
+              content: [
+                "You decide how an Indian sales executive should address a customer, from their name or Instagram handle.",
+                "Answer with exactly one word: sir for a man's name, mam for a woman's name, bro if it is a brand, a page, or there is no personal name.",
+                "Examples: Gopi = sir. gopi talks = sir. Karthikeyan = sir. Rahul Sharma = sir. Arun = sir. Vijay = sir. Ravi = sir. Krishna = sir.",
+                "Priya = mam. Neha = mam. Divya = mam. Lakshmi = mam. Swathi = mam. Kavya = mam. Anjali = mam.",
+                "tech world official = bro. glow studio = bro. the aitel ai = bro.",
+              ].join("\n"),
+            },
+            { role: "user", content: name.normalize("NFKC").replace(/[._\-@]+/g, " ").slice(0, 120) },
           ],
         }),
         signal: AbortSignal.timeout(8_000),
