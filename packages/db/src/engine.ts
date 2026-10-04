@@ -866,7 +866,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       generated = await runtime.llm.generate(request);
     } catch (error) {
       fallbackReason = error instanceof Error ? error.message.slice(0, 300) : "The model is unavailable.";
-      const broken = error instanceof Error && /JSON|Unterminated/i.test(error.message);
+      const broken = error instanceof Error && !error.message.startsWith("Sarvam failed") && /JSON|Unterminated/i.test(error.message);
       if (!broken) {
         if (!scriptFallback) {
           await db.aiRun.create({
@@ -1065,6 +1065,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           generated.model === "script" && fallbackReason
             ? `Model failed, sent the scripted question: ${fallbackReason}`
             : validated.reply ? "Sent the model reply." : `Model reply was not sent (${validated.replyRejectedReason ?? "empty"}). The saved question was used.`,
+          generated.diagnostics?.mode === "sarvam-plain" ? `Used the plain-text reply after: ${String((generated.diagnostics as Record<string, unknown>).failures ?? "").slice(0, 200)}` : "",
           ...validated.rejected.map((item) => item.reason),
         ].filter(Boolean).join("; ") || null,
       },

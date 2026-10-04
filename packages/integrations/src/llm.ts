@@ -158,6 +158,12 @@ export function assertPrivateOllamaUrl(value: string): URL {
   return base;
 }
 
+class SarvamError extends Error {
+  constructor(message: string, readonly temporary: boolean) {
+    super(message);
+  }
+}
+
 export function sarvamLlm(options: {
   apiKey: string;
   maxOutputTokens: number;
@@ -200,48 +206,67 @@ export function sarvamLlm(options: {
       const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
       return (body.choices?.[0]?.message?.content ?? "").trim().slice(0, 2000);
     },
-    async generate(request) {
+    async generate(request): Promise<LlmResponse> {
       const started = Date.now();
-      const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "api-subscription-key": options.apiKey,
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0.4,
-          max_tokens: Math.max(options.maxOutputTokens, 1024),
-          messages: [
-            { role: "system", content: request.system.normalize("NFKC") },
-            ...request.messages
-              .filter((message) => message.content.trim())
-              .map((message) => ({ role: message.role, content: message.content.normalize("NFKC") })),
-          ],
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "qualification",
-              strict: true,
-              schema: AI_JSON_SCHEMA,
-            },
-          },
-        }),
-        signal: AbortSignal.timeout(60_000),
-      });
-      if (!response.ok) {
-        const detail = (await response.text().catch(() => "")).slice(0, 200);
-        throw new Error(`Sarvam returned HTTP ${response.status} ${detail}`.trim());
-      }
-      const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-      const output = parseModelContent(body.choices?.[0]?.message?.content ?? "{}");
-      return {
-        output,
-        model,
-        latencyMs: Date.now() - started,
-        simulated: false,
-        diagnostics: { mode: "sarvam" },
+      const messages = [
+        { role: "system", content: request.system.normalize("NFKC") },
+        ...request.messages
+          .filter((message) => message.content.trim())
+          .map((message) => ({ role: message.role, content: message.content.normalize("NFKC") })),
+      ];
+      const call = async (body: Record<string, unknown>): Promise<string> => {
+        const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {
+          method: "POST",
+          headers: { "content-type": "application/json", "api-subscription-key": options.apiKey },
+          body: JSON.stringify({ model, messages, ...body }),
+          signal: AbortSignal.timeout(25_000),
+        });
+        if (!response.ok) {
+          const detail = (await response.text().catch(() => "")).slice(0, 200);
+          throw new SarvamError(`Sarvam returned HTTP ${response.status} ${detail}`.trim(), response.status === 429 || response.status >= 500);
+        }
+        const parsed = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+        return parsed.choices?.[0]?.message?.content ?? "";
       };
+      const failures: string[] = [];
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const content = await call({
+            temperature: attempt === 0 ? 0.4 : 0.2,
+            max_tokens: Math.max(options.maxOutputTokens, 1024),
+            response_format: { type: "json_schema", json_schema: { name: "qualification", strict: true, schema: AI_JSON_SCHEMA } },
+          });
+          return { output: parseModelContent(content || "{}"), model, latencyMs: Date.now() - started, simulated: false, diagnostics: { mode: "sarvam", attempts: attempt + 1 } };
+        } catch (error) {
+          failures.push(error instanceof Error ? error.message.slice(0, 120) : String(error));
+          const temporary = !(error instanceof SarvamError) || error.temporary;
+          if (!temporary && !(error instanceof SyntaxError)) break;
+          if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
+        }
+      }
+      try {
+        const text = await call({
+          temperature: 0.3,
+          max_tokens: 400,
+          messages: [
+            ...messages.slice(0, 1),
+            { role: "system", content: "Write only the message you will send to the person now. No JSON, no labels, no quotes." },
+            ...messages.slice(1),
+          ],
+        });
+        const reply = text.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/^["'\s]+|["'\s]+$/g, "").trim();
+        if (!reply || reply.startsWith("{")) throw new Error("Plain reply was empty.");
+        return {
+          output: { reply: reply.slice(0, 900), field_updates: [], handoff_requested: false, handoff_reason: null },
+          model,
+          latencyMs: Date.now() - started,
+          simulated: false,
+          diagnostics: { mode: "sarvam-plain", failures: failures.join(" | ") },
+        };
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message.slice(0, 120) : String(error));
+        throw new Error(`Sarvam failed: ${failures.join(" | ")}`);
+      }
     },
   };
 }

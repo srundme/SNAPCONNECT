@@ -71,6 +71,30 @@ describe("integration guards", () => {
     expect(rescued.output.field_updates).toEqual([]);
   });
 
+  it("retries a busy Sarvam and falls back to a plain reply when JSON keeps failing", async () => {
+    let calls = 0;
+    const busyThenOk = (async () => {
+      calls += 1;
+      if (calls === 1) return new Response("busy", { status: 503 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ reply: "Unga peru enna?", field_updates: [], handoff_requested: false, handoff_reason: null }) } }] }), { status: 200 });
+    }) as typeof fetch;
+    const retried = await sarvamLlm({ apiKey: "test-key", maxOutputTokens: 200, fetchImpl: busyThenOk }).generate({ schemaName: "qualification", system: "Ask.", messages: [{ id: "m1", role: "user", content: "hi" }] });
+    expect(retried.output.reply).toBe("Unga peru enna?");
+    expect(calls).toBe(2);
+
+    const bodies: Array<Record<string, unknown>> = [];
+    const brokenJson = (async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      bodies.push(body);
+      const content = body.response_format ? "not json at all" : "Sari, unga company peru enna?";
+      return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
+    }) as typeof fetch;
+    const plain = await sarvamLlm({ apiKey: "test-key", maxOutputTokens: 200, fetchImpl: brokenJson }).generate({ schemaName: "qualification", system: "Ask.", messages: [{ id: "m1", role: "user", content: "Yes" }] });
+    expect(plain.output.reply).toBe("Sari, unga company peru enna?");
+    expect(plain.diagnostics.mode).toBe("sarvam-plain");
+    expect(bodies.filter((body) => body.response_format)).toHaveLength(3);
+  }, 10_000);
+
   it("transcribes a Meta voice note with Sarvam in romanized text", async () => {
     const calls: Array<{ url: string; headers: Headers; body: unknown }> = [];
     const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
