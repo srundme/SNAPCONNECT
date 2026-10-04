@@ -589,6 +589,18 @@ describe("ai validation", () => {
       answers: {},
     });
     expect(live.name).toBe("Gopi");
+    const combined = absorbTranscript({
+      questions: [...questions, { id: "issue", label: "What is the issue, or why do you think AI calling may help?", kind: "text" as const, zohoField: null }],
+      messages: [
+        { author: "AI", body: "Unga mobile number type pannunga?" },
+        { author: "PROSPECT", body: "Enoda num 6383653279 en team oda head pain seri pannanum so ai calls irdha use Aggie" },
+      ],
+      name: "Gopi",
+      phoneE164: null,
+      answers: {},
+    });
+    expect(combined.phoneE164).toBe("+916383653279");
+    expect(combined.answers.issue).toContain("head pain");
     expect(live.answers["company-name"]).toBeUndefined();
     expect(live.answers["team-size"]).toBe("40");
     expect(live.answers.demo).toBe("yes");

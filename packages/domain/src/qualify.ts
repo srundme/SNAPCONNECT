@@ -391,7 +391,7 @@ export function absorbTranscript(input: {
         if (target.kind === "name") name = direct;
         else if (target.kind === "phone") phoneE164 = direct;
         else answers[target.id] = direct;
-        continue;
+        if (text.length <= 40) continue;
       }
     }
     if (!phoneE164) {
