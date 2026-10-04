@@ -44,6 +44,7 @@ export type LlmProvider = {
   model: string;
   generate(request: LlmRequest): Promise<LlmResponse>;
   summarize?(previous: string | null, transcript: string): Promise<string>;
+  addressFor?(name: string): Promise<"sir" | "mam" | "bro">;
   health(): Promise<{ ok: boolean; detail: string; gpu: boolean | null }>;
 };
 
@@ -158,6 +159,8 @@ export function assertPrivateOllamaUrl(value: string): URL {
   return base;
 }
 
+const addressCache = new Map<string, "sir" | "mam" | "bro">();
+
 class SarvamError extends Error {
   constructor(message: string, readonly temporary: boolean) {
     super(message);
@@ -178,6 +181,31 @@ export function sarvamLlm(options: {
     async health() {
       if (!options.apiKey.trim()) return { ok: false, detail: "SARVAM_API_KEY is empty.", gpu: null };
       return { ok: true, detail: "Sarvam conversation model is configured.", gpu: null };
+    },
+    async addressFor(name) {
+      const key = name.trim().toLowerCase();
+      const cached = addressCache.get(key);
+      if (cached) return cached;
+      const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", "api-subscription-key": options.apiKey },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          max_tokens: 20,
+          messages: [
+            { role: "system", content: "You decide how an Indian sales executive should address a customer, from their name or Instagram name. Answer with exactly one word: sir for a man, mam for a woman, bro if it is a brand, a page, or impossible to tell." },
+            { role: "user", content: name.normalize("NFKC").slice(0, 120) },
+          ],
+        }),
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!response.ok) throw new Error(`Sarvam returned HTTP ${response.status}`);
+      const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const word = (body.choices?.[0]?.message?.content ?? "").toLowerCase().match(/\b(sir|mam|madam|ma'am|bro)\b/)?.[1];
+      const address = word === "sir" ? "sir" : word === "bro" || !word ? "bro" : "mam";
+      addressCache.set(key, address);
+      return address;
     },
     async summarize(previous, transcript) {
       const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {

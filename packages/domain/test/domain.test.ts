@@ -13,6 +13,7 @@ import {
   languageName,
   replyAsksFor,
   scriptQuestionFor,
+  humanizeReply,
   deterministicIntent,
   requestsTeamSwitch,
   displayLastName,
@@ -608,6 +609,10 @@ describe("ai validation", () => {
     expect(chatLanguageSample(["En company la ipo 40 Peru irukanga", "I want to know the pricing details please"])).toBeNull();
     expect(chatLanguageSample(["Yes", "6383653279"])).toBeNull();
     expect(languageName("Enaku calls ah scale pannanum so")).toMatch(/^Tanglish/);
+    expect(humanizeReply("Sorry, wait panna. Unga details team-ku 21 minutes munnadiye pochu — Working hours-la call pannuvanga; enna-nu sollunga, appo correct-a theriyum.")).toBe(
+      "Sorry, wait panna. Unga details team ku 21 minutes munnadiye pochu, Working hours la call pannuvanga, enna nu sollunga, appo correct a theriyum.",
+    );
+    expect(humanizeReply("Sure ma'am, number +916383653279-ku call varum.")).toBe("Sure mam, number +916383653279 ku call varum.");
     for (const question of questions) {
       expect(replyAsksFor(question, scriptQuestionFor(question, "Tanglish, which is Tamil typed in English letters"))).toBe(true);
       expect(replyAsksFor(question, scriptQuestionFor(question, "Hinglish, which is Hindi typed in English letters"))).toBe(true);

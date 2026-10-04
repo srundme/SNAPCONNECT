@@ -16,7 +16,28 @@ export type SalesBriefingInput = {
   languageLine: string;
   activePost: string | null;
   otherPosts: string | null;
+  personName?: string | null;
+  instagramName?: string | null;
+  address?: "sir" | "mam" | "bro" | null;
 };
+
+const SUFFIX = "a|ah|aa|um|ku|kku|la|le|nu|nnu|oda|ode|kitta|dhan|dhaan|than|thaan|ae|o|ji|wala|wale|se|ko|ka|ki|ke|mein|pe|tho";
+
+export function humanizeReply(text: string): string {
+  return text
+    .replace(/\s*[—–]\s*/g, ", ")
+    .replace(/[‘’`]/g, "'")
+    .replace(/[“”]/g, "\"")
+    .replace(/;/g, ",")
+    .replace(/\.\.\.|…/g, ".")
+    .replace(new RegExp(`([A-Za-z0-9+])-(${SUFFIX})\\b`, "gi"), "$1 $2")
+    .replace(/\bma'am\b/gi, "mam")
+    .replace(/\s*\bADDRESS\b/g, "")
+    .replace(/\bfollow-up\b/gi, "follow up")
+    .replace(/ {2,}/g, " ")
+    .replace(/,\s*,/g, ",")
+    .trim();
+}
 
 function since(minutes: number): string {
   if (minutes < 2) return "just now";
@@ -86,6 +107,16 @@ export function salesBriefing(input: SalesBriefingInput): string {
     "- A question about a post or something off-topic: answer briefly using the post notes, then gently come back.",
     "- Is this a bot: be honest that you are the AI assistant, and keep helping.",
     "",
+    "# How to address them",
+    `Their name: ${input.personName?.trim() || "not given yet"}. Instagram name: ${input.instagramName?.trim() || "unknown"}.`,
+    ...(input.address
+      ? [`Call them '${input.address}' in every reply. Never use any other form of address such as ${["sir", "mam", "bro"].filter((word) => word !== input.address).join(" or ")}.`]
+      : [
+          "Work out from the name whether they are most likely a man or a woman. Call a man 'sir' and a woman 'mam'. For example Priya, Neha, Divya, Lakshmi, Kavya, Anjali, Meena and Swathi are women, so 'mam'. Karthik, Rahul, Gopi, Arun, Suresh, Vijay and Ravi are men, so 'sir'.",
+          "Only if there is no name at all, or the name is a brand or gives no clue, call them 'bro'. Once you pick one, keep using the same one in every reply.",
+        ]),
+    "Use it naturally once in most replies, the way a polite Indian sales executive does, for example 'Sure sir', 'Sorry mam', 'Super bro'. Do not stuff it into every sentence.",
+    "",
     "# Where this chat is now",
     ...state,
     ...input.memoryLines,
@@ -96,6 +127,15 @@ export function salesBriefing(input: SalesBriefingInput): string {
     "- Tanglish: write 'Sollunga, AI calling venuma? Unga team la evlo per irukanga?', never 'Sollungal, AI azhaippu vendumaa?'. Say 'evlo', 'enna', 'irukku', 'pannalam', not 'ethanai', 'yenna', 'ullathu', 'seyyalaam'. Hinglish: write 'Batao, aapki team mein kitne log hain?', never 'Kripya batayein, aapke dal mein kitne sadasya hain?'.",
     "- One to three short sentences, like a WhatsApp message. At most one question.",
     "- Sound warm, confident and human. Vary how you start. Do not start every reply with Sari, Okay, Noted or Got it.",
+    "- Type like a real person on WhatsApp. Use only simple commas, full stops, question marks and the odd exclamation mark. Never use dashes, hyphens, semicolons, quotes, brackets or ellipses.",
+    "- In Tanglish or Hinglish, never join a word and its ending with a hyphen. Write 'team ku', 'correct ah', 'working hours la', 'enna nu', 'number ah', not 'team-ku', 'correct-a', 'hours-la', 'enna-nu'.",
+    "- Write full, natural sentences that flow the way people speak, not word-by-word translations of English.",
+    "- Good replies, only to show the feel. Write your own words for this person, never copy these. ADDRESS stands for the sir, mam or bro you picked:",
+    "  Tanglish, a waiting complaint: 'Sorry ADDRESS, konjam wait panna vechitom. Unga details 20 nimisham munnadi thaan team ku pochu, working hours la kandippa call pannuvanga. Endha time free ah irukkum nu sollunga, inga note pannidren.'",
+    "  Tanglish, an answer: 'Super ADDRESS, follow up miss aagradhu dhaan neraya team oda periya problem. Namma AI agent ella leads ayum time ku follow up pannidum. Maasam evlo calls varum?'",
+    "  Tanglish, price: 'Price unga call volume and setup poruthu maarum ADDRESS, demo la team exact ah solluvanga. Unga team la evlo per irukanga?'",
+    "  Hinglish: 'Sorry ADDRESS, thoda wait karna pada. Aapki details 20 minute pehle hi team ko chali gayi hain, working hours mein call aa jayega. Kis time call chahiye, yahin bata dijiye.'",
+    "  English: 'Sorry for the wait ADDRESS. Your details reached the team 20 minutes ago and they call during working hours. What time suits you best? I will note it right here for them.'",
     "- Do not say a demo is booked, give a date or time, mention Zoho or a CRM, or talk about budgets, fees or surveys.",
     "- Never ask for passwords, OTPs, card numbers or payment.",
     "- If a message says it is a voice message that could not be understood, ask them to type it in one short line.",

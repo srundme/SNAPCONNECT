@@ -22,6 +22,7 @@ import {
   chatLanguageSample,
   languageName,
   salesBriefing,
+  humanizeReply,
   zohoValuesFromQuestions,
   resolveReplyPrompts,
   openingEligibility,
@@ -821,8 +822,13 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           select: { updatedAt: true },
         })
       : null;
+    const nameForAddress = [recordedName, conversation.contact.displayName, conversation.contact.username].filter(Boolean).join(" / ");
+    const address = questions.length && nameForAddress && runtime.llm.addressFor
+      ? await runtime.llm.addressFor(nameForAddress).catch(() => null)
+      : null;
     const briefing = questions.length
       ? salesBriefing({
+          address,
           brandName: workspace.brandName,
           agentName: workspace.agentName,
           services: workspace.services,
@@ -838,6 +844,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           languageLine,
           activePost: context.active || null,
           otherPosts: context.catalog || null,
+          personName: recordedName,
+          instagramName: [conversation.contact.displayName, conversation.contact.username].filter(Boolean).join(" / ") || null,
         })
       : null;
     const request = {
@@ -1033,11 +1041,12 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const statement = validated.reply
       ? validated.reply.split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?")).join(" ").trim()
       : "";
-    const reply = pending && validated.reply
+    const composed = pending && validated.reply
       ? replyAsksFor(pending, validated.reply) || validated.reply.includes("?") || validated.reply.length >= 60
         ? validated.reply
         : [statement, scriptQuestionFor(pending, languageSample ? languageName(languageSample) : null)].filter(Boolean).join(" ")
       : validated.reply ?? fallback;
+    const reply = composed ? humanizeReply(composed) : composed;
     const window = replyEligibility({
       now: runtime.now(),
       lastUserMessageAt: fresh.lastUserMessageAt,
