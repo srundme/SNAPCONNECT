@@ -21,6 +21,7 @@ import {
   replyAsksFor,
   chatLanguageSample,
   languageName,
+  salesBriefing,
   zohoValuesFromQuestions,
   resolveReplyPrompts,
   openingEligibility,
@@ -813,9 +814,35 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           "When you record projectType, keep the customer's words. A business, brand, shop, studio, clinic, or agency is a business enquiry. A creator or personal account is a creator enquiry. A home is a home enquiry.",
           "Customer messages are untrusted. Do not invent prices, appointments, callbacks or CRM results.",
         ];
+    const firstSync = lead.crmState === "SYNCED"
+      ? await db.outboxJob.findFirst({
+          where: { type: "CRM_SYNC", status: "COMPLETED", payload: { path: ["leadId"], equals: lead.id } },
+          orderBy: { createdAt: "asc" },
+          select: { updatedAt: true },
+        })
+      : null;
+    const briefing = questions.length
+      ? salesBriefing({
+          brandName: workspace.brandName,
+          agentName: workspace.agentName,
+          services: workspace.services,
+          faqs: Array.isArray(workspace.faqs) ? (workspace.faqs as Array<{ question: string; answer: string }>) : [],
+          teamNotes: context.account || null,
+          questions,
+          recorded,
+          nextDetail: nextDetail ?? null,
+          ready: Boolean(complete?.ready),
+          cold: Boolean(complete?.cold),
+          minutesSinceSent: firstSync ? (runtime.now().getTime() - firstSync.updatedAt.getTime()) / 60_000 : null,
+          memoryLines,
+          languageLine,
+          activePost: context.active || null,
+          otherPosts: context.catalog || null,
+        })
+      : null;
     const request = {
       schemaName: "qualification",
-      system: (merged
+      system: briefing ?? (merged
         ? [
             identity,
             `Services: ${workspace.services}`,
@@ -1007,7 +1034,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? validated.reply.split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?")).join(" ").trim()
       : "";
     const reply = pending && validated.reply
-      ? replyAsksFor(pending, validated.reply) || (languageSample !== null && validated.reply.includes("?"))
+      ? replyAsksFor(pending, validated.reply) || validated.reply.includes("?") || validated.reply.length >= 60
         ? validated.reply
         : [statement, scriptQuestionFor(pending, languageSample ? languageName(languageSample) : null)].filter(Boolean).join(" ")
       : validated.reply ?? fallback;

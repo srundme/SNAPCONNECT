@@ -11,6 +11,7 @@ export * from "./csv";
 export * from "./analytics";
 export * from "./webhooks";
 export * from "./crm";
+export * from "./briefing";
 
 export function pausesBlock(flags: {
   platform: boolean;
