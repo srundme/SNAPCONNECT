@@ -6,8 +6,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { hashPassword } from "better-auth/crypto";
-import { normalizeMetaPayload, can, canAssignWorkspaceRole, replyPromptFields } from "@snapsocial/domain";
+import { can, canAssignWorkspaceRole, externalLeadKeyField, normalizeMetaPayload, questionsFromLines, questionsFromRows, replyEligibility, replyPromptFields } from "@snapsocial/domain";
+import { loadConfig } from "@snapsocial/config";
+import { decryptSecret, listFacebookPosts, listInstagramPosts } from "@snapsocial/integrations";
 import {
+  connectionSender,
   deleteContactData,
   getPrisma,
   ingestEvents,
@@ -18,6 +21,24 @@ import {
 } from "@snapsocial/db";
 import { auth } from "./auth";
 import { requireActor, requireWorkspace } from "./session";
+
+// Simulate buttons drain the shared outbox, which can hold real accounts' jobs too.
+function jobRuntime() {
+  const config = loadConfig();
+  const credentialKey = Buffer.from(config.CREDENTIAL_ENCRYPTION_KEY, "base64");
+  return simulationRuntime({
+    send: connectionSender({
+      keys: { [config.CREDENTIAL_ENCRYPTION_KEY_ID]: credentialKey },
+      instagramGraphBaseUrl: config.META_INSTAGRAM_GRAPH_BASE_URL,
+      facebookGraphBaseUrl: config.META_FACEBOOK_GRAPH_BASE_URL,
+      version: config.META_API_VERSION,
+    }),
+    credentialKeys: { [config.CREDENTIAL_ENCRYPTION_KEY_ID]: credentialKey },
+    zohoClientId: config.ZOHO_CLIENT_ID ?? null,
+    zohoClientSecret: config.ZOHO_CLIENT_SECRET ?? null,
+    zohoAccountsUrl: config.ZOHO_ACCOUNTS_URL,
+  });
+}
 
 export async function login(formData: FormData) {
   const email = String(formData.get("email") ?? "");
@@ -75,7 +96,7 @@ export async function injectSimulation(formData: FormData) {
   if (scenario === "instagram-reply" || scenario === "facebook-reply") {
     const channel = scenario.startsWith("instagram") ? "INSTAGRAM" : "FACEBOOK";
     for (let pass = 0; pass < 8; pass += 1) {
-      const processed = await processAvailableJobs(getPrisma(), simulationRuntime(), 30);
+      const processed = await processAvailableJobs(getPrisma(), jobRuntime(), 30);
       if (processed === 0) break;
     }
     const attempts = await getPrisma().outboundAttempt.findMany({
@@ -99,7 +120,7 @@ export async function injectSimulation(formData: FormData) {
     await ingestEvents(getPrisma(), { channel, mode: "SIMULATION", events: normalizeMetaPayload(channel, body, now), receivedAt: now });
   }
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const processed = await processAvailableJobs(getPrisma(), simulationRuntime(), 30);
+    const processed = await processAvailableJobs(getPrisma(), jobRuntime(), 30);
     if (processed === 0) break;
   }
   revalidatePath("/inbox");
@@ -204,23 +225,51 @@ export async function deleteLeadContact(formData: FormData) {
   redirect("/leads");
 }
 
+export async function saveLeadSync(formData: FormData) {
+  const { actor, workspace } = await requireWorkspace();
+  if (!workspace || !can(actor, "workspace.manage", workspace.id)) redirect("/overview?denied=1");
+  const allowed = new Set(["projectType", "city", "requirement", "budget", "timeframe"]);
+  const requiredLeadFields = formData.getAll("fields").map(String).filter((field) => allowed.has(field));
+  const leadQuestions = questionsFromLines(String(formData.get("questions") ?? ""));
+  await getPrisma().workspace.update({
+    where: { id: workspace.id },
+    data: {
+      zohoSendWhen: String(formData.get("zohoSendWhen") ?? "") === "QUALIFIED" ? "QUALIFIED" : "CONTACTABLE",
+      requiredLeadFields,
+      leadQuestions,
+    },
+  });
+  revalidatePath("/leads");
+}
+
 export async function saveAiSettings(formData: FormData) {
   const { actor, workspace } = await requireWorkspace();
   if (!workspace || !can(actor, "workspace.manage", workspace.id)) redirect("/overview?denied=1");
-  const replyPrompts: Record<string, string> = {};
-  for (const field of replyPromptFields) {
-    replyPrompts[field] = String(formData.get(field) ?? "").trim().slice(0, 500);
-  }
   await getPrisma().workspace.update({
     where: { id: workspace.id },
     data: {
       brandName: String(formData.get("brandName") ?? "").trim().slice(0, 120) || workspace.brandName,
+      agentName: String(formData.get("agentName") ?? "").trim().slice(0, 40) || null,
+      agentPersona: String(formData.get("agentPersona") ?? "").trim().slice(0, 500) || null,
       services: String(formData.get("services") ?? "").trim().slice(0, 500),
       tone: String(formData.get("tone") ?? "").trim().slice(0, 200),
-      replyPrompts,
+      systemPrompt: String(formData.get("systemPrompt") ?? "").trim().slice(0, 4000) || null,
+      leadQuestions: questionsFromRows(
+        formData.getAll("questionLabel").map(String),
+        formData.getAll("questionZoho").map((value, index) => {
+          const chosen = String(value);
+          return chosen === "__custom__" ? String(formData.getAll("questionZohoCustom")[index] ?? "") : chosen;
+        }),
+      ),
     },
   });
+  await getPrisma().zohoConnection.updateMany({
+    where: { workspaceId: workspace.id },
+    data: { externalKeyField: externalLeadKeyField(formData.get("externalKeyField")) },
+  });
   revalidatePath("/ai");
+  revalidatePath("/leads");
+  redirect("/ai?saved=1");
 }
 
 export async function saveRule(formData: FormData) {
@@ -245,4 +294,252 @@ export async function saveRule(formData: FormData) {
     },
   });
   revalidatePath("/posts");
+}
+
+function integrationConfig() {
+  const config = loadConfig();
+  return {
+    config,
+    keys: { [config.CREDENTIAL_ENCRYPTION_KEY_ID]: Buffer.from(config.CREDENTIAL_ENCRYPTION_KEY, "base64") },
+  };
+}
+
+export async function refreshPosts(formData: FormData) {
+  const { actor, workspace } = await requireWorkspace();
+  if (!workspace || !can(actor, "workspace.manage", workspace.id)) redirect("/overview?denied=1");
+  const connectionId = String(formData.get("connectionId") ?? "");
+  const connection = await getPrisma().channelConnection.findFirst({ where: { id: connectionId, workspaceId: workspace.id } });
+  if (!connection) redirect("/posts?error=That account is not in this workspace.");
+  const back = `/posts?connectionId=${connection.id}`;
+  if (connection.mode === "SIMULATION") redirect(`${back}&loaded=sample`);
+  if (!connection.credentialCiphertext) redirect(`${back}&error=${encodeURIComponent("Reconnect this account before loading posts.")}`);
+  const { config, keys } = integrationConfig();
+  let token: string;
+  try {
+    token = decryptSecret(connection.credentialCiphertext, keys);
+  } catch {
+    redirect(`${back}&error=${encodeURIComponent("The saved login could not be read. Reconnect the account.")}`);
+  }
+  let posts;
+  try {
+    posts = connection.channel === "INSTAGRAM"
+      ? await listInstagramPosts({
+          baseUrl: config.META_INSTAGRAM_GRAPH_BASE_URL,
+          version: config.META_API_VERSION,
+          accountId: connection.externalAccountId,
+          token,
+        })
+      : await listFacebookPosts({
+          baseUrl: config.META_FACEBOOK_GRAPH_BASE_URL,
+          version: config.META_API_VERSION,
+          pageId: connection.externalAccountId,
+          token,
+        });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Posts could not be loaded.";
+    redirect(`${back}&error=${encodeURIComponent(message.slice(0, 180))}`);
+  }
+  for (const post of posts) {
+    const publishedAt = post.publishedAt ? new Date(post.publishedAt) : null;
+    await getPrisma().media.upsert({
+      where: { connectionId_externalId: { connectionId: connection.id, externalId: post.externalId } },
+      create: {
+        workspaceId: workspace.id,
+        connectionId: connection.id,
+        channel: connection.channel,
+        externalId: post.externalId,
+        contentType: post.contentType,
+        caption: post.caption,
+        permalink: post.permalink,
+        previewUrl: post.previewUrl,
+        publishedAt: publishedAt && !Number.isNaN(publishedAt.getTime()) ? publishedAt : null,
+        supportStatus: post.supportStatus,
+        unsupportedReason: post.unsupportedReason,
+      },
+      update: {
+        contentType: post.contentType,
+        caption: post.caption,
+        permalink: post.permalink,
+        previewUrl: post.previewUrl,
+        publishedAt: publishedAt && !Number.isNaN(publishedAt.getTime()) ? publishedAt : null,
+        supportStatus: post.supportStatus,
+        unsupportedReason: post.unsupportedReason,
+      },
+    });
+  }
+  redirect(`${back}&loaded=${posts.length}`);
+}
+
+export async function savePostSelection(formData: FormData) {
+  const { actor, workspace } = await requireWorkspace();
+  if (!workspace || !can(actor, "workspace.manage", workspace.id)) redirect("/overview?denied=1");
+  const connectionId = String(formData.get("connectionId") ?? "");
+  const connection = await getPrisma().channelConnection.findFirst({ where: { id: connectionId, workspaceId: workspace.id } });
+  if (!connection) redirect("/posts?error=That account is not in this workspace.");
+  const posts = await getPrisma().media.findMany({ where: { connectionId: connection.id, workspaceId: workspace.id } });
+  const checkedIds = formData.getAll("mediaId").map((item) => String(item)).filter(Boolean).slice(0, 100);
+  const supportedIds = posts.filter((post) => post.supportStatus === "SUPPORTED").map((post) => post.externalId);
+  const allOn = supportedIds.length === 0 || supportedIds.every((id) => checkedIds.includes(id));
+  const coverage = allOn ? "ALL_POSTS" : "SELECTED_POSTS";
+  const selectedMediaIds = coverage === "SELECTED_POSTS" ? checkedIds : [];
+  for (const post of posts) {
+    const opening = String(formData.get(`opening:${post.externalId}`) ?? "").trim().slice(0, 1000);
+    const prompt = String(formData.get(`prompt:${post.externalId}`) ?? "").trim().slice(0, 8000);
+    if (!formData.has(`opening:${post.externalId}`) && !formData.has(`prompt:${post.externalId}`)) continue;
+    await getPrisma().media.update({
+      where: { id: post.id },
+      data: { openingMessage: opening || null, assistantPrompt: prompt || null },
+    });
+  }
+  if (formData.has("projectType")) {
+    const replyPrompts: Record<string, string> = {};
+    for (const field of replyPromptFields) {
+      replyPrompts[field] = String(formData.get(field) ?? "").trim().slice(0, 500);
+    }
+    await getPrisma().workspace.update({ where: { id: workspace.id }, data: { replyPrompts } });
+  }
+  if (coverage === "SELECTED_POSTS" && selectedMediaIds.length === 0) {
+    redirect(`/posts?connectionId=${connection.id}&error=${encodeURIComponent("Your text was saved. Leave at least one post on.")}`);
+  }
+  const template = String(formData.get("template") ?? "").trim().slice(0, 1000);
+  const rules = await getPrisma().triggerRule.findMany({
+    where: { connectionId: connection.id, workspaceId: workspace.id, active: true },
+    orderBy: [{ priority: "desc" }, { id: "asc" }],
+  });
+  const current = rules[0];
+  if (!current) {
+    await getPrisma().triggerRule.create({
+      data: {
+        workspaceId: workspace.id,
+        connectionId: connection.id,
+        name: coverage === "SELECTED_POSTS" ? "Selected posts" : "All posts",
+        priority: 20,
+        coverage,
+        commentFilter: "ALL_ELIGIBLE_COMMENTS",
+        keywords: [],
+        exclusions: ["job"],
+        selectedMediaIds,
+        openingTemplate: template || "Hi, I'm the virtual assistant for SnapServe. Thanks for commenting. Are you looking at this for a business, a creator account, or an agency?",
+        cooldownHours: 24,
+        active: true,
+        activatedAt: new Date(),
+      },
+    });
+  } else {
+    await getPrisma().triggerRule.update({
+      where: { id: current.id },
+      data: {
+        coverage,
+        selectedMediaIds,
+        ...(template ? { openingTemplate: template } : {}),
+      },
+    });
+    if (coverage === "SELECTED_POSTS" && rules.length > 1) {
+      await getPrisma().triggerRule.updateMany({
+        where: { id: { in: rules.slice(1).map((rule) => rule.id) } },
+        data: { active: false },
+      });
+    }
+  }
+  const turnOn = String(formData.get("activate") ?? "") === "1";
+  if (turnOn) {
+    if (connection.automationPaused) await setConnectionPaused(getPrisma(), connection.id, false, actor.userId);
+    if (workspace.automationPaused) {
+      await getPrisma().workspace.update({ where: { id: workspace.id }, data: { automationPaused: false } });
+    }
+  }
+  await getPrisma().auditEvent.create({
+    data: {
+      actorId: actor.userId,
+      workspaceId: workspace.id,
+      action: "rule.coverage",
+      entityType: "TriggerRule",
+      entityId: current?.id,
+      summary: turnOn
+        ? "Replies turned on."
+        : coverage === "SELECTED_POSTS"
+          ? `Replies limited to ${selectedMediaIds.length} posts.`
+          : "Replies set for every post.",
+    },
+  });
+  revalidatePath("/posts");
+  revalidatePath("/ai");
+  redirect(`/posts?connectionId=${connection.id}&saved=1${turnOn ? "&on=1" : ""}`);
+}
+
+export async function sendStaffReply(formData: FormData) {
+  const { actor, workspace } = await requireWorkspace();
+  if (!workspace || !can(actor, "inbox.reply", workspace.id)) redirect("/overview?denied=1");
+  const conversationId = String(formData.get("conversationId") ?? "");
+  const text = String(formData.get("body") ?? "").trim().slice(0, 1000);
+  const back = `/inbox?id=${encodeURIComponent(conversationId)}`;
+  if (!text) redirect(`${back}&error=${encodeURIComponent("Write a reply before sending.")}`);
+  const conversation = await getPrisma().conversation.findFirst({
+    where: { id: conversationId, workspaceId: workspace.id },
+    include: { contact: true },
+  });
+  if (!conversation) redirect("/inbox?error=That conversation is not in this workspace.");
+  const connection = await getPrisma().channelConnection.findFirst({ where: { id: conversation.connectionId, workspaceId: workspace.id } });
+  if (!connection) redirect(`${back}&error=${encodeURIComponent("The channel for this chat is missing.")}`);
+  const eligibility = replyEligibility({
+    now: new Date(),
+    lastUserMessageAt: conversation.lastUserMessageAt,
+    paused: connection.automationPaused || workspace.automationPaused,
+    optedOut: Boolean(conversation.contact.optedOutAt),
+    connectionReady: !connection.revokedAt,
+    ownerAllowsAutomation: false,
+    manual: true,
+  });
+  if (!eligibility.allowed) redirect(`${back}&error=${encodeURIComponent(eligibility.reason ?? "Reply is unavailable.")}`);
+  const participant = await getPrisma().contactIdentity.findFirst({
+    where: { contactId: conversation.contactId, identityType: "MESSAGING_PARTICIPANT" },
+  });
+  if (!participant) redirect(`${back}&error=${encodeURIComponent("This person has not replied in the direct message yet.")}`);
+  if (conversation.owner !== "HUMAN") await takeOver(getPrisma(), conversation.id, actor.userId);
+  const { config, keys } = integrationConfig();
+  const result = await connectionSender({
+    keys,
+    instagramGraphBaseUrl: config.META_INSTAGRAM_GRAPH_BASE_URL,
+    facebookGraphBaseUrl: config.META_FACEBOOK_GRAPH_BASE_URL,
+    version: config.META_API_VERSION,
+  })({
+    connection: {
+      id: connection.id,
+      channel: connection.channel,
+      mode: connection.mode,
+      externalAccountId: connection.externalAccountId,
+      credentialCiphertext: connection.credentialCiphertext,
+    },
+    purpose: "text",
+    recipientId: participant.externalId,
+    text,
+  });
+  if (result.status !== "ACCEPTED") {
+    const reason = result.status === "UNKNOWN"
+      ? "The send was not confirmed, so it was not retried."
+      : result.error;
+    redirect(`${back}&error=${encodeURIComponent(reason.slice(0, 180))}`);
+  }
+  await getPrisma().message.create({
+    data: {
+      workspaceId: workspace.id,
+      connectionId: connection.id,
+      conversationId: conversation.id,
+      author: "STAFF",
+      body: text,
+      externalMessageId: result.providerMessageId,
+    },
+  });
+  await getPrisma().auditEvent.create({
+    data: {
+      actorId: actor.userId,
+      workspaceId: workspace.id,
+      action: "conversation.reply",
+      entityType: "Conversation",
+      entityId: conversation.id,
+      summary: "Staff sent a reply.",
+    },
+  });
+  revalidatePath("/inbox");
+  redirect(back);
 }

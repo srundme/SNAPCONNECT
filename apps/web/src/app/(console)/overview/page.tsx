@@ -43,7 +43,12 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
               </span>
             </li>
           ))}
-          {connections.length === 0 ? <li className="px-4 py-6 text-sm text-[var(--color-muted)]">No channel is connected.</li> : null}
+          {connections.length === 0 ? (
+            <li className="px-4 py-6 text-sm text-[var(--color-muted)]">
+              No channel is connected.{" "}
+              {workspace.mode === "INTEGRATION" ? <Link href="/integrations" className="font-medium text-[var(--color-accent-ink)]">Connect Instagram or Facebook</Link> : null}
+            </li>
+          ) : null}
         </ul>
       </Panel>
     </section>

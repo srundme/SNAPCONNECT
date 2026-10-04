@@ -1,3 +1,4 @@
+import { parsePhone } from "./parse";
 import type { CrmState, PreferredChannel, ProjectType, Qualification, WorkType } from "./types";
 
 export type LeadSnapshot = {
@@ -157,6 +158,379 @@ export const defaultReplyPrompts: Record<ReplyPromptField, string> = {
   permission: "May the team call or WhatsApp you about this project?",
   closing: "Thanks. I have the project details and the team can follow up on your preferred channel.",
 };
+
+export const leadFieldOptions = ["projectType", "city", "requirement", "budget", "timeframe"] as const;
+export type ChecklistField = (typeof leadFieldOptions)[number];
+export type ZohoSendWhen = "CONTACTABLE" | "QUALIFIED";
+
+export function parseLeadFields(value: unknown): ChecklistField[] {
+  const selected = new Set(Array.isArray(value) ? value.map(String) : []);
+  return leadFieldOptions.filter((field) => selected.has(field));
+}
+
+export function parseZohoSendWhen(value: unknown): ZohoSendWhen {
+  return value === "QUALIFIED" ? "QUALIFIED" : "CONTACTABLE";
+}
+
+export function readyForZoho(qualification: QualificationDecision, sendWhen: ZohoSendWhen): boolean {
+  if (qualification.qualification === "DISQUALIFIED") return false;
+  if (sendWhen === "QUALIFIED") return qualification.qualification === "QUALIFIED";
+  return qualification.contactable;
+}
+
+export type LeadQuestion = { id: string; label: string; kind: "name" | "phone" | "yesno" | "text"; zohoField: string | null };
+
+const RESERVED_ZOHO_FIELDS = new Set(["Lead_Source", "External_Lead_Key", "External_Lead_Key__c"]);
+
+export function externalLeadKeyField(value: unknown): string {
+  const text = String(value ?? "").trim();
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,60}$/.test(text) || text.includes("__") || text === "Lead_Source") return "External_Lead_Key";
+  return text;
+}
+
+export function sanitizeZohoField(value: unknown): string | null {
+  const text = String(value ?? "").trim();
+  if (!text || text === "Description") return null;
+  if (RESERVED_ZOHO_FIELDS.has(text)) return null;
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,60}$/.test(text)) return null;
+  return text;
+}
+
+export function defaultZohoField(question: Pick<LeadQuestion, "id" | "label" | "kind">): string | null {
+  if (question.kind === "name") return "Last_Name";
+  if (question.kind === "phone") return "Phone";
+  if (question.id === "company-name" || /\bcompany\b/.test(question.label.toLowerCase())) return "Company";
+  if (/\bemail\b/.test(question.label.toLowerCase())) return "Email";
+  return null;
+}
+
+export function questionKind(label: string): LeadQuestion["kind"] {
+  const text = label.toLowerCase();
+  if (/\bdemo\b|interested/.test(text)) return "yesno";
+  if (/phone|contact number|mobile|\bnumber\b/.test(text)) return "phone";
+  if (/\bname\b/.test(text) && !/company|business/.test(text)) return "name";
+  return "text";
+}
+
+export function questionId(label: string): string {
+  const id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+  return id || "question";
+}
+
+export function parseLeadQuestions(value: unknown): LeadQuestion[] {
+  if (!Array.isArray(value)) return [];
+  const used = new Set<string>();
+  const questions: LeadQuestion[] = [];
+  for (const item of value) {
+    const record = item && typeof item === "object" ? item as Record<string, unknown> : null;
+    const label = String(record?.label ?? "").trim().slice(0, 180);
+    if (!label) continue;
+    let id = String(record?.id ?? questionId(label)).replace(/[^a-z0-9-]/g, "").slice(0, 40) || questionId(label);
+    while (used.has(id)) id = `${id}-2`.slice(0, 40);
+    used.add(id);
+    const kind = record?.kind === "name" || record?.kind === "phone" || record?.kind === "yesno" || record?.kind === "text" ? record.kind : questionKind(label);
+    const zohoField = record && "zohoField" in record ? sanitizeZohoField(record.zohoField) : defaultZohoField({ id, label, kind });
+    questions.push({ id, label, kind, zohoField });
+    if (questions.length >= 8) break;
+  }
+  return questions;
+}
+
+export function questionsFromLines(text: string): LeadQuestion[] {
+  return parseLeadQuestions(text.split("\n").map((line) => line.trim()).filter(Boolean).map((label) => ({ label })));
+}
+
+export function questionsFromRows(labels: string[], fields: string[]): LeadQuestion[] {
+  return parseLeadQuestions(labels.map((label, index) => {
+    const trimmed = label.trim();
+    const submitted = (fields[index] ?? "").trim();
+    return submitted ? { label: trimmed, zohoField: submitted } : { label: trimmed };
+  }));
+}
+
+export function zohoValuesFromQuestions(input: {
+  questions: LeadQuestion[];
+  answers: Record<string, string>;
+  name: string | null;
+  phoneE164: string | null;
+}): { fields: Record<string, string>; lines: string[] } {
+  const fields: Record<string, string> = {};
+  const lines: string[] = [];
+  for (const question of input.questions) {
+    const raw = question.kind === "name" ? input.name : question.kind === "phone" ? input.phoneE164 : input.answers[question.id];
+    const text = raw?.trim();
+    if (!text) continue;
+    if (!question.zohoField) lines.push(`${question.label}: ${text}`);
+    else fields[question.zohoField] = text;
+  }
+  return { fields, lines };
+}
+
+export function questionBrief(questions: LeadQuestion[]): string {
+  const lines = questions.map((question, index) => {
+    if (question.kind === "name") return `${index + 1}. ${question.label}. Record the answer as chosenName.`;
+    if (question.kind === "phone") return `${index + 1}. ${question.label}. Record the answer as phoneRaw, and set phonePermission to yes when they give a number the team may use.`;
+    if (question.kind === "yesno") return `${index + 1}. ${question.label}. Record q:${question.id} as yes or no.`;
+    return `${index + 1}. ${question.label}. Record q:${question.id} with their words.`;
+  });
+  return [
+    "This chat is a SnapServe voice agent working in text. Do the same job a voice agent does on a call.",
+    "After the opening, explain the voice agent in one sentence, then ask the first missing question.",
+    "If they ask how voice AI works or about SnapServe, answer that question in one sentence, then return to the script and ask the next missing question.",
+    "Ask these questions one at a time, in this order. Skip a question that is already recorded.",
+    ...lines,
+    "Do not ask about budget, fees, a city, or a survey.",
+    "If they want a demo, record the demo question as yes and keep asking what is still missing. Do not say the demo is booked.",
+    "A no on a yes-or-no question is a cold lead. Stop selling and do not ask the remaining questions.",
+    "Do not invent an answer. Never say a CRM record or Zoho lead was created.",
+  ].join("\n");
+}
+
+const YES_ANSWER = /^(yes|yeah|yep|sure|ok|okay|interested|i am|we are|we would|sounds good|haan|han|haa|ha|ji|ji haan|bilkul|theek|thik|aama|aamaa|aamam|seri|sari|venum)\b/i;
+const NO_ANSWER = /^(no|nope|not interested|not now|later|maybe later|nahi|nahin|nahi chahiye|abhi nahi|illa|illai|vendam|venam|vendaam|apram|aprom)\b/i;
+
+const ENGLISH_WORDS = /\b(the|is|are|i|we|you|my|our|what|how|want|need|have|team|calls?|yes|no|ok|okay|thanks?|please|company|name|number|demo|month)\b/gi;
+
+export function looksEnglish(text: string): boolean {
+  if (/[^\x00-\x7F‘’“”…–—₹]/.test(text)) return false;
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length <= 2) return true;
+  return (text.match(ENGLISH_WORDS)?.length ?? 0) / words.length >= 0.3;
+}
+
+export function screenLead(input: {
+  questions: LeadQuestion[];
+  answers: Record<string, string>;
+  name: string | null;
+  phoneE164: string | null;
+}): { ready: boolean; cold: boolean; missing: string[] } {
+  const missing: string[] = [];
+  let cold = false;
+  for (const question of input.questions) {
+    if (question.kind === "name") {
+      if (!input.name?.trim()) missing.push(question.label);
+      continue;
+    }
+    if (question.kind === "phone") {
+      if (!input.phoneE164) missing.push(question.label);
+      continue;
+    }
+    const answer = input.answers[question.id]?.trim() ?? "";
+    if (!answer) {
+      missing.push(question.label);
+      continue;
+    }
+    if (question.kind === "yesno" && NO_ANSWER.test(answer)) cold = true;
+    if (question.kind === "yesno" && !YES_ANSWER.test(answer) && !NO_ANSWER.test(answer)) missing.push(question.label);
+  }
+  return { ready: !cold && missing.length === 0, cold, missing };
+}
+
+export function absorbTranscript(input: {
+  questions: LeadQuestion[];
+  messages: { author: string; body: string }[];
+  name: string | null;
+  phoneE164: string | null;
+  answers: Record<string, string>;
+  phoneRegion?: string;
+}): { name: string | null; phoneE164: string | null; answers: Record<string, string> } {
+  const answers = { ...input.answers };
+  let name = input.name?.trim() || null;
+  let phoneE164 = input.phoneE164;
+  let lastAi = "";
+  for (const message of input.messages) {
+    if (message.author === "AI") {
+      lastAi = message.body;
+      continue;
+    }
+    if (message.author !== "PROSPECT") continue;
+    const text = message.body.replace(/[‘’`]/g, "'").trim();
+    if (!text) continue;
+    const plain = !YES_ANSWER.test(text) && !NO_ANSWER.test(text) && !/\?$/.test(text);
+    const target = input.questions.find((question) => lastAi.includes(scriptQuestion(question)) || askedAbout(question, lastAi));
+    if (target) {
+      const direct = directAnswer(target, text, plain, input.phoneRegion ?? "IN");
+      if (direct) {
+        if (target.kind === "name") name = direct;
+        else if (target.kind === "phone") phoneE164 = direct;
+        else answers[target.id] = direct;
+        continue;
+      }
+    }
+    if (!phoneE164) {
+      const phone = parsePhone(text, input.phoneRegion ?? "IN");
+      if (phone.kind === "valid") phoneE164 = phone.e164;
+    }
+    for (const question of input.questions) {
+      const askedThis = lastAi.includes(scriptQuestion(question)) || askedAbout(question, lastAi);
+      if (question.kind === "name" && !name) name = nameFrom(text, askedThis && plain);
+      if (answers[question.id]) continue;
+      if (/company/i.test(question.label)) {
+        const found = text.match(/\bcompany(?:\s+name)?\s+is\s+([A-Za-z][A-Za-z0-9 &'-]{1,40})/i) ?? text.match(/\b([A-Za-z][A-Za-z0-9 &'-]{1,40})\s+is my company\b/i);
+        if (found?.[1]) answers[question.id] = found[1].trim();
+        else if (askedThis && plain && text.length <= 60) answers[question.id] = text.replace(/[.!]+$/, "");
+      } else if (/volume|calls a month|per month/i.test(question.label)) {
+        const amount = text.replace(/,/g, "").match(/\b(\d{2,7})\b/);
+        if (amount && Number(amount[1]) >= 50 && !/^0?\d{10}$/.test(amount[1])) answers[question.id] = amount[1];
+        else if (askedThis && plain && /\d/.test(text) && text.length <= 60) answers[question.id] = text;
+      } else if (/team/i.test(question.label)) {
+        const amount = text.match(/\b(\d{1,4})\b/);
+        if (amount && Number(amount[1]) > 0 && Number(amount[1]) < 5000 && (text.length < 40 || askedThis)) answers[question.id] = amount[1];
+      } else if (/issue|why/i.test(question.label) && ((text.length > 30 && /\b(call|lead|follow)/i.test(text)) || (askedThis && plain && text.length > 8))) {
+        answers[question.id] = text.slice(0, 180);
+      } else if (question.kind === "yesno") {
+        const wantsDemo = /\bdemo\b/i.test(text) && /\b(yes|want|book|attend)\b/i.test(text);
+        const yesAfterDemo = /\bdemo\b/i.test(lastAi) && YES_ANSWER.test(text);
+        const noAfterDemo = /\bdemo\b/i.test(lastAi) && NO_ANSWER.test(text);
+        if (wantsDemo || yesAfterDemo) answers[question.id] = "yes";
+        else if (noAfterDemo) answers[question.id] = "no";
+      }
+    }
+  }
+  return { name, phoneE164, answers };
+}
+
+export function scriptedReply(input: {
+  questions: LeadQuestion[];
+  answers: Record<string, string>;
+  name: string | null;
+  phoneE164: string | null;
+  latestUser: string;
+}): string {
+  const screen = screenLead(input);
+  if (screen.cold) return "Thanks for telling me. I'll leave this here.";
+  if (screen.ready) return "Thanks. The team has these details and will take it from here.";
+  const next = input.questions.find((question) => screen.missing.includes(question.label));
+  const ask = next ? scriptQuestion(next) : "What should I know next?";
+  const asked = /\b(how|what|works|voice|snapserve|price|cost)\b/i.test(input.latestUser);
+  const explain = "SnapServe is an AI voice agent. It places and answers calls, follows your script, and passes a serious enquiry to your team.";
+  return asked ? `${explain} ${ask}` : ask;
+}
+
+const NOT_A_NAME = /^(looking|interested|from|here|just|not|fine|good|ok|okay|ready|sure|also|still|very|really|the|a|an|in|at|on|with|planning|trying|working|calling|asking|new|back|done|busy|happy|glad|excited|curious|thinking|available)$/i;
+
+function nameFrom(text: string, bareAllowed: boolean): string | null {
+  const intro = text.match(/\b(?:i'm|i am|im|my name is|name is|this is|en peru|enoda peru|mera naam|naam|naan)\s+([A-Za-z]{2,30})\b/i)?.[1]
+    ?? text.match(/\b([A-Za-z]{2,30})\s+(?:hai mera naam|en peru|naan dhaan|here)\b/i)?.[1];
+  const bare = bareAllowed ? text.match(/^([A-Za-z]{2,30})(?:\s+[A-Za-z]{1,30}){0,2}[.!]?$/)?.[1] : undefined;
+  const picked = [intro, bare].find((word) => word && !NOT_A_NAME.test(word) && !/ing$/i.test(word));
+  return picked ? picked.charAt(0).toUpperCase() + picked.slice(1) : null;
+}
+
+function directAnswer(question: LeadQuestion, text: string, plain: boolean, region: string): string | null {
+  if (question.kind === "phone") {
+    const phone = parsePhone(text, region);
+    return phone.kind === "valid" ? phone.e164 : null;
+  }
+  if (question.kind === "yesno") {
+    if (YES_ANSWER.test(text)) return "yes";
+    if (NO_ANSWER.test(text)) return "no";
+    return null;
+  }
+  if (!plain) return null;
+  if (question.kind === "name") return nameFrom(text, true);
+  if (/company/i.test(question.label)) {
+    const found = text.match(/\bcompany(?:\s+name)?\s+is\s+([A-Za-z][A-Za-z0-9 &'-]{1,40})/i);
+    if (found?.[1]) return found[1].trim();
+    return text.length <= 60 && !/\balready\b/i.test(text) ? text.replace(/[.!]+$/, "") : null;
+  }
+  if (/volume|month|team/i.test(question.label)) {
+    const amount = text.replace(/,/g, "").match(/\b(\d{1,7})\b/);
+    return amount ? amount[1] : null;
+  }
+  if (/issue|why/i.test(question.label)) return text.length > 8 ? text.slice(0, 180) : null;
+  return text.length <= 120 ? text : null;
+}
+
+function askedAbout(question: LeadQuestion, aiText: string): boolean {
+  const ask = aiText.split(/(?<=[.!])\s+/).filter((part) => part.includes("?")).join(" ").toLowerCase();
+  if (!ask) return false;
+  if (question.kind === "name") return /\b(name|peru|naam)\b/.test(ask) && !/company|business|brand|organi[sz]ation/.test(ask);
+  if (question.kind === "phone") return /\b(number|phone|mobile|contact|no\.)\b/.test(ask);
+  if (question.kind === "yesno") return /\bdemo\b/.test(ask);
+  if (/company/i.test(question.label)) return /company|business name|brand|organi[sz]ation/.test(ask);
+  if (/volume|month/i.test(question.label)) return /calls?\b.*\b(month|monthly|maasam|masam|mahine|mahina)|call volume|how many calls|kitne calls|evlo calls/.test(ask);
+  if (/team/i.test(question.label)) return /team|telecaller|agents|people|staff|per irukanga|log hain/.test(ask) && !/how many calls|kitne calls|evlo calls/.test(ask);
+  if (/issue|why/i.test(question.label)) return /wrong|issue|problem|challenge|why|struggl|pain|prachanai|pirachanai|dikkat|samasya|kyun|enna problem/.test(ask);
+  return false;
+}
+
+export function scriptQuestionFor(question: LeadQuestion): string {
+  return scriptQuestion(question);
+}
+
+export function replyAsksFor(question: LeadQuestion, reply: string): boolean {
+  return reply.includes(scriptQuestion(question)) || askedAbout(question, reply);
+}
+
+function scriptQuestion(question: LeadQuestion): string {
+  if (question.kind === "name") return "What is your name?";
+  if (question.kind === "phone") return "What phone number should the team use?";
+  if (/company/i.test(question.label)) return "What is the company name?";
+  if (/team/i.test(question.label)) return "How many people are on the telecalling team?";
+  if (/issue|why/i.test(question.label)) return "What is going wrong with the calls today?";
+  if (/volume|month/i.test(question.label)) return "About how many calls do you handle in a month?";
+  if (question.kind === "yesno") return "Do you want to attend a demo?";
+  return question.label;
+}
+
+export function collectionBrief(fields: ChecklistField[], sendWhen: ZohoSendWhen): string {
+  const labels: Record<ChecklistField, string> = {
+    projectType: "whether this is for a business, a creator, or an agency",
+    city: "the city",
+    requirement: "what they need",
+    budget: "the budget, and record a decline if they will not share it",
+    timeframe: "when they want to start, and record a decline if they will not share it",
+  };
+  const extra = fields.map((field) => labels[field]);
+  return [
+    "Collect one detail at a time.",
+    "Always ask for a phone number and whether the team may call or WhatsApp that number.",
+    extra.length ? `Also collect: ${extra.join("; ")}.` : "Do not ask for a city, budget, or timeline unless the person brings it up.",
+    sendWhen === "QUALIFIED"
+      ? "The lead is ready only after the phone, permission, and every detail above are recorded."
+      : "The lead can be handed on once the phone number and permission are recorded. Keep asking for the other details when the person is willing.",
+    "Never say a CRM record, Zoho lead, or booking was created.",
+  ].join("\n");
+}
+
+export function openingForPost(ruleTemplate: string, postOpening: string | null | undefined): string {
+  const custom = postOpening?.trim();
+  return custom ? custom.slice(0, 1000) : ruleTemplate;
+}
+
+export function postSystemPrompt(prompt: string | null | undefined): string | null {
+  const text = prompt?.trim();
+  return text ? text.slice(0, 8000) : null;
+}
+
+export type PostNote = { id: string; caption: string; prompt: string };
+
+export function assistantContext(input: {
+  accountPrompt: string | null | undefined;
+  activePostId: string | null;
+  posts: PostNote[];
+}): { account: string | null; active: string | null; catalog: string | null } {
+  const account = input.accountPrompt?.trim().slice(0, 2000) || null;
+  const activePost = input.posts.find((post) => post.id === input.activePostId);
+  const active = activePost?.prompt.trim().slice(0, 2000) || null;
+  const others = [
+    ...input.posts.filter((post) => post.id !== input.activePostId && post.prompt.trim()),
+    ...input.posts.filter((post) => post.id !== input.activePostId && !post.prompt.trim()),
+  ];
+  const lines: string[] = [];
+  let used = 0;
+  for (const post of others) {
+    const caption = post.caption.trim().replace(/\s+/g, " ").slice(0, 80);
+    const note = post.prompt.trim().replace(/\s+/g, " ").slice(0, 160);
+    if (!caption && !note) continue;
+    const line = note ? `- ${caption || "Post"}: ${note}` : `- ${caption}`;
+    if (lines.length >= 20 || used + line.length > 2400) break;
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return { account, active, catalog: lines.length ? lines.join("\n") : null };
+}
 
 export function resolveReplyPrompts(value: unknown): Record<ReplyPromptField, string> {
   const record = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};

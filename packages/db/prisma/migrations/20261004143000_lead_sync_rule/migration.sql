@@ -1,0 +1,2 @@
+ALTER TABLE "Workspace" ADD COLUMN "zohoSendWhen" TEXT NOT NULL DEFAULT 'CONTACTABLE';
+ALTER TABLE "Workspace" ADD COLUMN "requiredLeadFields" TEXT[] NOT NULL DEFAULT ARRAY['projectType']::TEXT[];

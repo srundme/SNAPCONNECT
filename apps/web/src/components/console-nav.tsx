@@ -30,9 +30,9 @@ const groups = [
   {
     label: "Setup",
     items: [
-      ["/posts", "Posts & Rules", SquarePen],
-      ["/ai", "AI settings", Bot],
-      ["/integrations", "Integrations", Plug],
+      ["/posts", "Replies", SquarePen],
+      ["/ai", "Agent", Bot],
+      ["/integrations", "Connections", Plug],
       ["/team", "Team", UsersRound],
     ],
   },
@@ -40,7 +40,7 @@ const groups = [
     label: "System",
     items: [
       ["/audit", "Audit", ScrollText],
-      ["/health", "System health", Activity],
+      ["/health", "Health", Activity],
     ],
   },
 ] as const;
@@ -55,7 +55,7 @@ export function ConsoleNav({ showPlatform, viewer }: { showPlatform: boolean; vi
         if (items.length === 0) return null;
         return (
           <div key={group.label}>
-            <p className="px-2 pb-1 text-[11px] font-medium text-[var(--color-muted)]">{group.label}</p>
+            <p className="px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/40">{group.label}</p>
             <div className="grid gap-0.5">
               {items.map(([href, label, Icon]) => (
                 <NavLink key={href} href={href} label={label} icon={Icon} active={pathname === href || pathname.startsWith(`${href}/`)} />
@@ -83,11 +83,11 @@ function NavLink({
     <Link
       href={href}
       className={clsx(
-        "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm",
-        active ? "bg-[var(--color-paper)] font-medium text-[var(--color-ink)]" : "text-[#3d4b57] hover:bg-[var(--color-paper)]",
+        "flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm",
+        active ? "bg-white font-semibold text-[var(--color-shell)]" : "text-white/75 hover:bg-white/8 hover:text-white",
       )}
     >
-      <Icon size={16} strokeWidth={1.75} aria-hidden />
+      <Icon size={18} strokeWidth={1.9} aria-hidden />
       {label}
     </Link>
   );

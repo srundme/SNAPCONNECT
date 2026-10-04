@@ -2,17 +2,37 @@ import { createServer } from "node:http";
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { loadConfig, loadDotEnv } from "@snapsocial/config";
-import { getPrisma, processAvailableJobs, simulationRuntime } from "@snapsocial/db";
-import { fixtureLlm, ollamaLlm } from "@snapsocial/integrations";
+import { connectionSender, getPrisma, processAvailableJobs, simulationRuntime } from "@snapsocial/db";
+import { fixtureLlm, ollamaLlm, sarvamLlm, sarvamTranscriber } from "@snapsocial/integrations";
 
 loadDotEnv(process.cwd());
 
 const config = loadConfig();
+if (config.LLM_MODE === "sarvam" && !config.SARVAM_API_KEY) {
+  throw new Error("SARVAM_API_KEY is required when LLM_MODE is sarvam.");
+}
 const db = getPrisma();
+const credentialKey = Buffer.from(config.CREDENTIAL_ENCRYPTION_KEY, "base64");
 const runtime = simulationRuntime({
-  llm: config.LLM_MODE === "ollama"
-    ? ollamaLlm({ baseUrl: config.OLLAMA_BASE_URL, model: config.LLM_MODEL, maxOutputTokens: config.LLM_MAX_OUTPUT_TOKENS })
-    : fixtureLlm(),
+  llm: config.LLM_MODE === "sarvam"
+    ? sarvamLlm({
+        apiKey: config.SARVAM_API_KEY ?? "",
+        maxOutputTokens: config.LLM_MAX_OUTPUT_TOKENS,
+      })
+    : config.LLM_MODE === "ollama"
+      ? ollamaLlm({ baseUrl: config.OLLAMA_BASE_URL, model: config.LLM_MODEL, maxOutputTokens: config.LLM_MAX_OUTPUT_TOKENS })
+      : fixtureLlm(),
+  send: connectionSender({
+    keys: { [config.CREDENTIAL_ENCRYPTION_KEY_ID]: credentialKey },
+    instagramGraphBaseUrl: config.META_INSTAGRAM_GRAPH_BASE_URL,
+    facebookGraphBaseUrl: config.META_FACEBOOK_GRAPH_BASE_URL,
+    version: config.META_API_VERSION,
+  }),
+  credentialKeys: { [config.CREDENTIAL_ENCRYPTION_KEY_ID]: credentialKey },
+  zohoClientId: config.ZOHO_CLIENT_ID ?? null,
+  zohoClientSecret: config.ZOHO_CLIENT_SECRET ?? null,
+  zohoAccountsUrl: config.ZOHO_ACCOUNTS_URL,
+  ...(config.SARVAM_API_KEY ? { transcribe: sarvamTranscriber({ apiKey: config.SARVAM_API_KEY }) } : {}),
 });
 
 let stopping = false;
@@ -21,7 +41,7 @@ const queue = new Queue("snapsocial-outbox", { connection: redis });
 const worker = new Worker("snapsocial-outbox", async (job) => {
   await processAvailableJobs(db, runtime, 10);
   return { outboxJobId: job.data.outboxJobId ?? null };
-}, { connection: redis, concurrency: 1 });
+}, { connection: redis, concurrency: 1, lockDuration: 600_000 });
 
 async function tick() {
   await db.workerHeartbeat.upsert({

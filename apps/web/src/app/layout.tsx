@@ -7,7 +7,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = { title: productName, description: "Internal inbox for Instagram and Facebook qualification." };
+export const metadata: Metadata = { title: productName, description: "Shared inbox that turns Instagram and Facebook comments into leads." };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

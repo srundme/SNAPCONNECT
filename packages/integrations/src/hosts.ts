@@ -1,4 +1,4 @@
-const META_HOSTS = new Set(["graph.facebook.com", "graph.instagram.com", "www.facebook.com", "www.instagram.com"]);
+const META_HOSTS = new Set(["graph.facebook.com", "graph.instagram.com", "api.instagram.com", "www.facebook.com", "www.instagram.com"]);
 const ZOHO_ACCOUNT_HOSTS = new Set([
   "accounts.zoho.com",
   "accounts.zoho.eu",

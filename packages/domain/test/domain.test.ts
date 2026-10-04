@@ -7,19 +7,35 @@ import {
   cohortFunnel,
   crmCoverage,
   dedupKey,
+  absorbTranscript,
+  looksEnglish,
   deterministicIntent,
+  requestsTeamSwitch,
   displayLastName,
   duplicateCheckFields,
   evaluateQualification,
   demoQualificationSettings,
   nextReplyPrompt,
+  openingForPost,
+  parseLeadFields,
+  parseLeadQuestions,
+  questionsFromRows,
+  zohoValuesFromQuestions,
+  readyForZoho,
+  screenLead,
+  scriptedReply,
+  postSystemPrompt,
+  assistantContext,
   resolveReplyPrompts,
   inferenceSlotAvailable,
   manualQualification,
   normalizeMetaPayload,
   openingEligibility,
   parseBudget,
+  platformReplyBlock,
+  withAutomationDisclosure,
   parsePhone,
+  projectTypeFromText,
   replyEligibility,
   routingDecision,
   selectRule,
@@ -151,6 +167,13 @@ describe("qualification", () => {
     expect(decision.qualification).toBe("QUALIFIED");
   });
 
+  it("records a SnapServe business or creator answer as an account type", () => {
+    expect(projectTypeFromText("a business")).toBe("commercial");
+    expect(projectTypeFromText("an agency")).toBe("commercial");
+    expect(projectTypeFromText("a creator account")).toBe("other");
+    expect(projectTypeFromText("a home")).toBe("residential");
+  });
+
   it("uses an edited question for the next missing detail", () => {
     const prompts = resolveReplyPrompts({ city: "Which city is the site in?" });
     expect(nextReplyPrompt({ ...emptyLead, projectType: "residential" }, demoQualificationSettings, prompts)).toEqual({
@@ -178,6 +201,53 @@ describe("rules and eligibility", () => {
     active: true,
     activatedAt: new Date("2026-10-01T00:00:00Z"),
   };
+
+  it("uses a post opening and prompt when that post has its own copy", () => {
+    expect(openingForPost("Default hello", "  Ask about this reel.  ")).toBe("Ask about this reel.");
+    expect(openingForPost("Default hello", "   ")).toBe("Default hello");
+    expect(parseLeadFields(["city", "nope", "projectType"])).toEqual(["projectType", "city"]);
+    expect(readyForZoho({ qualification: "CONTACTABLE", reasons: [], missing: ["city"], contactable: true }, "CONTACTABLE")).toBe(true);
+    expect(readyForZoho({ qualification: "CONTACTABLE", reasons: [], missing: ["city"], contactable: true }, "QUALIFIED")).toBe(false);
+    const screened = screenLead({
+      questions: [
+        { id: "person-name", label: "Person name", kind: "name", zohoField: "Last_Name" },
+        { id: "demo", label: "Are you interested to attend the demo?", kind: "yesno", zohoField: null },
+      ],
+      answers: { demo: "no" },
+      name: "Asha",
+      phoneE164: "+919845012345",
+    });
+    expect(screened.cold).toBe(true);
+    expect(screened.ready).toBe(false);
+    const mapped = questionsFromRows(
+      ["Person name", "Company name", "Contact number", "Why AI calling may help"],
+      ["Last_Name", "Company", "Phone", ""],
+    );
+    expect(mapped.map((question) => question.zohoField)).toEqual(["Last_Name", "Company", "Phone", null]);
+    expect(parseLeadQuestions([{ id: "company-name", label: "Company name" }])[0]?.zohoField).toBe("Company");
+    const placed = zohoValuesFromQuestions({
+      questions: mapped,
+      answers: { "company-name": "SnapServe", "why-ai-calling-may-help": "The team cannot cover night calls" },
+      name: "Asha",
+      phoneE164: "+919845012345",
+    });
+    expect(placed.fields).toMatchObject({ Last_Name: "Asha", Company: "SnapServe", Phone: "+919845012345" });
+    expect(placed.lines.join(" ")).toContain("night calls");
+    expect(postSystemPrompt(" Ask the city, then the budget. ")).toBe("Ask the city, then the budget.");
+    expect(postSystemPrompt("")).toBeNull();
+    const merged = assistantContext({
+      accountPrompt: "We help businesses and creators.",
+      activePostId: "post-1",
+      posts: [
+        { id: "post-1", caption: "Every call counts", prompt: "Ask if this is for a business." },
+        { id: "post-2", caption: "Rural connect", prompt: "Ask which district they work in." },
+      ],
+    });
+    expect(merged.account).toContain("businesses");
+    expect(merged.active).toContain("business");
+    expect(merged.catalog).toContain("Rural connect");
+    expect(merged.catalog).toContain("district");
+  });
 
   it("covers new posts with keywords and ignores old comments", () => {
     const match = selectRule({
@@ -334,6 +404,19 @@ describe("webhooks", () => {
     const fbEdit = fb.find((event) => event.kind === "comment" && event.action === "edit");
     expect(igComment && fbComment && dedupKey("INSTAGRAM", igComment)).not.toBe(fbComment && dedupKey("FACEBOOK", fbComment));
     expect(fbEdit?.kind).toBe("comment");
+    expect(fbComment && fbComment.kind === "comment" && fbComment.isAd).toBe(false);
+    const inactive = normalizeMetaPayload("FACEBOOK", {
+      object: "page",
+      entry: [{ id: "1", changes: [{ field: "feed", value: { item: "comment", verb: "add", comment_id: "c-organic", post_id: "1_2", sender_id: "9", message: "Hi", post: { promotion_status: "inactive", status_type: "added_photos" } } }] }],
+    }, new Date("2026-10-04T00:00:00Z"));
+    const organic = inactive.find((event) => event.kind === "comment");
+    expect(organic && organic.kind === "comment" && organic.isAd).toBe(false);
+    const promoted = normalizeMetaPayload("FACEBOOK", {
+      object: "page",
+      entry: [{ id: "1", changes: [{ field: "feed", value: { item: "comment", verb: "add", comment_id: "c-ad", post_id: "1_2", sender_id: "9", message: "Hi", post: { promotion_status: "active" } } }] }],
+    }, new Date("2026-10-04T00:00:00Z"));
+    const ad = promoted.find((event) => event.kind === "comment");
+    expect(ad && ad.kind === "comment" && ad.isAd).toBe(true);
     expect(fb.some((event) => event.kind === "ignore" && event.reason.includes("Non-message"))).toBe(true);
     const message = fb.find((event) => event.kind === "message");
     expect(message && message.kind === "message" && message.referralCommentId).toBe("shared-native-id-42");
@@ -392,7 +475,113 @@ describe("ai validation", () => {
     expect(result.reply).toBeNull();
     expect(result.updates).toHaveLength(0);
     expect(deterministicIntent("please talk to a human").human).toBe(true);
+    expect(deterministicIntent("I want to talk to a human agent").human).toBe(true);
+    expect(deterministicIntent("I need the AI Voice agent for my business").human).toBe(false);
+    expect(deterministicIntent("I want the voice ai to qualify the leads and my human team can continue on follow-up").human).toBe(false);
+    expect(requestsTeamSwitch("please switch me to your sales team")).toBe(true);
+    expect(requestsTeamSwitch("can I talk to a human")).toBe(true);
+    expect(requestsTeamSwitch("I want the voice ai to qualify the leads and my human team can continue on follow-up")).toBe(false);
+    expect(requestsTeamSwitch("Yes can u book me a demo")).toBe(false);
+    const questions = [
+      { id: "person-name", label: "Person name", kind: "name" as const, zohoField: "Last_Name" },
+      { id: "company-name", label: "Company name", kind: "text" as const, zohoField: "Company" },
+      { id: "contact-number", label: "Contact number", kind: "phone" as const, zohoField: "Phone" },
+      { id: "team-size", label: "Current telecaller team size", kind: "text" as const, zohoField: null },
+      { id: "demo", label: "Are you interested to attend the demo?", kind: "yesno" as const, zohoField: null },
+    ];
+    const absorbed = absorbTranscript({
+      questions,
+      messages: [
+        { author: "PROSPECT", body: "I'm Gopi from Kerala" },
+        { author: "PROSPECT", body: "Consoling is my company name" },
+        { author: "PROSPECT", body: "6383653279" },
+        { author: "AI", body: "Are you interested in attending the demo?" },
+        { author: "PROSPECT", body: "Yes" },
+      ],
+      name: null,
+      phoneE164: null,
+      answers: {},
+    });
+    expect(absorbed.name).toBe("Gopi");
+    expect(absorbed.phoneE164).toBe("+916383653279");
+    expect(absorbed.answers["company-name"]).toBe("Consoling");
+    expect(absorbed.answers.demo).toBe("yes");
+    expect(scriptedReply({ ...absorbed, questions, latestUser: "Yes" })).toBe("How many people are on the telecalling team?");
+    const answered = absorbTranscript({
+      questions,
+      messages: [
+        { author: "AI", body: "What is your name?" },
+        { author: "PROSPECT", body: "karthik" },
+        { author: "AI", body: "What is the company name?" },
+        { author: "PROSPECT", body: "The AItel" },
+      ],
+      name: null,
+      phoneE164: null,
+      answers: {},
+    });
+    expect(answered.name).toBe("Karthik");
+    const reworded = absorbTranscript({
+      questions,
+      messages: [
+        { author: "AI", body: "SnapServe follows your script. What is your name?" },
+        { author: "PROSPECT", body: "Karthikeyan" },
+        { author: "AI", body: "Got it. What is your company name?" },
+        { author: "PROSPECT", body: "Finsecr" },
+        { author: "AI", body: "Could you share your contact number?" },
+        { author: "PROSPECT", body: "8825703914" },
+      ],
+      name: null,
+      phoneE164: null,
+      answers: {},
+    });
+    expect(reworded.name).toBe("Karthikeyan");
+    expect(reworded.answers["company-name"]).toBe("Finsecr");
+    expect(reworded.phoneE164).toBe("+918825703914");
+    const counts = absorbTranscript({
+      questions: [
+        { id: "team", label: "Current telecaller team size", kind: "text", zohoField: null },
+        { id: "volume", label: "Monthly call volume", kind: "text", zohoField: null },
+      ],
+      messages: [
+        { author: "AI", body: "How many people are on your current telecalling team?" },
+        { author: "PROSPECT", body: "50" },
+        { author: "AI", body: "I see. How many calls do you handle each month?" },
+        { author: "PROSPECT", body: "5000" },
+      ],
+      name: null,
+      phoneE164: null,
+      answers: {},
+    });
+    expect(counts.answers).toEqual({ team: "50", volume: "5000" });
+    expect(absorbTranscript({ questions, messages: [{ author: "PROSPECT", body: "Yes I’m looking" }], name: null, phoneE164: null, answers: {} }).name).toBeNull();
+    expect(absorbTranscript({ questions, messages: [{ author: "PROSPECT", body: "I'm interested in voice AI" }], name: null, phoneE164: null, answers: {} }).name).toBeNull();
+    const tanglish = absorbTranscript({
+      questions,
+      messages: [
+        { author: "AI", body: "Super! Unga peru enna?" },
+        { author: "PROSPECT", body: "en peru Karthik" },
+        { author: "AI", body: "Demo ku varringala?" },
+        { author: "PROSPECT", body: "aama" },
+      ],
+      name: null,
+      phoneE164: null,
+      answers: {},
+    });
+    expect(tanglish.name).toBe("Karthik");
+    expect(tanglish.answers.demo).toBe("yes");
+    expect(absorbTranscript({ questions, messages: [{ author: "AI", body: "Demo attend pannuveengala?" }, { author: "PROSPECT", body: "vendam" }], name: null, phoneE164: null, answers: {} }).answers.demo).toBe("no");
+    expect(looksEnglish("How many calls do you handle?")).toBe(true);
+    expect(looksEnglish("enga team la 20 per irukanga")).toBe(false);
+    expect(looksEnglish("हमारी टीम में 20 लोग हैं")).toBe(false);
+    expect(answered.answers["company-name"]).toBe("The AItel");
+    expect(absorbTranscript({ questions, messages: [{ author: "PROSPECT", body: "I’m Karthik" }], name: null, phoneE164: null, answers: {} }).name).toBe("Karthik");
     expect(deterministicIntent("stop messaging me").optOut).toBe(true);
+    expect(deterministicIntent("please leave me alone").optOut).toBe(true);
+    expect(platformReplyBlock("I am a real person on the team.")).toBeTruthy();
+    expect(platformReplyBlock("Please share the OTP from your bank.")).toBeTruthy();
+    expect(withAutomationDisclosure("Thanks for commenting.", "SnapServe")).toContain("automated assistant");
+    expect(withAutomationDisclosure("Thanks for commenting.", "SnapServe", "Maya")).toContain("Maya, an automated assistant");
+    expect(withAutomationDisclosure("I'm the virtual assistant for SnapServe.", "SnapServe")).toBe("I'm the virtual assistant for SnapServe.");
   });
 
   it("bounds invalid JSON", () => {

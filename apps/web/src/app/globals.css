@@ -2,22 +2,23 @@
 
 @theme {
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --color-paper: #f6f7f9;
-  --color-ink: #17212b;
-  --color-muted: #52606d;
-  --color-line: #e4e8ee;
-  --color-accent: #0f766e;
-  --color-accent-ink: #134e4a;
+  --color-paper: #f3f4f6;
+  --color-ink: #14171c;
+  --color-muted: #5c6570;
+  --color-line: #e4e7ec;
+  --color-accent: #0c7a72;
+  --color-accent-ink: #085e58;
   --color-ig: #9d174d;
   --color-fb: #1d4ed8;
+  --color-shell: #12141a;
 }
 
 body {
   background: var(--color-paper);
   color: var(--color-ink);
   font-family: var(--font-sans);
-  font-size: 16px;
-  line-height: 1.55;
+  font-size: 15px;
+  line-height: 1.5;
   text-rendering: optimizeLegibility;
 }
 
@@ -29,20 +30,18 @@ body {
   select,
   textarea {
     border: 1px solid var(--color-line);
-    border-radius: 8px;
+    border-radius: 10px;
     background: #fff;
-    padding: 0.5rem 0.7rem;
+    padding: 0.55rem 0.75rem;
     line-height: 1.4;
   }
 
-  form label :is(input, select, textarea) {
-    width: 100%;
-  }
+  form label :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { width: 100%; }
 
-  textarea { min-height: 5.5rem; resize: vertical; }
+  textarea { min-height: 0; resize: vertical; }
 
   input::placeholder,
-  textarea::placeholder { color: #8b98a5; }
+  textarea::placeholder { color: #8b93a0; }
 
   input:focus-visible,
   select:focus-visible,
@@ -55,29 +54,34 @@ body {
 
   button {
     border: 1px solid var(--color-line);
-    border-radius: 8px;
+    border-radius: 10px;
     background: #fff;
-    padding: 0.45rem 0.75rem;
+    padding: 0.5rem 0.85rem;
     font-size: 14px;
-    font-weight: 500;
-    line-height: 1.3;
+    font-weight: 600;
+    line-height: 1.2;
     cursor: pointer;
   }
 
-  button:hover { background: var(--color-paper); }
+  button:hover { background: #f7f8fa; }
 
   button[class*="text-white"] {
     border-color: transparent;
     background: var(--color-accent);
   }
 
-  button[class*="text-white"]:hover { background: #115e59; }
+  button[class*="text-white"]:hover { background: #0a655f; }
+
+  button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
 
   form label {
     display: grid;
     gap: 0.35rem;
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
   }
 
   form label input,
@@ -95,9 +99,11 @@ body {
     padding: 0.7rem 0.85rem;
     border-bottom: 1px solid var(--color-line);
     color: var(--color-muted);
-    font-size: 13px;
-    font-weight: 500;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     text-align: left;
+    text-transform: uppercase;
   }
 
   td {
@@ -106,8 +112,8 @@ body {
     vertical-align: middle;
   }
 
-  tbody tr:hover { background: #fbfcfd; }
+  tbody tr:hover { background: #f8f9fb; }
 
-  table a { font-weight: 500; }
+  table a { font-weight: 600; }
   table a:hover { color: var(--color-accent-ink); }
 }

@@ -1,3 +1,4 @@
+import { parseLeadQuestions } from "@snapsocial/domain";
 import { notFound } from "next/navigation";
 import { getPrisma } from "@snapsocial/db";
 import { deleteLeadContact } from "@/lib/actions";
@@ -13,6 +14,8 @@ export default async function LeadDetail({ params }: { params: Promise<{ id: str
     include: { contact: true, evidence: true, consents: true, crm: true },
   });
   if (!lead) notFound();
+  const questions = parseLeadQuestions(workspace.leadQuestions);
+  const answers = lead.answers && typeof lead.answers === "object" && !Array.isArray(lead.answers) ? lead.answers as Record<string, string> : {};
   return (
     <section>
       <PageTitle title={lead.contact.chosenName ?? lead.contact.username ?? "Prospect"} detail="A valid-looking number is not ownership verification." />
@@ -28,6 +31,7 @@ export default async function LeadDetail({ params }: { params: Promise<{ id: str
         <div>Budget: {lead.budgetRaw ?? "Unknown"} {lead.budgetAmountMinor ? `(${lead.budgetAmountMinor} ${lead.budgetCurrency ?? ""})` : ""}</div>
         <div>Timeline: {lead.timeframeRaw ?? "Unknown"}</div>
         <div>Phone: {lead.phoneE164 ?? "Unknown"}</div>
+        {questions.map((question) => <div key={question.id}>{question.label}: {question.kind === "name" ? lead.contact.chosenName ?? "Unknown" : question.kind === "phone" ? lead.phoneE164 ?? "Unknown" : answers[question.id] ?? "Unknown"}</div>)}
         <div>WhatsApp: {lead.whatsappE164 ?? "Unknown"} {lead.sameNumberConfirmed ? "(confirmed same number)" : ""}</div>
         <div>Source: {lead.sourceType} · {lead.sourceMediaId ?? "unattributed"}</div>
         <div>Reasons: {lead.qualificationReasons.join("; ") || "None yet"}</div>

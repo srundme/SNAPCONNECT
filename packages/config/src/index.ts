@@ -52,11 +52,12 @@ export const envSchema = z.object({
   ZOHO_ACCOUNTS_URL: z.url().default("https://accounts.zoho.com"),
   ZOHO_SCOPES: z.string().default("ZohoCRM.modules.leads.READ,ZohoCRM.modules.leads.CREATE,ZohoCRM.modules.leads.UPDATE"),
   OLLAMA_BASE_URL: z.url().default("http://127.0.0.1:11434"),
+  SARVAM_API_KEY: optional,
   LLM_MODEL: z.string().default("qwen3.5:2b"),
   LLM_CONTEXT_TOKENS: z.coerce.number().int().positive().default(4096),
   LLM_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(400),
   LLM_CONCURRENCY: z.coerce.number().int().positive().default(1),
-  LLM_MODE: z.enum(["ollama", "fixture"]).default("fixture"),
+  LLM_MODE: z.enum(["ollama", "fixture", "sarvam"]).default("fixture"),
   DEFAULT_TIMEZONE: z.string().default("Asia/Kolkata"),
   DEFAULT_PHONE_REGION: z.string().default("IN"),
 });

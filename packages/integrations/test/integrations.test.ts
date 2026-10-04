@@ -3,7 +3,8 @@ import { assertAllowedUrl } from "../src/hosts";
 import { classifyFetch } from "../src/channel";
 import { decryptSecret, encryptSecret } from "../src/crypto";
 import { facebookAdapter, instagramAdapter } from "../src/meta";
-import { assertPrivateOllamaUrl } from "../src/llm";
+import { listInstagramPosts } from "../src/meta-media";
+import { assertPrivateOllamaUrl, sarvamLlm, sarvamTranscriber } from "../src/llm";
 import { zohoAdapter } from "../src/zoho";
 
 describe("integration guards", () => {
@@ -17,8 +18,67 @@ describe("integration guards", () => {
   it("allows only a private Ollama address", () => {
     expect(assertPrivateOllamaUrl("http://127.0.0.1:11434").hostname).toBe("127.0.0.1");
     expect(assertPrivateOllamaUrl("http://ollama.railway.internal:8080").hostname).toBe("ollama.railway.internal");
+    expect(assertPrivateOllamaUrl("https://kpod-example-11434.blr-1.aipod.olakrutrimsvc.com").hostname).toBe("kpod-example-11434.blr-1.aipod.olakrutrimsvc.com");
+    expect(() => assertPrivateOllamaUrl("http://kpod-example-11434.blr-1.aipod.olakrutrimsvc.com")).toThrow(/private/);
     expect(() => assertPrivateOllamaUrl("https://ollama.com")).toThrow(/private/);
     expect(() => assertPrivateOllamaUrl("http://example.com:11434")).toThrow(/private/);
+  });
+
+  it("calls the Sarvam conversation model without putting the key in the body", async () => {
+    const calls: Array<{ url: string; headers: Headers; body: string }> = [];
+    const fetchImpl = async (url: string, init?: RequestInit) => {
+      calls.push({ url, headers: new Headers(init?.headers), body: String(init?.body ?? "") });
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({ reply: "What is your name?", field_updates: [], handoff_requested: false, handoff_reason: null }) } }],
+      }), { status: 200 });
+    };
+    const result = await sarvamLlm({ apiKey: "test-key", maxOutputTokens: 200, fetchImpl }).generate({
+      schemaName: "qualification",
+      system: "Ask the next question.",
+      messages: [{ id: "m1", role: "user", content: "I want 𝗩𝗼𝗶𝗰𝗲 AI." }, { id: "m2", role: "user", content: " " }],
+    });
+    expect(result.model).toBe("sarvam-105b-conversations");
+    expect(result.output.reply).toBe("What is your name?");
+    expect(calls[0]?.url).toBe("https://api.sarvam.ai/v1/chat/completions");
+    expect(calls[0]?.headers.get("api-subscription-key")).toBe("test-key");
+    const body = JSON.parse(calls[0]?.body ?? "{}") as { model?: string; messages?: unknown[] };
+    expect(body.model).toBe("sarvam-105b-conversations");
+    expect(JSON.stringify(body)).not.toContain("test-key");
+    expect(body.messages).toEqual([
+      { role: "system", content: "Ask the next question." },
+      { role: "user", content: "I want Voice AI." },
+    ]);
+  });
+
+  it("keeps a Sarvam reply when the JSON stops early in blank padding", async () => {
+    const content = `{\n  "reply": "Unga team la evlo per irukanga?",\n  "field_updates": [],\n  "handoff_requested": false\n${"  \n".repeat(300)}`;
+    const fetchImpl = (async () => new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 })) as typeof fetch;
+    const result = await sarvamLlm({ apiKey: "test-key", maxOutputTokens: 200, fetchImpl }).generate({
+      schemaName: "qualification",
+      system: "Ask the next question.",
+      messages: [{ id: "m1", role: "user", content: "AI calling pathi sollunga" }],
+    });
+    expect(result.output.reply).toBe("Unga team la evlo per irukanga?");
+    expect(result.output.handoff_reason).toBeNull();
+  });
+
+  it("transcribes a Meta voice note with Sarvam in romanized text", async () => {
+    const calls: Array<{ url: string; headers: Headers; body: unknown }> = [];
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), headers: new Headers(init?.headers), body: init?.body });
+      if (String(url).startsWith("https://lookaside.fbsbx.com/")) {
+        return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "audio/mp4" } });
+      }
+      return new Response(JSON.stringify({ transcript: "enga team la 20 per irukanga" }), { status: 200 });
+    }) as typeof fetch;
+    const transcribe = sarvamTranscriber({ apiKey: "test-key", fetchImpl });
+    expect(await transcribe("https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=1")).toBe("enga team la 20 per irukanga");
+    expect(calls[1]?.url).toBe("https://api.sarvam.ai/speech-to-text");
+    expect(calls[1]?.headers.get("api-subscription-key")).toBe("test-key");
+    const form = calls[1]?.body as FormData;
+    expect(form.get("model")).toBe("saaras:v4");
+    expect(form.get("mode")).toBe("translit");
+    await expect(transcribe("https://evil.example/voice.mp4")).rejects.toThrow(/Meta media host/);
   });
 
   it("rejects unexpected hosts", () => {
@@ -63,5 +123,39 @@ describe("integration guards", () => {
       trigger: [],
     });
     expect(result.status).toBe("FAILED");
+  });
+
+  it("lists Instagram posts without putting the token in the request path", async () => {
+    const calls: string[] = [];
+    const fetchImpl = async (url: string) => {
+      calls.push(url);
+      return new Response(JSON.stringify({
+        data: [{ id: "post-1", caption: "Hello", media_product_type: "FEED", permalink: "https://www.instagram.com/p/abc/", timestamp: "2026-10-04T00:00:00+0000", media_url: "https://cdn.example/a.jpg" }],
+      }), { status: 200 });
+    };
+    const posts = await listInstagramPosts({
+      baseUrl: "https://graph.instagram.com",
+      version: "v23.0",
+      accountId: "1784",
+      token: "secret-token",
+      fetchImpl,
+    });
+    expect(posts[0]?.externalId).toBe("post-1");
+    expect(posts[0]?.previewUrl).toBe("https://cdn.example/a.jpg");
+    expect(calls[0]).not.toContain("secret-token");
+  });
+
+  it("refuses an Instagram paging link on a host outside Meta", async () => {
+    const fetchImpl = async () => new Response(JSON.stringify({
+      data: [{ id: "post-1", caption: "Hello" }],
+      paging: { next: "https://evil.example/next" },
+    }), { status: 200 });
+    await expect(listInstagramPosts({
+      baseUrl: "https://graph.instagram.com",
+      version: "v23.0",
+      accountId: "1784",
+      token: "token",
+      fetchImpl,
+    })).rejects.toThrow(/not allowed/);
   });
 });

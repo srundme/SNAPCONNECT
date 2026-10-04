@@ -1,12 +1,20 @@
 import Link from "next/link";
+import { Send } from "lucide-react";
 import { getPrisma } from "@snapsocial/db";
 import { replyEligibility } from "@snapsocial/domain";
-import { claimConversation, injectSimulation } from "@/lib/actions";
-import { ChannelMark, Empty, PageTitle, StatusLabel } from "@/components/ui";
+import { claimConversation, injectSimulation, sendStaffReply } from "@/lib/actions";
+import { ChannelMark, Empty, Notice } from "@/components/ui";
 import { clsx } from "clsx";
 import { requireWorkspace } from "@/lib/session";
 
-export default async function InboxPage({ searchParams }: { searchParams: Promise<{ id?: string; channel?: string }> }) {
+function authorLabel(author: string) {
+  if (author === "PROSPECT") return "Them";
+  if (author === "AI") return "Assistant";
+  if (author === "STAFF") return "You";
+  return "System";
+}
+
+export default async function InboxPage({ searchParams }: { searchParams: Promise<{ id?: string; channel?: string; error?: string }> }) {
   const params = await searchParams;
   const { workspace, role } = await requireWorkspace();
   if (!workspace) return <Empty title="No workspace" body="Select a workspace." />;
@@ -28,11 +36,11 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     optedOut: Boolean(selected.contact.optedOutAt),
     connectionReady: !connection.revokedAt,
     ownerAllowsAutomation: selected.owner === "AI",
-    manual: selected.owner === "HUMAN",
+    manual: true,
   }) : null;
+  const name = selected?.contact.username ?? selected?.contact.displayName ?? "Prospect";
   return (
     <section>
-      <PageTitle title="Inbox" detail="Instagram and Facebook share this list. Notes stay internal." />
       {workspace.mode === "SIMULATION" && role !== "AGENT" ? (
         <form action={injectSimulation} className="mb-4 flex flex-wrap gap-2">
           <button name="scenario" value="instagram-comment" type="submit">Simulate Instagram comment</button>
@@ -41,71 +49,103 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
           <button name="scenario" value="facebook-reply" type="submit">Simulate Messenger reply</button>
         </form>
       ) : null}
-      <div className="mb-4 flex gap-2 text-sm">
-        {[
-          ["/inbox", "All", !channel],
-          ["/inbox?channel=INSTAGRAM", "Instagram", channel === "INSTAGRAM"],
-          ["/inbox?channel=FACEBOOK", "Facebook", channel === "FACEBOOK"],
-        ].map(([href, label, active]) => (
-          <Link key={String(href)} href={String(href)} className={clsx("rounded-full border px-3 py-1", active ? "border-[var(--color-ink)] bg-[var(--color-ink)] text-white" : "border-[var(--color-line)] bg-white")}>{label}</Link>
-        ))}
-      </div>
-      {conversations.length === 0 ? <Empty title="No conversations" body="A matching comment will appear here after the worker processes it." /> : (
-        <div className="grid min-h-[640px] overflow-hidden rounded-lg border border-[var(--color-line)] bg-white lg:grid-cols-[280px_minmax(0,1fr)_300px]">
-          <ul className="border-b border-[var(--color-line)] lg:border-b-0 lg:border-r">
-            {conversations.map((item) => (
-              <li key={item.id} className="border-b border-[var(--color-line)] last:border-b-0">
-                <Link className={clsx("block px-4 py-3", item.id === selected?.id && "bg-[var(--color-paper)]")} href={`/inbox?id=${item.id}${channel ? `&channel=${channel}` : ""}`}>
-                  <ChannelMark channel={item.channel} />
-                  <p className="mt-1.5 text-sm font-medium">{item.contact.username ?? item.contact.displayName ?? "Prospect"}</p>
-                  <p className="text-[12px] text-[var(--color-muted)]">{item.owner === "HUMAN" ? "Staff" : item.owner === "AI" ? "Assistant" : "Paused"}</p>
-                </Link>
-              </li>
-            ))}
-          </ul>
-          <div className="flex min-h-[420px] flex-col border-b border-[var(--color-line)] lg:border-b-0 lg:border-r">
-            {selected ? (
-              <ol className="grid flex-1 content-start gap-3 p-4">
-                {selected.messages.map((message) => {
-                  const inbound = message.author === "PROSPECT";
-                  return (
-                    <li key={message.id} className={clsx("max-w-[85%]", inbound ? "justify-self-start" : "justify-self-end")}>
-                      <p className="mb-1 text-[12px] text-[var(--color-muted)]">{inbound ? "Prospect" : message.author === "AI" ? "Assistant" : "Staff"}</p>
-                      <p className={clsx("rounded-lg px-3 py-2 text-sm", inbound ? "bg-[var(--color-paper)]" : "bg-[#e7f6f3]")}>{message.body}</p>
-                    </li>
-                  );
-                })}
-              </ol>
-            ) : null}
-            <form className="border-t border-[var(--color-line)] p-4">
-              <label>Reply
-                <textarea name="body" disabled={!eligibility?.allowed} rows={3} placeholder={eligibility?.allowed ? "Write a reply" : "Reply is unavailable"} />
-              </label>
-              {eligibility && !eligibility.allowed ? <p className="mt-2 text-sm text-[#9f1239]">{eligibility.reason}</p> : null}
-            </form>
+      {params.error ? <Notice tone="stop">{params.error}</Notice> : null}
+      {conversations.length === 0 ? <Empty title="No conversations" body="A matching comment shows up here after the worker processes it." /> : (
+        <div className="grid h-[calc(100dvh-7.5rem)] min-h-[560px] overflow-hidden rounded-2xl bg-white shadow-[0_1px_0_rgba(20,23,28,0.06)] lg:grid-cols-[280px_minmax(0,1fr)_260px]">
+          <div className="min-h-0 overflow-y-auto border-b border-[var(--color-line)] lg:border-b-0 lg:border-r">
+            <div className="flex gap-1 border-b border-[var(--color-line)] p-3">
+              {[
+                ["/inbox", "All", !channel],
+                ["/inbox?channel=INSTAGRAM", "Instagram", channel === "INSTAGRAM"],
+                ["/inbox?channel=FACEBOOK", "Facebook", channel === "FACEBOOK"],
+              ].map(([href, label, active]) => (
+                <Link key={String(href)} href={String(href)} className={clsx("rounded-full px-3 py-1 text-[13px] font-semibold", active ? "bg-[var(--color-ink)] text-white" : "text-[var(--color-muted)] hover:bg-[var(--color-paper)]")}>{label}</Link>
+              ))}
+            </div>
+            <ul>
+              {conversations.map((item) => {
+                const label = item.contact.username ?? item.contact.displayName ?? "Prospect";
+                const last = item.messages.at(-1);
+                return (
+                  <li key={item.id}>
+                    <Link className={clsx("block border-b border-[var(--color-line)] px-4 py-3", item.id === selected?.id && "bg-[#f4fbfa]")} href={`/inbox?id=${item.id}${channel ? `&channel=${channel}` : ""}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="truncate text-sm font-semibold">{label}</p>
+                        <ChannelMark channel={item.channel} />
+                      </div>
+                      <p className="mt-1 truncate text-[13px] text-[var(--color-muted)]">{last?.body ?? "No message yet"}</p>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
           </div>
-          <aside className="p-4 text-sm">
+          <div className="flex min-h-0 flex-col border-b border-[var(--color-line)] lg:border-b-0 lg:border-r">
+            {selected ? (
+              <>
+                <div className="flex items-center justify-between border-b border-[var(--color-line)] px-4 py-3">
+                  <div>
+                    <p className="font-semibold">{name}</p>
+                    <p className="text-[12px] text-[var(--color-muted)]">{selected.owner === "HUMAN" ? "You are replying" : selected.owner === "AI" ? "Assistant is replying" : "Paused"}</p>
+                  </div>
+                  <ChannelMark channel={selected.channel} />
+                </div>
+                <ol className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto p-4">
+                  {selected.messages.map((message) => {
+                    const inbound = message.author === "PROSPECT";
+                    return (
+                      <li key={message.id} className={clsx("max-w-[82%]", inbound ? "justify-self-start" : "justify-self-end")}>
+                        <p className={clsx("mb-1 text-[11px] font-semibold uppercase tracking-[0.04em]", inbound ? "text-[var(--color-muted)]" : "text-right text-[var(--color-accent-ink)]")}>{authorLabel(message.author)}</p>
+                        <p className={clsx("rounded-2xl px-3 py-2 text-sm leading-5", inbound ? "rounded-tl-md bg-[var(--color-paper)]" : message.author === "STAFF" ? "rounded-tr-md bg-[var(--color-ink)] text-white" : "rounded-tr-md bg-[#e7f6f3]")}>{message.body}</p>
+                      </li>
+                    );
+                  })}
+                </ol>
+                <form action={sendStaffReply} className="shrink-0 border-t border-[var(--color-line)] p-3">
+                  <input type="hidden" name="conversationId" value={selected.id} />
+                  <div className="flex items-end gap-2">
+                    <label className="min-w-0 flex-1">
+                      <span className="sr-only">Reply</span>
+                      <textarea name="body" disabled={!eligibility?.allowed} rows={2} placeholder={eligibility?.allowed ? "Write a reply" : "Reply is unavailable"} />
+                    </label>
+                    <button className="inline-flex shrink-0 items-center gap-1.5 border-transparent bg-[var(--color-accent)] text-white hover:bg-[#0a655f]" type="submit" disabled={!eligibility?.allowed}>
+                      <Send size={15} aria-hidden />
+                      Send
+                    </button>
+                  </div>
+                  <p className="mt-2 text-[12px] text-[var(--color-muted)]">{eligibility?.allowed ? "Sends on the same Instagram or Facebook thread." : eligibility?.reason}</p>
+                </form>
+              </>
+            ) : null}
+          </div>
+          <aside className="min-h-0 overflow-y-auto p-4 text-sm">
             {selected && lead ? (
               <>
-                <p className="font-medium">Requirement</p>
-                <dl className="mt-3 grid gap-2">
-                  <div className="flex justify-between gap-3"><dt className="text-[var(--color-muted)]">City</dt><dd>{lead.city ?? "Unknown"}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-[var(--color-muted)]">Project</dt><dd>{lead.projectType ?? "Unknown"}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-[var(--color-muted)]">Budget</dt><dd>{lead.budgetRaw ?? "Unknown"}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-[var(--color-muted)]">Phone</dt><dd>{lead.phoneE164 ?? "Unknown"}</dd></div>
+                <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--color-muted)]">Lead</p>
+                <dl className="mt-3 grid gap-3">
+                  {[
+                    ["City", lead.city ?? "Not yet"],
+                    ["Account type", lead.projectType ?? "Not yet"],
+                    ["Budget", lead.budgetRaw ?? "Not yet"],
+                    ["Phone", lead.phoneE164 ?? "Not yet"],
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <dt className="text-[12px] text-[var(--color-muted)]">{label}</dt>
+                      <dd className="font-medium">{value}</dd>
+                    </div>
+                  ))}
                 </dl>
-                <p className="mt-3 text-[12px] text-[var(--color-muted)]">A valid format does not prove the number is owned or on WhatsApp.</p>
-                <p className="mt-3 text-[12px] text-[var(--color-muted)]">Source post {lead.sourceMediaId ?? "unattributed"}</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <StatusLabel tone="neutral">{lead.qualification}</StatusLabel>
-                  <StatusLabel tone={lead.crmState === "SYNCED" ? "ok" : "wait"}>{lead.crm?.simulated ? "Simulated CRM" : lead.crmState}</StatusLabel>
-                </div>
+                <p className="mt-4 text-[12px] leading-5 text-[var(--color-muted)]">A valid number is not proof that the person owns it, or that it is on WhatsApp.</p>
+                <p className="mt-5 text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--color-muted)]">Memory</p>
+                <p className="mt-2 whitespace-pre-line text-[13px] leading-5">
+                  {selected.contact.memory ?? "Nothing older than the last 20 messages yet. The assistant reads those directly."}
+                </p>
                 {selected.owner !== "HUMAN" ? (
                   <form action={claimConversation} className="mt-5">
                     <input type="hidden" name="conversationId" value={selected.id} />
-                    <button className="border-transparent bg-[var(--color-accent)] text-white hover:bg-[#115e59]" type="submit">Take over</button>
+                    <button className="w-full border-transparent bg-[var(--color-ink)] text-white hover:bg-black" type="submit">Take over</button>
                   </form>
-                ) : <p className="mt-5 text-[var(--color-muted)]">Staff owns this chat. Pending assistant replies are cancelled.</p>}
+                ) : <p className="mt-5 text-[13px] text-[var(--color-muted)]">You own this chat. A new assistant reply will not be sent while you do.</p>}
               </>
             ) : <p className="text-[var(--color-muted)]">Select a conversation.</p>}
           </aside>

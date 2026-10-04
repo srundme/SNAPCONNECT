@@ -191,10 +191,16 @@ model Workspace {
   serviceAreas       String[]      @default([])
   minimumBudgetMinor Int?
   brandName          String        @default("Demo Interiors")
+  agentName          String?
+  agentPersona       String?
   services           String        @default("Residential and commercial interiors")
   tone               String        @default("Clear, brief and factual")
   faqs               Json          @default("[]")
+  systemPrompt       String?
   replyPrompts       Json          @default("{}")
+  zohoSendWhen       String        @default("CONTACTABLE")
+  requiredLeadFields String[]      @default(["projectType"])
+  leadQuestions      Json          @default("[]")
   createdAt          DateTime      @default(now())
   memberships        Membership[]
   connections        ChannelConnection[]
@@ -305,8 +311,13 @@ model Media {
   externalId         String
   contentType        String
   caption            String?
+  permalink          String?
+  previewUrl         String?
+  publishedAt        DateTime?
   supportStatus      String            @default("SUPPORTED")
   unsupportedReason  String?
+  openingMessage     String?
+  assistantPrompt    String?
   excluded           Boolean           @default(false)
   connection         ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
@@ -341,6 +352,8 @@ model Contact {
   displayName     String?
   username        String?
   chosenName      String?
+  memory          String?
+  memoryUpdatedAt DateTime?
   optedOutAt      DateTime?
   lastOutboundAt  DateTime?
   createdAt       DateTime          @default(now())
@@ -439,6 +452,7 @@ model Lead {
   phonePermission     Boolean       @default(false)
   whatsappPermission  Boolean       @default(false)
   email               String?
+  answers             Json          @default("{}")
   sourceType          String
   sourceMediaId       String?
   sourceCommentId     String?

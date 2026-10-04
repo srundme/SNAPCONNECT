@@ -23,7 +23,9 @@ export async function GET(request: Request, context: { params: Promise<{ provide
     },
   });
   if (provider === "zoho") {
-    if (!config.ZOHO_CLIENT_ID) return Response.json({ pending: true, reason: "Zoho client id is not configured. Live verification remains pending." });
+    if (!config.ZOHO_CLIENT_ID || !config.ZOHO_CLIENT_SECRET) {
+      return Response.redirect(new URL("/integrations?error=Zoho%20is%20not%20configured%20on%20the%20server%20yet.%20Add%20the%20Zoho%20client%20id%20and%20secret%2C%20then%20use%20Connect%20Zoho.", config.APP_BASE_URL));
+    }
     const accounts = assertAllowedUrl(config.ZOHO_ACCOUNTS_URL, "zoho-accounts");
     const redirect = new URL("/oauth/v2/auth", accounts);
     redirect.searchParams.set("client_id", config.ZOHO_CLIENT_ID);

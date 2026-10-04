@@ -18,6 +18,18 @@ export async function GET(request: Request, context: { params: Promise<{ channel
   const token = url.searchParams.get("hub.verify_token") ?? "";
   const secrets = await verifyTokens(channel);
   if (!secrets.includes(token)) return new Response("forbidden", { status: 403 });
+  const normalized = channel === "instagram" ? "INSTAGRAM" : channel === "facebook" ? "FACEBOOK" : null;
+  if (normalized) {
+    const db = getPrisma();
+    const now = new Date();
+    await db.auditEvent.create({
+      data: { action: "webhook.verified", entityType: normalized, summary: `Meta verified the ${channel} webhook callback.` },
+    });
+    await db.channelConnection.updateMany({
+      where: { channel: normalized, mode: "INTEGRATION", revokedAt: null },
+      data: { webhookVerifiedAt: now },
+    });
+  }
   return new Response(challenge, { status: 200 });
 }
 
@@ -33,7 +45,22 @@ export async function POST(request: Request, context: { params: Promise<{ channe
     return new Response("invalid signature", { status: 401 });
   }
   const events = normalizeMetaPayload(normalized, JSON.parse(raw) as unknown, new Date());
-  await ingestEvents(getPrisma(), { channel: normalized, mode: "INTEGRATION", events, receivedAt: new Date() });
+  const db = getPrisma();
+  const pending = await db.channelConnection.findMany({
+    where: { channel: normalized, mode: "INTEGRATION", revokedAt: null, webhookVerifiedAt: null },
+    select: { id: true },
+  });
+  if (pending.length) {
+    const now = new Date();
+    await db.auditEvent.create({
+      data: { action: "webhook.verified", entityType: normalized, summary: `Meta delivered a signed ${channel} webhook.` },
+    });
+    await db.channelConnection.updateMany({
+      where: { id: { in: pending.map((row) => row.id) } },
+      data: { webhookVerifiedAt: now },
+    });
+  }
+  await ingestEvents(db, { channel: normalized, mode: "INTEGRATION", events, receivedAt: new Date() });
   return Response.json({ received: true });
 }
 

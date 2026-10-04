@@ -16,7 +16,7 @@ export async function GET() {
   };
   const workspaceId = user.memberships[0]?.workspaceId;
   if (!workspaceId || !can(actor, "lead.export", workspaceId)) return new Response("Forbidden", { status: 403 });
-  const leads = await getPrisma().lead.findMany({ where: { workspaceId, archivedAt: null }, include: { contact: true } });
+  const leads = await getPrisma().lead.findMany({ where: { workspaceId, archivedAt: null, crmState: "SYNCED" }, include: { contact: true } });
   const csv = toCsv(leads.map((lead) => ({
     leadId: lead.id,
     channel: lead.channel,

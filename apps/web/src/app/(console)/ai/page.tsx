@@ -1,59 +1,44 @@
+import { defaultZohoField, externalLeadKeyField, parseLeadQuestions } from "@snapsocial/domain";
 import { getPrisma } from "@snapsocial/db";
-import { resolveReplyPrompts, replyPromptFields } from "@snapsocial/domain";
-import { Empty, PageTitle, StatusLabel } from "@/components/ui";
+import { AgentForm } from "@/components/lead-formation";
+import { Empty, Notice, PageTitle } from "@/components/ui";
 import { saveAiSettings } from "@/lib/actions";
 import { requireWorkspace } from "@/lib/session";
 
-const promptLabels: Record<(typeof replyPromptFields)[number], string> = {
-  projectType: "Home or commercial",
-  city: "City",
-  requirement: "Work needed",
-  budget: "Budget",
-  timeframe: "Start time",
-  phone: "Phone",
-  whatsapp: "WhatsApp",
-  permission: "Permission to contact",
-  closing: "Closing",
-};
-
-export default async function AiPage() {
+export default async function AiPage({ searchParams }: { searchParams: Promise<{ saved?: string }> }) {
+  const params = await searchParams;
   const { workspace, role } = await requireWorkspace();
   if (!workspace) return <Empty title="No workspace" body="Select a workspace." />;
-  if (role === "VIEWER") return <Empty title="Permission denied" body="AI settings are hidden from viewers." />;
-  const version = await getPrisma().aiConfigVersion.findFirst({ where: { workspaceId: workspace.id, active: true }, orderBy: { version: "desc" } });
-  const runs = await getPrisma().aiRun.findMany({ where: { workspaceId: workspace.id }, orderBy: { createdAt: "desc" }, take: 8 });
-  const prompts = resolveReplyPrompts(workspace.replyPrompts);
+  if (role === "VIEWER") return <Empty title="Permission denied" body="The agent setup is hidden from viewers." />;
   const canEdit = role === "ADMIN" || role === "SUPER_ADMIN";
+  const questions = parseLeadQuestions(workspace.leadQuestions);
+  const zoho = await getPrisma().zohoConnection.findUnique({ where: { workspaceId: workspace.id } });
+  const externalKey = externalLeadKeyField(zoho?.externalKeyField ?? "External_Lead_Key");
   return (
     <section>
-      <PageTitle title="AI settings" detail="The model writes each follow-up from the questions below. The first private reply stays on Posts & Rules." />
-      <p className="text-sm">{version ? `Active configuration version ${version.version}` : "No activated configuration."}</p>
-      <p className="mt-2"><StatusLabel tone={process.env.LLM_MODE === "ollama" ? "ok" : "sim"}>{process.env.LLM_MODE === "ollama" ? "Ollama" : "Labelled fixture extractor"}</StatusLabel></p>
+      <PageTitle title="Agent" detail="Set who replies, what it knows, and which answers become the Zoho lead." />
+      {params.saved ? <Notice tone="ok">Saved. The next reply uses this.</Notice> : null}
       {canEdit ? (
-        <form className="mt-6 grid max-w-xl gap-4" action={saveAiSettings}>
-          <label>Brand name<input name="brandName" defaultValue={workspace.brandName} /></label>
-          <label>Services<input name="services" defaultValue={workspace.services} /></label>
-          <label>Tone<input name="tone" defaultValue={workspace.tone} /></label>
-          <h2 className="pt-2 text-[19px] font-semibold tracking-tight">Follow-up questions</h2>
-          {replyPromptFields.map((field) => (
-            <label key={field}>{promptLabels[field]}
-              <textarea name={field} defaultValue={prompts[field]} rows={2} />
-            </label>
-          ))}
-          <button className="w-fit border-transparent bg-[var(--color-accent)] text-white hover:bg-[#115e59]" type="submit">Save questions</button>
-        </form>
+          <AgentForm
+            action={saveAiSettings}
+            brandName={workspace.brandName}
+            agentName={workspace.agentName ?? ""}
+            services={workspace.services}
+            tone={workspace.tone}
+            persona={workspace.agentPersona ?? ""}
+            systemPrompt={workspace.systemPrompt ?? ""}
+            externalKey={externalKey}
+            questions={questions.map((question) => ({ label: question.label, zohoField: question.zohoField ?? defaultZohoField(question) }))}
+          />
       ) : (
-        <dl className="mt-6 grid max-w-xl gap-3 text-sm">
+        <dl className="grid max-w-xl gap-3 text-sm">
           <div><dt className="font-semibold">Brand</dt><dd>{workspace.brandName}</dd></div>
-          <div><dt className="font-semibold">Services</dt><dd>{workspace.services}</dd></div>
-          <div><dt className="font-semibold">Tone</dt><dd>{workspace.tone}</dd></div>
-          {replyPromptFields.map((field) => (
-            <div key={field}><dt className="font-semibold">{promptLabels[field]}</dt><dd>{prompts[field]}</dd></div>
-          ))}
+          <div><dt className="font-semibold">Agent</dt><dd>{workspace.agentName || "Not set"}</dd></div>
+          <div><dt className="font-semibold">Persona</dt><dd>{workspace.agentPersona || "Not set"}</dd></div>
+          <div><dt className="font-semibold">System prompt</dt><dd>{workspace.systemPrompt || "Not set"}</dd></div>
+          {questions.map((question) => <div key={question.id}><dt className="font-semibold">{question.label}</dt><dd>{question.zohoField ?? "Description"}</dd></div>)}
         </dl>
       )}
-      <h2 className="mt-6 font-semibold">Recent runs</h2>
-      <ul className="mt-2 text-sm">{runs.map((run) => <li key={run.id}>{run.model} · {run.latencyMs} ms · {run.valid ? "valid" : "handed to staff"} {run.simulated ? "· simulated" : ""}</li>)}</ul>
     </section>
   );
 }

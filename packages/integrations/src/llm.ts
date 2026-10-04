@@ -40,9 +40,10 @@ export type LlmResponse = {
 };
 
 export type LlmProvider = {
-  mode: "ollama" | "fixture";
+  mode: "ollama" | "fixture" | "sarvam";
   model: string;
   generate(request: LlmRequest): Promise<LlmResponse>;
+  summarize?(previous: string | null, transcript: string): Promise<string>;
   health(): Promise<{ ok: boolean; detail: string; gpu: boolean | null }>;
 };
 
@@ -112,14 +113,164 @@ export function fixtureLlm(): LlmProvider {
   };
 }
 
+function readJson(content: string): Record<string, unknown> {
+  try {
+    return JSON.parse(content) as Record<string, unknown>;
+  } catch (error) {
+    const trimmed = content.trimEnd().replace(/,$/, "");
+    if (!trimmed.startsWith("{") || trimmed.endsWith("}")) throw error;
+    return JSON.parse(`${trimmed}\n}`) as Record<string, unknown>;
+  }
+}
+
+function parseModelContent(content: string): AiOutput {
+  const raw = readJson(content) as { field_updates?: unknown; handoff_requested?: unknown; handoff_reason?: unknown };
+  if (raw.handoff_reason === undefined) raw.handoff_reason = raw.handoff_requested === true ? "The person asked for staff." : null;
+  const parsed = aiOutputSchema.safeParse(raw);
+  if (parsed.success) return parsed.data;
+  if (Array.isArray(raw.field_updates)) {
+    raw.field_updates = raw.field_updates.filter((item) => {
+      if (!item || typeof item !== "object") return false;
+      const row = item as Record<string, unknown>;
+      return [row.field, row.value, row.source_message_id, row.evidence].every((value) => typeof value === "string" && value.trim().length > 0);
+    });
+  }
+  return aiOutputSchema.parse(raw);
+}
+
 export function assertPrivateOllamaUrl(value: string): URL {
   const base = new URL(value);
   const host = base.hostname;
   const privateHost = host === "127.0.0.1" || host === "localhost" || host.endsWith(".railway.internal");
+  const krutrimGpu = host.endsWith(".aipod.olakrutrimsvc.com");
+  if (krutrimGpu && base.protocol === "https:") return base;
   if (base.protocol !== "http:" || !privateHost) {
     throw new Error("Ollama must stay on a private address.");
   }
   return base;
+}
+
+export function sarvamLlm(options: {
+  apiKey: string;
+  maxOutputTokens: number;
+  model?: string;
+  fetchImpl?: typeof fetch;
+}): LlmProvider {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const model = options.model ?? "sarvam-105b-conversations";
+  return {
+    mode: "sarvam",
+    model,
+    async health() {
+      if (!options.apiKey.trim()) return { ok: false, detail: "SARVAM_API_KEY is empty.", gpu: null };
+      return { ok: true, detail: "Sarvam conversation model is configured.", gpu: null };
+    },
+    async summarize(previous, transcript) {
+      const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", "api-subscription-key": options.apiKey },
+        body: JSON.stringify({
+          model,
+          temperature: 0.2,
+          max_tokens: 400,
+          messages: [
+            {
+              role: "system",
+              content: [
+                "You keep a sales assistant's memory of one prospect.",
+                "Merge the previous memory with the new chat lines into at most 8 short bullet points.",
+                "Keep: who they are, their business, what they need, objections or questions they raised, what was promised, and where the conversation stopped.",
+                "Only write facts that appear in the text. No greetings, no advice.",
+              ].join("\n"),
+            },
+            { role: "user", content: `Previous memory:\n${previous?.trim() || "none"}\n\nNew chat lines:\n${transcript}`.normalize("NFKC") },
+          ],
+        }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!response.ok) throw new Error(`Sarvam returned HTTP ${response.status}`);
+      const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      return (body.choices?.[0]?.message?.content ?? "").trim().slice(0, 2000);
+    },
+    async generate(request) {
+      const started = Date.now();
+      const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "api-subscription-key": options.apiKey,
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.4,
+          max_tokens: Math.max(options.maxOutputTokens, 1024),
+          messages: [
+            { role: "system", content: request.system.normalize("NFKC") },
+            ...request.messages
+              .filter((message) => message.content.trim())
+              .map((message) => ({ role: message.role, content: message.content.normalize("NFKC") })),
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "qualification",
+              strict: true,
+              schema: AI_JSON_SCHEMA,
+            },
+          },
+        }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!response.ok) {
+        const detail = (await response.text().catch(() => "")).slice(0, 200);
+        throw new Error(`Sarvam returned HTTP ${response.status} ${detail}`.trim());
+      }
+      const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const output = parseModelContent(body.choices?.[0]?.message?.content ?? "{}");
+      return {
+        output,
+        model,
+        latencyMs: Date.now() - started,
+        simulated: false,
+        diagnostics: { mode: "sarvam" },
+      };
+    },
+  };
+}
+
+const META_MEDIA_HOST = /(^|\.)(fbsbx\.com|fbcdn\.net|cdninstagram\.com|facebook\.com|instagram\.com)$/;
+
+export function sarvamTranscriber(options: { apiKey: string; fetchImpl?: typeof fetch }) {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  return async (audioUrl: string): Promise<string> => {
+    const source = new URL(audioUrl);
+    if (source.protocol !== "https:" || !META_MEDIA_HOST.test(source.hostname)) {
+      throw new Error("Voice message URL is not a Meta media host.");
+    }
+    const download = await fetchImpl(source, { signal: AbortSignal.timeout(20_000) });
+    if (!download.ok) throw new Error(`Voice download returned HTTP ${download.status}`);
+    const audio = await download.arrayBuffer();
+    if (audio.byteLength > 10_000_000) throw new Error("Voice message is too large.");
+    const type = download.headers.get("content-type")?.split(";")[0] || "audio/mp4";
+    const extension = type.includes("ogg") ? "ogg" : type.includes("mpeg") ? "mp3" : type.includes("wav") ? "wav" : "m4a";
+    const form = new FormData();
+    form.append("file", new Blob([audio], { type }), `voice.${extension}`);
+    form.append("model", "saaras:v4");
+    form.append("mode", "translit");
+    form.append("language_code", "unknown");
+    const response = await fetchImpl("https://api.sarvam.ai/speech-to-text", {
+      method: "POST",
+      headers: { "api-subscription-key": options.apiKey },
+      body: form,
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok) {
+      const detail = (await response.text().catch(() => "")).slice(0, 200);
+      throw new Error(`Sarvam speech-to-text returned HTTP ${response.status} ${detail}`.trim());
+    }
+    const body = (await response.json()) as { transcript?: string };
+    return (body.transcript ?? "").trim().slice(0, 1000);
+  };
 }
 
 export function ollamaLlm(options: {
@@ -160,11 +311,11 @@ export function ollamaLlm(options: {
           format: AI_JSON_SCHEMA,
           options: { num_predict: options.maxOutputTokens, num_ctx: 4096 },
         }),
-        signal: AbortSignal.timeout(120_000),
+        signal: AbortSignal.timeout(480_000),
       });
       if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}`);
       const body = (await response.json()) as { message?: { content?: string } };
-      const output = aiOutputSchema.parse(JSON.parse(body.message?.content ?? "{}"));
+      const output = parseModelContent(body.message?.content ?? "{}");
       return {
         output,
         model: options.model,

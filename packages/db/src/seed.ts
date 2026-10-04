@@ -73,7 +73,7 @@ export async function seedDemo(db: Db): Promise<{ workspaceId: string; ownWorksp
     create: {
       workspaceId: workspace.id,
       mode: "SIMULATION",
-      externalKeyField: "External_Lead_Key__c",
+      externalKeyField: "External_Lead_Key",
       instagramSource: "Instagram",
       facebookSource: "Facebook",
     },

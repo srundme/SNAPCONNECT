@@ -1,0 +1,3 @@
+ALTER TABLE "Media" ADD COLUMN "permalink" TEXT;
+ALTER TABLE "Media" ADD COLUMN "previewUrl" TEXT;
+ALTER TABLE "Media" ADD COLUMN "publishedAt" TIMESTAMP(3);

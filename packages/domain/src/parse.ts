@@ -82,8 +82,9 @@ export function confirmsSameNumber(text: string): boolean {
 }
 
 export function projectTypeFromText(text: string): ProjectType | null {
-  if (/\b(commercial|office|shop|retail|showroom)\b/i.test(text)) return "commercial";
+  if (/\b(creator|influencer|personal|individual)\b/i.test(text)) return "other";
   if (/\b(home|house|residential|apartment|flat|villa|bhk)\b/i.test(text)) return "residential";
+  if (/\b(commercial|office|shop|retail|showroom|business|agency|brand|company|studio|clinic|restaurant|store|hotel)\b/i.test(text)) return "commercial";
   return null;
 }
 

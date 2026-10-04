@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { evidenceInMessage, parseBudget, parsePhone } from "./parse";
+import { platformReplyBlock } from "./policy";
 import { leadFields, type LeadField } from "./types";
 
 export const aiOutputSchema = z.object({
@@ -20,8 +21,6 @@ export const aiOutputSchema = z.object({
 
 export type AiOutput = z.infer<typeof aiOutputSchema>;
 
-const UNSUPPORTED_REPLY = /zoho|appointment|i'?ve booked|i have booked|callback is confirmed|crm record|₹\s*\d|\brs\.?\s*\d/i;
-
 export type AcceptedUpdate = {
   field: LeadField;
   value: string;
@@ -35,13 +34,14 @@ export type AiValidation = {
   reply: string | null;
   replyRejectedReason: string | null;
   updates: AcceptedUpdate[];
+  customAnswers: Array<{ id: string; value: string; sourceMessageId: string; evidence: string }>;
   rejected: Array<{ field: string; reason: string }>;
   handoffRequested: boolean;
   handoffReason: string | null;
   schemaError: string | null;
 };
 
-export function validateAiOutput(raw: unknown, messages: Map<string, string>, phoneRegion = "IN"): AiValidation {
+export function validateAiOutput(raw: unknown, messages: Map<string, string>, phoneRegion = "IN", questionIds: string[] = []): AiValidation {
   const parsed = aiOutputSchema.safeParse(raw);
   if (!parsed.success) {
     return {
@@ -49,22 +49,34 @@ export function validateAiOutput(raw: unknown, messages: Map<string, string>, ph
       reply: null,
       replyRejectedReason: null,
       updates: [],
+      customAnswers: [],
       rejected: [],
       handoffRequested: false,
       handoffReason: null,
       schemaError: "Model output did not match the required schema.",
     };
   }
+  const allowedQuestions = new Set(questionIds);
   const updates: AcceptedUpdate[] = [];
+  const customAnswers: AiValidation["customAnswers"] = [];
   const rejected: Array<{ field: string; reason: string }> = [];
   for (const update of parsed.data.field_updates) {
-    if (!leadFields.includes(update.field as LeadField)) {
-      rejected.push({ field: update.field, reason: "Field is not allowlisted." });
-      continue;
-    }
     const message = messages.get(update.source_message_id);
     if (!message || !evidenceInMessage(update.evidence, message)) {
       rejected.push({ field: update.field, reason: "Evidence is not in the source message." });
+      continue;
+    }
+    if (update.field.startsWith("q:")) {
+      const id = update.field.slice(2);
+      if (!allowedQuestions.has(id)) {
+        rejected.push({ field: update.field, reason: "Question is not on the lead checklist." });
+        continue;
+      }
+      customAnswers.push({ id, value: update.value.trim().slice(0, 500), sourceMessageId: update.source_message_id, evidence: update.evidence });
+      continue;
+    }
+    if (!leadFields.includes(update.field as LeadField)) {
+      rejected.push({ field: update.field, reason: "Field is not allowlisted." });
       continue;
     }
     const field = update.field as LeadField;
@@ -83,8 +95,9 @@ export function validateAiOutput(raw: unknown, messages: Map<string, string>, ph
   }
   let reply: string | null = parsed.data.reply.trim();
   let replyRejectedReason: string | null = null;
-  if (!reply || UNSUPPORTED_REPLY.test(reply)) {
-    replyRejectedReason = reply ? "Reply asserts an unsupported claim." : "Reply is empty.";
+  const blocked = reply ? platformReplyBlock(reply) : "Reply is empty.";
+  if (blocked) {
+    replyRejectedReason = blocked;
     reply = null;
   }
   const handoffRequested = parsed.data.handoff_requested;
@@ -93,6 +106,7 @@ export function validateAiOutput(raw: unknown, messages: Map<string, string>, ph
     reply,
     replyRejectedReason,
     updates,
+    customAnswers,
     rejected,
     handoffRequested,
     handoffReason: handoffRequested ? parsed.data.handoff_reason : null,

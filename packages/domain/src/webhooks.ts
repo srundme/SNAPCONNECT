@@ -27,6 +27,7 @@ export type NormalizedMessage = {
   isEcho: boolean;
   referralCommentId: string | null;
   referralPostId: string | null;
+  audioUrl: string | null;
 };
 
 export type NormalizedIgnore = {
@@ -169,7 +170,7 @@ function facebookEntry(accountId: string, entry: Json, receivedAt: Date): Normal
       mediaId: asString(value.post_id) ?? asString(post?.id),
       contentType,
       commentedAt: numberDate(value.created_time) ?? receivedAt.toISOString(),
-      isAd: Boolean(post?.promotion_status) || asString(value.post_type) === "ad",
+      isAd: asString(post?.promotion_status) === "active" || asString(value.post_type) === "ad",
       isLive: /live/i.test(status),
       isGroup: asString(value.group_id) !== null,
     });
@@ -194,6 +195,7 @@ function readMessaging(accountId: string, value: unknown, receivedAt: Date): Nor
     return { kind: "ignore", externalAccountId: accountId, reason: "Messaging event has no user text turn.", nativeId: null };
   }
   const referral = asObject(node.referral) ?? asObject(message.referral);
+  const audio = asArray(message.attachments).map(asObject).find((item) => asString(item?.type) === "audio");
   return {
     kind: "message",
     externalAccountId: accountId,
@@ -204,6 +206,7 @@ function readMessaging(accountId: string, value: unknown, receivedAt: Date): Nor
     isEcho: message.is_echo === true || senderId === accountId,
     referralCommentId: asString(referral?.comment_id) ?? asString(referral?.commentId),
     referralPostId: asString(referral?.post_id) ?? asString(referral?.postId),
+    audioUrl: asString(asObject(audio?.payload)?.url),
   };
 }
 
