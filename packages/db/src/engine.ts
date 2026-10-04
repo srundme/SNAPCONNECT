@@ -797,7 +797,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
             : []),
           ...(nextDetail
             ? [
-                `Next detail to collect: ${nextDetail.label}. End your reply with one natural question that asks for exactly this. Do not ask for anything already recorded or anything else.`,
+                `Next detail to collect: ${nextDetail.label}${nextDetail.kind === "phone" ? " (ask them to type their mobile number; never ask for permission instead)" : ""}. End your reply with one natural question that asks for exactly this. Do not ask for anything already recorded or anything else.`,
                 "Talk like a good sales rep on a call. In one short sentence, react to what they just said and connect it to how SnapServe helps a business like theirs, using the details they already gave. Then ask the question.",
                 "If they asked something, answer it first in one sentence, then ask the question.",
               ]
@@ -1009,7 +1009,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const reply = pending && validated.reply
       ? replyAsksFor(pending, validated.reply) || (languageSample !== null && validated.reply.includes("?"))
         ? validated.reply
-        : [statement, scriptQuestionFor(pending)].filter(Boolean).join(" ")
+        : [statement, scriptQuestionFor(pending, languageSample ? languageName(languageSample) : null)].filter(Boolean).join(" ")
       : validated.reply ?? fallback;
     const window = replyEligibility({
       now: runtime.now(),

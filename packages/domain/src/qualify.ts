@@ -269,14 +269,14 @@ export function zohoValuesFromQuestions(input: {
 export function questionBrief(questions: LeadQuestion[]): string {
   const lines = questions.map((question, index) => {
     if (question.kind === "name") return `${index + 1}. ${question.label}. Record the answer as chosenName.`;
-    if (question.kind === "phone") return `${index + 1}. ${question.label}. Record the answer as phoneRaw, and set phonePermission to yes when they give a number the team may use.`;
+    if (question.kind === "phone") return `${index + 1}. ${question.label}. Ask them to type their mobile number. Do not ask for permission separately. When they type it, record phoneRaw and set phonePermission to yes. If they ask why, say the team will call on that number to fix a demo time.`;
     if (question.kind === "yesno") return `${index + 1}. ${question.label}. Record q:${question.id} as yes or no.`;
     return `${index + 1}. ${question.label}. Record q:${question.id} with their words.`;
   });
   return [
     "This chat is a SnapServe voice agent working in text. Do the same job a voice agent does on a call.",
-    "After the opening, explain the voice agent in one sentence, then ask the first missing question.",
-    "If they ask how voice AI works or about SnapServe, answer that question in one sentence, then return to the script and ask the next missing question.",
+    "After the opening, explain the voice agent in one sentence in the chat language, then ask the first missing question.",
+    "If they ask how voice AI works or about SnapServe, answer that question in one sentence in the chat language, then return to the script and ask the next missing question.",
     "Ask these questions one at a time, in this order. Skip a question that is already recorded.",
     ...lines,
     "Do not ask about budget, fees, a city, or a survey.",
@@ -486,18 +486,48 @@ function askedAbout(question: LeadQuestion, aiText: string): boolean {
   const ask = aiText.split(/(?<=[.!])\s+/).filter((part) => part.includes("?")).join(" ").toLowerCase();
   if (!ask) return false;
   if (question.kind === "name") return /\b(name|peru|naam)\b/.test(ask) && !/company|business|brand|organi[sz]ation/.test(ask);
-  if (question.kind === "phone") return /\b(number|phone|mobile|contact|no\.)\b/.test(ask);
+  if (question.kind === "phone") return /\b(number|phone|mobile|no\.)\b/.test(ask) && !/\b(permission|use panna|mind)\b/.test(ask);
   if (question.kind === "yesno") return /\bdemo\b/.test(ask);
   if (/company/i.test(question.label)) return /company|business name|brand|organi[sz]ation/.test(ask);
-  if (/volume|month/i.test(question.label)) return /calls?\b.*\b(month|monthly|maasam|masam|mahine|mahina)|call volume|how many calls|kitne calls|evlo calls/.test(ask);
+  if (/volume|month/i.test(question.label)) return /calls?\b.*\b(month|monthly|maasam|masam|mahine|mahina)|call volume|how many calls|kitne calls|kitni calls|evlo calls|(maasam|masam|mahine|mahina|month).*calls?\b/.test(ask);
   if (/team/i.test(question.label)) return /team|telecaller|agents|people|staff|per irukanga|log hain/.test(ask) && !/how many calls|kitne calls|evlo calls/.test(ask);
   if (/issue|why/i.test(question.label)) return /wrong|issue|problem|challenge|why|struggl|pain|prachanai|pirachanai|dikkat|samasya|kyun|enna problem/.test(ask);
   return false;
 }
 
-export function scriptQuestionFor(question: LeadQuestion): string {
-  return scriptQuestion(question);
+export function scriptQuestionFor(question: LeadQuestion, language?: string | null): string {
+  const local = language?.startsWith("Tanglish") ? TANGLISH_QUESTIONS : language?.startsWith("Hinglish") ? HINGLISH_QUESTIONS : null;
+  if (!local) return scriptQuestion(question);
+  const key = question.kind === "name" ? "name"
+    : question.kind === "phone" ? "phone"
+    : /company/i.test(question.label) ? "company"
+    : /team/i.test(question.label) ? "team"
+    : /issue|why/i.test(question.label) ? "issue"
+    : /volume|month/i.test(question.label) ? "volume"
+    : question.kind === "yesno" ? "demo"
+    : null;
+  return key ? local[key] : scriptQuestion(question);
 }
+
+const TANGLISH_QUESTIONS: Record<string, string> = {
+  name: "Unga peru enna?",
+  phone: "Unga mobile number type pannunga?",
+  company: "Unga company peru enna?",
+  team: "Unga telecalling team la evlo per irukanga?",
+  issue: "Ippo calls la enna problem irukku?",
+  volume: "Maasam evlo calls handle panreenga?",
+  demo: "Demo paakka interest irukka?",
+};
+
+const HINGLISH_QUESTIONS: Record<string, string> = {
+  name: "Aapka naam kya hai?",
+  phone: "Apna mobile number bhej do?",
+  company: "Company ka naam kya hai?",
+  team: "Telecalling team mein kitne log hain?",
+  issue: "Abhi calls mein kya problem aa rahi hai?",
+  volume: "Mahine mein kitni calls hoti hain?",
+  demo: "Demo dekhna chahoge?",
+};
 
 export function replyAsksFor(question: LeadQuestion, reply: string): boolean {
   return reply.includes(scriptQuestion(question)) || askedAbout(question, reply);

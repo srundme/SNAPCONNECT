@@ -11,6 +11,8 @@ import {
   looksEnglish,
   chatLanguageSample,
   languageName,
+  replyAsksFor,
+  scriptQuestionFor,
   deterministicIntent,
   requestsTeamSwitch,
   displayLastName,
@@ -594,6 +596,11 @@ describe("ai validation", () => {
     expect(chatLanguageSample(["En company la ipo 40 Peru irukanga", "I want to know the pricing details please"])).toBeNull();
     expect(chatLanguageSample(["Yes", "6383653279"])).toBeNull();
     expect(languageName("Enaku calls ah scale pannanum so")).toMatch(/^Tanglish/);
+    for (const question of questions) {
+      expect(replyAsksFor(question, scriptQuestionFor(question, "Tanglish, which is Tamil typed in English letters"))).toBe(true);
+      expect(replyAsksFor(question, scriptQuestionFor(question, "Hinglish, which is Hindi typed in English letters"))).toBe(true);
+    }
+    expect(replyAsksFor(questions[2]!, "Unga contact number share pannunga, team use panna permission irukka?")).toBe(false);
     expect(languageName("bhai hamare kaam aayega kya")).toMatch(/^Hinglish/);
     expect(languageName("हमारी टीम में 20 लोग हैं")).toMatch(/^Hindi/);
     expect(looksEnglish("How many calls do you handle?")).toBe(true);
