@@ -67,7 +67,7 @@ describe("integration guards", () => {
     const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
       calls.push({ url: String(url), headers: new Headers(init?.headers), body: init?.body });
       if (String(url).startsWith("https://lookaside.fbsbx.com/")) {
-        return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "audio/mp4" } });
+        return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "video/mp4" } });
       }
       return new Response(JSON.stringify({ transcript: "enga team la 20 per irukanga" }), { status: 200 });
     }) as typeof fetch;
@@ -78,6 +78,7 @@ describe("integration guards", () => {
     const form = calls[1]?.body as FormData;
     expect(form.get("model")).toBe("saaras:v4");
     expect(form.get("mode")).toBe("translit");
+    expect((form.get("file") as File).type).toBe("audio/mp4");
     await expect(transcribe("https://evil.example/voice.mp4")).rejects.toThrow(/Meta media host/);
   });
 

@@ -570,6 +570,24 @@ describe("ai validation", () => {
     expect(tanglish.name).toBe("Karthik");
     expect(tanglish.answers.demo).toBe("yes");
     expect(absorbTranscript({ questions, messages: [{ author: "AI", body: "Demo attend pannuveengala?" }, { author: "PROSPECT", body: "vendam" }], name: null, phoneE164: null, answers: {} }).answers.demo).toBe("no");
+    const live = absorbTranscript({
+      questions,
+      messages: [
+        { author: "AI", body: "Please type it instead. What is your name?" },
+        { author: "PROSPECT", body: "Enoda name Gopi" },
+        { author: "AI", body: "Got it, Gopi. What is your company name?" },
+        { author: "PROSPECT", body: "En company la ipo 40 Peru irukanga" },
+        { author: "AI", body: "Demo attend panna interest irukka?" },
+        { author: "PROSPECT", body: "Amha" },
+      ],
+      name: null,
+      phoneE164: null,
+      answers: {},
+    });
+    expect(live.name).toBe("Gopi");
+    expect(live.answers["company-name"]).toBeUndefined();
+    expect(live.answers["team-size"]).toBe("40");
+    expect(live.answers.demo).toBe("yes");
     expect(looksEnglish("How many calls do you handle?")).toBe(true);
     expect(looksEnglish("enga team la 20 per irukanga")).toBe(false);
     expect(looksEnglish("हमारी टीम में 20 लोग हैं")).toBe(false);

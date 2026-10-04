@@ -520,7 +520,12 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
   const nextInbound = !conversation.lastUserMessageAt || sentAt > conversation.lastUserMessageAt ? sentAt : conversation.lastUserMessageAt;
   let text = String(body.text ?? "");
   if (!text.trim() && body.audioUrl) {
-    const transcript = runtime.transcribe ? await runtime.transcribe(String(body.audioUrl)).catch(() => "") : "";
+    const transcript = runtime.transcribe
+      ? await runtime.transcribe(String(body.audioUrl)).catch((error: unknown) => {
+          console.warn(`Voice transcription failed: ${error instanceof Error ? error.message : String(error)}`);
+          return "";
+        })
+      : "";
     text = transcript.trim() ? transcript.trim() : "(Sent a voice message that could not be understood.)";
   }
   try {
@@ -698,6 +703,21 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       return "done";
     }
     const spoken = conversation.messages.filter((message) => (message.author === "PROSPECT" || message.author === "AI") && message.body.trim());
+    const lastSpoken = spoken[spoken.length - 1];
+    if (lead.crmState === "SYNCED" && lastSpoken?.author === "PROSPECT" && spoken[spoken.length - 2]?.author === "AI" && CLOSING_ACK.test(lastSpoken.body.trim())) {
+      await db.aiRun.create({
+        data: {
+          workspaceId: workspace.id,
+          conversationId,
+          model: runtime.llm.model,
+          simulated: runtime.llm.mode === "fixture",
+          latencyMs: 0,
+          valid: true,
+          diagnostic: "No reply needed: they acknowledged after the lead was sent.",
+        },
+      });
+      return "done";
+    }
     const recent = spoken.slice(-MEMORY_WINDOW);
     const prospectTimes = spoken.filter((message) => message.author === "PROSPECT").map((message) => message.createdAt.getTime());
     const gapHours = prospectTimes.length >= 2 ? (prospectTimes[prospectTimes.length - 1]! - prospectTimes[prospectTimes.length - 2]!) / 3_600_000 : 0;
@@ -1052,6 +1072,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
 }
 
 const MEMORY_WINDOW = 20;
+const CLOSING_ACK = /^(ok+|okay|k+|ok ok|ok bro|ok sir|ok thanks?|ok thank you|thanks?|thank you|thank u|thx|tq|ty|seri|sari|super|nice|great|cool|done|fine|theek hai|thik hai|achha|accha|haan ok|\p{Extended_Pictographic}+)[\s.!🙏👍]*$/iu;
 
 async function refreshMemory(
   db: Db,

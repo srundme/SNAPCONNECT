@@ -125,7 +125,9 @@ function readJson(content: string): Record<string, unknown> {
 
 function parseModelContent(content: string): AiOutput {
   const raw = readJson(content) as { field_updates?: unknown; handoff_requested?: unknown; handoff_reason?: unknown };
-  if (raw.handoff_reason === undefined) raw.handoff_reason = raw.handoff_requested === true ? "The person asked for staff." : null;
+  if (typeof raw.handoff_requested !== "boolean") raw.handoff_requested = raw.handoff_requested === "true";
+  if (typeof raw.handoff_reason !== "string") raw.handoff_reason = null;
+  if (raw.handoff_requested === true && !raw.handoff_reason) raw.handoff_reason = "The person asked for staff.";
   const parsed = aiOutputSchema.safeParse(raw);
   if (parsed.success) return parsed.data;
   if (Array.isArray(raw.field_updates)) {
@@ -251,8 +253,9 @@ export function sarvamTranscriber(options: { apiKey: string; fetchImpl?: typeof 
     if (!download.ok) throw new Error(`Voice download returned HTTP ${download.status}`);
     const audio = await download.arrayBuffer();
     if (audio.byteLength > 10_000_000) throw new Error("Voice message is too large.");
-    const type = download.headers.get("content-type")?.split(";")[0] || "audio/mp4";
-    const extension = type.includes("ogg") ? "ogg" : type.includes("mpeg") ? "mp3" : type.includes("wav") ? "wav" : "m4a";
+    const served = download.headers.get("content-type")?.split(";")[0] ?? "";
+    const type = served.startsWith("audio/") && !served.includes("mp4") ? served : "audio/mp4";
+    const extension = type.includes("ogg") ? "ogg" : type.includes("mpeg") ? "mp3" : type.includes("wav") ? "wav" : "mp4";
     const form = new FormData();
     form.append("file", new Blob([audio], { type }), `voice.${extension}`);
     form.append("model", "saaras:v4");

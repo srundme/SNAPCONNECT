@@ -286,7 +286,7 @@ export function questionBrief(questions: LeadQuestion[]): string {
   ].join("\n");
 }
 
-const YES_ANSWER = /^(yes|yeah|yep|sure|ok|okay|interested|i am|we are|we would|sounds good|haan|han|haa|ha|ji|ji haan|bilkul|theek|thik|aama|aamaa|aamam|seri|sari|venum)\b/i;
+const YES_ANSWER = /^(yes|yeah|yep|sure|ok|okay|interested|i am|we are|we would|sounds good|haan|han|haa|ha|ji|ji haan|bilkul|theek|thik|aama|aamaa|aamam|ama|amam|amha|aamha|seri|sari|venum)\b/i;
 const NO_ANSWER = /^(no|nope|not interested|not now|later|maybe later|nahi|nahin|nahi chahiye|abhi nahi|illa|illai|vendam|venam|vendaam|apram|aprom)\b/i;
 
 const ENGLISH_WORDS = /\b(the|is|are|i|we|you|my|our|what|how|want|need|have|team|calls?|yes|no|ok|okay|thanks?|please|company|name|number|demo|month)\b/gi;
@@ -368,14 +368,14 @@ export function absorbTranscript(input: {
       if (/company/i.test(question.label)) {
         const found = text.match(/\bcompany(?:\s+name)?\s+is\s+([A-Za-z][A-Za-z0-9 &'-]{1,40})/i) ?? text.match(/\b([A-Za-z][A-Za-z0-9 &'-]{1,40})\s+is my company\b/i);
         if (found?.[1]) answers[question.id] = found[1].trim();
-        else if (askedThis && plain && text.length <= 60) answers[question.id] = text.replace(/[.!]+$/, "");
+        else if (askedThis && plain && text.length <= 60 && !TEAM_COUNT.test(text)) answers[question.id] = text.replace(/[.!]+$/, "");
       } else if (/volume|calls a month|per month/i.test(question.label)) {
         const amount = text.replace(/,/g, "").match(/\b(\d{2,7})\b/);
         if (amount && Number(amount[1]) >= 50 && !/^0?\d{10}$/.test(amount[1])) answers[question.id] = amount[1];
         else if (askedThis && plain && /\d/.test(text) && text.length <= 60) answers[question.id] = text;
       } else if (/team/i.test(question.label)) {
         const amount = text.match(/\b(\d{1,4})\b/);
-        if (amount && Number(amount[1]) > 0 && Number(amount[1]) < 5000 && (text.length < 40 || askedThis)) answers[question.id] = amount[1];
+        if (amount && Number(amount[1]) > 0 && Number(amount[1]) < 5000 && (text.length < 40 || askedThis || TEAM_COUNT.test(text))) answers[question.id] = amount[1];
       } else if (/issue|why/i.test(question.label) && ((text.length > 30 && /\b(call|lead|follow)/i.test(text)) || (askedThis && plain && text.length > 8))) {
         answers[question.id] = text.slice(0, 180);
       } else if (question.kind === "yesno") {
@@ -407,10 +407,13 @@ export function scriptedReply(input: {
   return asked ? `${explain} ${ask}` : ask;
 }
 
-const NOT_A_NAME = /^(looking|interested|from|here|just|not|fine|good|ok|okay|ready|sure|also|still|very|really|the|a|an|in|at|on|with|planning|trying|working|calling|asking|new|back|done|busy|happy|glad|excited|curious|thinking|available)$/i;
+const TEAM_COUNT = /\b\d{1,4}\s*(?:peru|per(?!\s*(?:month|day|week|hour|min|call))|people|members|log|staff|agents|telecallers|callers|employees|persons)\b/i;
+
+const NOT_A_NAME = /^(enoda|ennoda|en|enga|unga|mera|mere|my|naan|nan|hi|hello|hey|bro|sir|yes|haan|name|peru|naam|looking|interested|from|here|just|not|fine|good|ok|okay|ready|sure|also|still|very|really|the|a|an|in|at|on|with|planning|trying|working|calling|asking|new|back|done|busy|happy|glad|excited|curious|thinking|available)$/i;
 
 function nameFrom(text: string, bareAllowed: boolean): string | null {
-  const intro = text.match(/\b(?:i'm|i am|im|my name is|name is|this is|en peru|enoda peru|mera naam|naam|naan)\s+([A-Za-z]{2,30})\b/i)?.[1]
+  const intro = text.match(/\b(?:i'm|i am|im|this is|naan)\s+([A-Za-z]{2,30})\b/i)?.[1]
+    ?? text.match(/(?:^|\b(?:my|en|enoda|ennoda|yen|mera|mere|apna)\s+)(?:name|naam|peru)\s+(?:is\s+)?([A-Za-z]{2,30})\b/i)?.[1]
     ?? text.match(/\b([A-Za-z]{2,30})\s+(?:hai mera naam|en peru|naan dhaan|here)\b/i)?.[1];
   const bare = bareAllowed ? text.match(/^([A-Za-z]{2,30})(?:\s+[A-Za-z]{1,30}){0,2}[.!]?$/)?.[1] : undefined;
   const picked = [intro, bare].find((word) => word && !NOT_A_NAME.test(word) && !/ing$/i.test(word));
@@ -432,7 +435,7 @@ function directAnswer(question: LeadQuestion, text: string, plain: boolean, regi
   if (/company/i.test(question.label)) {
     const found = text.match(/\bcompany(?:\s+name)?\s+is\s+([A-Za-z][A-Za-z0-9 &'-]{1,40})/i);
     if (found?.[1]) return found[1].trim();
-    return text.length <= 60 && !/\balready\b/i.test(text) ? text.replace(/[.!]+$/, "") : null;
+    return text.length <= 60 && !/\balready\b/i.test(text) && !TEAM_COUNT.test(text) ? text.replace(/[.!]+$/, "") : null;
   }
   if (/volume|month|team/i.test(question.label)) {
     const amount = text.replace(/,/g, "").match(/\b(\d{1,7})\b/);
