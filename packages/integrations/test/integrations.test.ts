@@ -60,6 +60,15 @@ describe("integration guards", () => {
     });
     expect(result.output.reply).toBe("Unga team la evlo per irukanga?");
     expect(result.output.handoff_reason).toBeNull();
+    const stalled = `{"reply":"Sari, unga company peru enna?","field_updates":[{"field":"company_name","value":"PENDING"${"\n    ".repeat(200)}`;
+    const stalledFetch = (async () => new Response(JSON.stringify({ choices: [{ message: { content: stalled } }] }), { status: 200 })) as typeof fetch;
+    const rescued = await sarvamLlm({ apiKey: "test-key", maxOutputTokens: 200, fetchImpl: stalledFetch }).generate({
+      schemaName: "qualification",
+      system: "Ask the next question.",
+      messages: [{ id: "m1", role: "user", content: "Yes" }],
+    });
+    expect(rescued.output.reply).toBe("Sari, unga company peru enna?");
+    expect(rescued.output.field_updates).toEqual([]);
   });
 
   it("transcribes a Meta voice note with Sarvam in romanized text", async () => {

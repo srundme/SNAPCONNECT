@@ -9,6 +9,8 @@ import {
   dedupKey,
   absorbTranscript,
   looksEnglish,
+  chatLanguageSample,
+  languageName,
   deterministicIntent,
   requestsTeamSwitch,
   displayLastName,
@@ -588,6 +590,12 @@ describe("ai validation", () => {
     expect(live.answers["company-name"]).toBeUndefined();
     expect(live.answers["team-size"]).toBe("40");
     expect(live.answers.demo).toBe("yes");
+    expect(chatLanguageSample(["Enaku calls ah scale pannanum so", "20000", "Ok", "Yes"])).toBe("Enaku calls ah scale pannanum so");
+    expect(chatLanguageSample(["En company la ipo 40 Peru irukanga", "I want to know the pricing details please"])).toBeNull();
+    expect(chatLanguageSample(["Yes", "6383653279"])).toBeNull();
+    expect(languageName("Enaku calls ah scale pannanum so")).toMatch(/^Tanglish/);
+    expect(languageName("bhai hamare kaam aayega kya")).toMatch(/^Hinglish/);
+    expect(languageName("हमारी टीम में 20 लोग हैं")).toMatch(/^Hindi/);
     expect(looksEnglish("How many calls do you handle?")).toBe(true);
     expect(looksEnglish("enga team la 20 per irukanga")).toBe(false);
     expect(looksEnglish("हमारी टीम में 20 लोग हैं")).toBe(false);

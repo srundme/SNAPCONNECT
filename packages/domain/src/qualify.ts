@@ -291,6 +291,43 @@ const NO_ANSWER = /^(no|nope|not interested|not now|later|maybe later|nahi|nahin
 
 const ENGLISH_WORDS = /\b(the|is|are|i|we|you|my|our|what|how|want|need|have|team|calls?|yes|no|ok|okay|thanks?|please|company|name|number|demo|month)\b/gi;
 
+export function chatLanguageSample(prospectTexts: string[]): string | null {
+  for (const raw of [...prospectTexts].reverse()) {
+    const text = raw.trim();
+    if (!text || text.startsWith("(")) continue;
+    const words = text.split(/\s+/).filter((word) => /\p{L}/u.test(word));
+    const native = /[^\x00-\x7F‘’“”…–—₹]/.test(text.replace(/\p{Extended_Pictographic}/gu, ""));
+    if (!native && words.length < 3) continue;
+    return looksEnglish(text) ? null : text.slice(0, 160);
+  }
+  return null;
+}
+
+const SCRIPTS: Array<[RegExp, string]> = [
+  [/[\u0B80-\u0BFF]/, "Tamil in Tamil script"],
+  [/[\u0900-\u097F]/, "Hindi in Devanagari script"],
+  [/[\u0C00-\u0C7F]/, "Telugu in Telugu script"],
+  [/[\u0C80-\u0CFF]/, "Kannada in Kannada script"],
+  [/[\u0D00-\u0D7F]/, "Malayalam in Malayalam script"],
+  [/[\u0980-\u09FF]/, "Bengali in Bengali script"],
+];
+const TANGLISH = /\b(unga|enga|enna|enaku|ennaku|irukku|iruku|irukanga|pannanum|pannalam|panren|venum|venam|sollunga|romba|konjam|illa|aama|seri|sari|naan|neenga|epdi|eppadi|evlo|enoda|ennoda|thaan|dhaan|ah|la|ku)\b/gi;
+const HINGLISH = /\b(hai|hain|kya|kaise|mein|mera|meri|aap|aapka|hum|hamara|nahi|nahin|karna|karte|chahiye|kitne|kitna|bhai|haan|theek|accha|achha|batao|wala|ke|ka|ki)\b/gi;
+const TELUGLISH = /\b(meeru|nenu|undi|ledu|cheppandi|kavali|enti|ela|baagundi|chala)\b/gi;
+const KANGLISH = /\b(neevu|naanu|beku|illa|heli|hege|tumba|yenu|maadi)\b/gi;
+
+export function languageName(sample: string): string {
+  for (const [pattern, name] of SCRIPTS) if (pattern.test(sample)) return name;
+  const scores: Array<[number, string]> = [
+    [sample.match(TANGLISH)?.length ?? 0, "Tanglish, which is Tamil typed in English letters"],
+    [sample.match(HINGLISH)?.length ?? 0, "Hinglish, which is Hindi typed in English letters"],
+    [sample.match(TELUGLISH)?.length ?? 0, "Telugu typed in English letters"],
+    [sample.match(KANGLISH)?.length ?? 0, "Kannada typed in English letters"],
+  ];
+  const [score, name] = scores.sort((a, b) => b[0] - a[0])[0]!;
+  return score > 0 ? name : "their own language typed in English letters";
+}
+
 export function looksEnglish(text: string): boolean {
   if (/[^\x00-\x7F‘’“”…–—₹]/.test(text)) return false;
   const words = text.split(/\s+/).filter(Boolean);

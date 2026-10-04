@@ -118,8 +118,14 @@ function readJson(content: string): Record<string, unknown> {
     return JSON.parse(content) as Record<string, unknown>;
   } catch (error) {
     const trimmed = content.trimEnd().replace(/,$/, "");
-    if (!trimmed.startsWith("{") || trimmed.endsWith("}")) throw error;
-    return JSON.parse(`${trimmed}\n}`) as Record<string, unknown>;
+    if (trimmed.startsWith("{") && !trimmed.endsWith("}")) {
+      try {
+        return JSON.parse(`${trimmed}\n}`) as Record<string, unknown>;
+      } catch {}
+    }
+    const reply = content.match(/"reply"\s*:\s*("(?:[^"\\]|\\.)*")/)?.[1];
+    if (!reply) throw error;
+    return { reply: JSON.parse(reply) as string, field_updates: [], handoff_requested: false, handoff_reason: null };
   }
 }
 
