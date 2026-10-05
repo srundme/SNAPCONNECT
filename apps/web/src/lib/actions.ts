@@ -152,9 +152,12 @@ export async function connectWhatsApp(formData: FormData) {
   if (workspace.mode !== "INTEGRATION") back(`error=${encodeURIComponent("Switch to Own accounts before connecting WhatsApp.")}`);
   const phoneNumberId = String(formData.get("phoneNumberId") ?? "").replace(/\D/g, "");
   const businessAccountId = String(formData.get("businessAccountId") ?? "").replace(/\D/g, "");
-  const token = String(formData.get("accessToken") ?? "").trim();
+  const token = String(formData.get("accessToken") ?? "").trim().replace(/^bearer\s+/i, "").replace(/["'`\s]/g, "");
   if (!phoneNumberId || !businessAccountId || !token) {
     back(`error=${encodeURIComponent("Enter the phone number ID, the WhatsApp Business Account ID and the access token.")}`);
+  }
+  if (!/^EAA[A-Za-z0-9]{50,}$/.test(token)) {
+    back(`error=${encodeURIComponent("That does not look like a Meta access token. It should start with EAA and be one long line with no spaces. Copy it again from Business Settings > System users > Generate token (not the App Secret or the WhatsApp Business Account ID).")}`);
   }
   const { config, keys } = integrationConfig();
   let number: { displayPhoneNumber: string; verifiedName: string | null };
