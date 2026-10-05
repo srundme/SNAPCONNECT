@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { normalizeMetaPayload } from "@snapsocial/domain";
 import { readSimulationCrm } from "@snapsocial/integrations";
 import { createPrisma } from "../src/client";
-import { deleteContactData, ingestEvents, processAvailableJobs, seedDemo, setConnectionPaused, simulationRuntime, takeOver } from "../src/index";
+import { deleteContactData, ingestEvents, processAvailableJobs, seedDemo, setConnectionPaused, simulationRuntime, takeOver, type Runtime } from "../src/index";
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeDb = databaseUrl ? describe : describe.skip;
@@ -198,6 +198,53 @@ describeDb("two-channel simulation", () => {
     expect(corrected.crm?.crmId).toBe(crmId);
     expect(corrected.crm?.syncedRevision).toBe(corrected.revision);
     expect(readSimulationCrm(crmId)?.Phone).toBe("+918904887500");
+
+    const workspace = await db.workspace.findUniqueOrThrow({ where: { id: seeded.workspaceId } });
+    await db.workspace.update({
+      where: { id: seeded.workspaceId },
+      data: { leadQuestions: [{ id: "requirement", label: "Requirement", kind: "text", zohoField: null }] },
+    });
+    const reading: Runtime = {
+      ...runtime,
+      llm: { ...runtime.llm, extractAnswers: async () => ({ requirement: "Only modular kitchen", "preferred-call-time": "tomorrow 5 PM" }) },
+    };
+    const secondEdit = normalizeMetaPayload(
+      "INSTAGRAM",
+      {
+        object: "instagram",
+        entry: [
+          {
+            id: "17841405880000001",
+            messaging: [
+              {
+                sender: { id: igParticipant },
+                recipient: { id: "17841405880000001" },
+                timestamp: now.getTime() + 120_000,
+                message_edit: { mid: igMessageId, num_edit: 2, text: "It is a home in Mysuru. Only modular kitchen. Budget is 15 lakhs. Call tomorrow 5 PM on +91 89048 87500." },
+              },
+            ],
+          },
+        ],
+      },
+      now,
+    );
+    const repliesBefore = await db.message.count({ where: { conversationId: conversation.id, author: "AI" } });
+    try {
+      await ingestEvents(db, { channel: "INSTAGRAM", mode: "SIMULATION", events: secondEdit, receivedAt: new Date() });
+      for (let index = 0; index < 12; index += 1) {
+        if (await db.outboxJob.count({ where: { status: "PENDING", availableAt: { lte: new Date() } } }) === 0) break;
+        await processAvailableJobs(db, reading, 30);
+      }
+    } finally {
+      await db.workspace.update({ where: { id: seeded.workspaceId }, data: { leadQuestions: workspace.leadQuestions as never } });
+    }
+    const reread = await db.lead.findUniqueOrThrow({ where: { id: igLead?.id ?? "" }, include: { crm: true } });
+    expect((reread.answers as Record<string, string>).requirement).toBe("Only modular kitchen");
+    expect(reread.timeframeRaw).toBe("tomorrow 5 PM");
+    expect(reread.crm?.crmId).toBe(crmId);
+    expect(reread.crm?.syncedRevision).toBe(reread.revision);
+    expect(readSimulationCrm(crmId)?.Description).toContain("Preferred call time: tomorrow 5 PM");
+    expect(await db.message.count({ where: { conversationId: conversation.id, author: "AI" } })).toBe(repliesBefore);
 
     await deleteContactData(db, igLead?.contactId ?? "", seeded.workspaceId, "tester");
     const gone = await db.contact.findUnique({ where: { id: igLead?.contactId ?? "" } });

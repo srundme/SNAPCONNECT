@@ -734,7 +734,9 @@ async function handleMessageEdit(db: Db, connectionId: string, body: Record<stri
     channel: conversation.channel,
   });
   const paused = connection.automationPaused || connection.workspace.automationPaused || Boolean(connection.revokedAt);
-  if (conversation.owner === "AI" && !paused && !contact.optedOutAt) {
+  if (conversation.owner !== "AI" || paused || contact.optedOutAt) {
+    await refreshLeadDetails(db, runtime, conversation.id, phoneChanged);
+  } else {
     await db.outboxJob.create({
       data: {
         workspaceId: connection.workspaceId,
@@ -752,6 +754,43 @@ async function handleMessageEdit(db: Db, connectionId: string, body: Record<stri
     });
   }
   await touchConnection(db, connection.id, connection.mode, "message", runtime.now());
+}
+
+/**
+ * Re-reads the edited chat without replying, for chats staff own or automation has paused,
+ * so a corrected name, answer or call time still reaches the lead and the same Zoho record.
+ */
+async function refreshLeadDetails(db: Db, runtime: Runtime, conversationId: string, alreadyChanged: boolean) {
+  const conversation = await db.conversation.findUniqueOrThrow({
+    where: { id: conversationId },
+    include: { messages: { orderBy: { createdAt: "asc" } }, contact: true, workspace: true },
+  });
+  const lead = await db.lead.findFirst({ where: { contactId: conversation.contactId, archivedAt: null }, include: { crm: true } });
+  if (!lead || conversation.contact.optedOutAt) return;
+  const questions = parseLeadQuestions(conversation.workspace.leadQuestions);
+  const form = questions.length ? await readLeadForm(runtime, questions, conversation.messages) : null;
+  const answers = { ...answerRecord(lead.answers), ...(form?.answers ?? {}) };
+  const name = form?.name ?? conversation.contact.chosenName;
+  const phoneE164 = conversation.channel === "WHATSAPP" ? lead.phoneE164 : form?.phoneE164 ?? lead.phoneE164;
+  const callbackTime = form?.callbackTime ?? lead.timeframeRaw;
+  const changed = JSON.stringify(answers) !== JSON.stringify(answerRecord(lead.answers))
+    || name !== conversation.contact.chosenName
+    || phoneE164 !== lead.phoneE164
+    || callbackTime !== lead.timeframeRaw;
+  if (changed) {
+    if (name !== conversation.contact.chosenName) {
+      await db.contact.update({ where: { id: conversation.contactId }, data: { chosenName: name } });
+    }
+    await db.lead.update({
+      where: { id: lead.id },
+      data: { answers, phoneE164, timeframeRaw: callbackTime, revision: { increment: 1 } },
+    });
+  }
+  if (changed && !alreadyChanged && (lead.crm?.crmId || lead.crmState === "SYNCED")) {
+    await db.outboxJob.create({
+      data: { workspaceId: lead.workspaceId, type: "CRM_SYNC", payload: { leadId: lead.id, contactId: conversation.contactId } },
+    });
+  }
 }
 
 /**
