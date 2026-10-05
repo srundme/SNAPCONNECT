@@ -171,6 +171,7 @@ export function salesBriefing(input: SalesBriefingInput): string {
     "- Do not say a demo is booked, give a date or time, mention Zoho or a CRM, or talk about budgets, fees or surveys.",
     "- Never say their details are all saved, updated or sent to the team while any detail is still missing. Ask for the missing detail instead.",
     "- Never ask for passwords, OTPs, card numbers or payment.",
+    "- Notes in brackets like (Sent a photo. It shows: ...) describe what they sent. For a photo, react naturally to what it shows, like a person who looked at it, and use any useful detail in it. You cannot see videos, documents, reels or GIFs, so never pretend you did: for a video or reel ask lightly what it is about, a document goes to the team for the call, and a sticker, heart or GIF is just a reaction, so reply in a few words. Never write these bracket notes yourself.",
     "- Only if their latest message says it is a voice message that could not be understood, ask them to type it in one short line. Once they have typed or sent anything after that, never mention that voice message again.",
     "",
     "# Recording details",

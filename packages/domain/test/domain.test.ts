@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   acceptExtractedAnswers,
+  mediaNote,
   dropCannedLines,
   oneAddress,
   unrealisticAnswers,
@@ -1068,5 +1069,54 @@ describe("joke numbers and canned lines", () => {
     expect(dropCannedLines("Got it sir. The team will call at 6 PM. Anything else on your mind sir?")).toBe("Got it sir. The team will call at 6 PM.");
     expect(dropCannedLines("Is there anything else I can help you with?")).toBe("Is there anything else I can help you with?");
     expect(oneAddress("Got it sir, one lakh noted. The team will call you at 6 PM sir. Anything else sir?")).toBe("Got it sir, one lakh noted. The team will call you at 6 PM. Anything else?");
+  });
+});
+
+describe("photos, videos and other attachments", () => {
+  it("keeps WhatsApp photos with their media id and caption, and other media as kinds", () => {
+    const events = normalizeMetaPayload("WHATSAPP", {
+      object: "whatsapp_business_account",
+      entry: [{
+        id: "waba-1",
+        changes: [{
+          field: "messages",
+          value: {
+            messaging_product: "whatsapp",
+            metadata: { display_phone_number: "919000000000", phone_number_id: "pnid-1" },
+            contacts: [{ profile: { name: "Kishore" }, wa_id: "919845012345" }],
+            messages: [
+              { from: "919845012345", id: "wamid.p1", timestamp: "1759670000", type: "image", image: { id: "img-1", mime_type: "image/jpeg", caption: "our call log" } },
+              { from: "919845012345", id: "wamid.p2", timestamp: "1759670010", type: "video", video: { id: "vid-1", mime_type: "video/mp4" } },
+            ],
+          },
+        }],
+      }],
+    }, new Date("2026-10-05T00:00:00Z"));
+    const messages = events.filter((event) => event.kind === "message");
+    expect(messages[0]).toMatchObject({ text: "our call log", mediaKind: "image", imageMediaId: "img-1" });
+    expect(messages[1]).toMatchObject({ text: "", mediaKind: "video", imageMediaId: null });
+  });
+
+  it("keeps Instagram photos and shared reels instead of dropping them", () => {
+    const events = normalizeMetaPayload("INSTAGRAM", {
+      object: "instagram",
+      entry: [{
+        id: "1784",
+        messaging: [
+          { sender: { id: "u1" }, recipient: { id: "1784" }, timestamp: 1759670000000, message: { mid: "m1", attachments: [{ type: "image", payload: { url: "https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=1" } }] } },
+          { sender: { id: "u1" }, recipient: { id: "1784" }, timestamp: 1759670010000, message: { mid: "m2", attachments: [{ type: "ig_reel", payload: { reel_video_id: "9" } }] } },
+        ],
+      }],
+    }, new Date("2026-10-05T00:00:00Z"));
+    const messages = events.filter((event) => event.kind === "message");
+    expect(messages[0]).toMatchObject({ mediaKind: "image", imageUrl: "https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=1" });
+    expect(messages[1]).toMatchObject({ mediaKind: "ig_reel", imageUrl: null });
+  });
+
+  it("writes a clear note for each kind", () => {
+    expect(mediaNote("image", "A screenshot of a call log showing 40 missed calls.")).toBe("(Sent a photo. It shows: A screenshot of a call log showing 40 missed calls.)");
+    expect(mediaNote("image", "")).toBe("(Sent a photo.)");
+    expect(mediaNote("ig_reel")).toBe("(Shared a reel.)");
+    expect(mediaNote("something_new")).toBe("(Sent an attachment.)");
   });
 });

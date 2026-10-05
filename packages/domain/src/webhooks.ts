@@ -30,6 +30,10 @@ export type NormalizedMessage = {
   audioUrl: string | null;
   senderName?: string | null;
   audioMediaId?: string | null;
+  /** What kind of attachment came without being text or a voice note: image, video, sticker, document, share... */
+  mediaKind?: string | null;
+  imageUrl?: string | null;
+  imageMediaId?: string | null;
 };
 
 export type NormalizedMessageEdit = {
@@ -107,6 +111,23 @@ const WHATSAPP_PLACEHOLDER: Record<string, string> = {
   contacts: "(Shared a contact.)",
 };
 
+const MEDIA_NOTES: Record<string, string> = {
+  ...WHATSAPP_PLACEHOLDER,
+  file: "(Sent a document.)",
+  animated_image: "(Sent a GIF.)",
+  share: "(Shared a post.)",
+  ig_reel: "(Shared a reel.)",
+  reel: "(Shared a reel.)",
+  story_mention: "(Mentioned you in their story.)",
+  like_heart: "(Sent a heart.)",
+};
+
+/** The note saved in the chat for an attachment; a photo carries what the vision model saw in it. */
+export function mediaNote(kind: string, seen?: string | null): string {
+  if (kind === "image" && seen?.trim()) return `(Sent a photo. It shows: ${seen.trim().replace(/\)+$/, "")})`;
+  return MEDIA_NOTES[kind] ?? "(Sent an attachment.)";
+}
+
 function whatsappEntry(entry: Json, receivedAt: Date): NormalizedEvent[] {
   const events: NormalizedEvent[] = [];
   for (const change of asArray(entry.changes)) {
@@ -135,9 +156,10 @@ function whatsappEntry(entry: Json, receivedAt: Date): NormalizedEvent[] {
       const text = type === "text" ? asString(asObject(message.text)?.body)
         : type === "button" ? asString(asObject(message.button)?.text)
         : type === "interactive" ? asString(asObject(interactive?.button_reply)?.title) ?? asString(asObject(interactive?.list_reply)?.title)
-        : asString(media?.caption) ?? WHATSAPP_PLACEHOLDER[type] ?? null;
+        : asString(media?.caption) ?? null;
       const audioMediaId = type === "audio" ? asString(asObject(message.audio)?.id) : null;
-      if (!text && !audioMediaId) {
+      const mediaKind = WHATSAPP_PLACEHOLDER[type] ? type : null;
+      if (!text && !audioMediaId && !mediaKind) {
         events.push({ kind: "ignore", externalAccountId: phoneNumberId, reason: `Unsupported WhatsApp message type ${type || "unknown"}.`, nativeId: messageId });
         continue;
       }
@@ -155,6 +177,8 @@ function whatsappEntry(entry: Json, receivedAt: Date): NormalizedEvent[] {
         audioUrl: null,
         senderName: names.get(from) ?? null,
         audioMediaId,
+        mediaKind,
+        imageMediaId: type === "image" ? asString(media?.id) : null,
       });
     }
   }
@@ -294,7 +318,10 @@ function readMessaging(accountId: string, value: unknown, receivedAt: Date): Nor
     return { kind: "ignore", externalAccountId: accountId, reason: "Messaging event has no user text turn.", nativeId: null };
   }
   const referral = asObject(node.referral) ?? asObject(message.referral);
-  const audio = asArray(message.attachments).map(asObject).find((item) => asString(item?.type) === "audio");
+  const attachments = asArray(message.attachments).map(asObject);
+  const audio = attachments.find((item) => asString(item?.type) === "audio");
+  const other = attachments.find((item) => item && asString(item.type) !== "audio");
+  const otherKind = other ? asString(other.type) ?? "attachment" : null;
   return {
     kind: "message",
     externalAccountId: accountId,
@@ -306,6 +333,8 @@ function readMessaging(accountId: string, value: unknown, receivedAt: Date): Nor
     referralCommentId: asString(referral?.comment_id) ?? asString(referral?.commentId),
     referralPostId: asString(referral?.post_id) ?? asString(referral?.postId),
     audioUrl: asString(asObject(audio?.payload)?.url),
+    mediaKind: otherKind,
+    imageUrl: otherKind === "image" ? asString(asObject(other?.payload)?.url) : null,
   };
 }
 

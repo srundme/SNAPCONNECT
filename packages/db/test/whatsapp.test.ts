@@ -163,6 +163,62 @@ describeDb("whatsapp chat", () => {
     expect(spoken.length).toBe(1);
   });
 
+  it("describes a photo with the vision model and saves it with the caption", async () => {
+    const seeded = await seedDemo(db);
+    const key = randomBytes(32);
+    const looked: Array<{ url: string; token?: string }> = [];
+    const photoRuntime: Runtime = {
+      ...runtime,
+      credentialKeys: { test: key },
+      whatsappMediaUrl: async () => "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=2",
+      seeImage: async (url, token) => {
+        looked.push({ url, token });
+        return "A screenshot of a call log showing 40 missed calls.";
+      },
+    };
+    await db.channelConnection.upsert({
+      where: { channel_mode_externalAccountId: { channel: "WHATSAPP", mode: "SIMULATION", externalAccountId: "pnid-test" } },
+      update: { automationPaused: false, revokedAt: null, credentialCiphertext: encryptSecret("wa-token", key, "test") },
+      create: {
+        workspaceId: seeded.workspaceId,
+        channel: "WHATSAPP",
+        mode: "SIMULATION",
+        externalAccountId: "pnid-test",
+        displayName: "Demo WhatsApp",
+        automationPaused: false,
+        credentialCiphertext: encryptSecret("wa-token", key, "test"),
+      },
+    });
+    const now = new Date(Date.now() - 120_000);
+    const waId = `9198470${String(Date.now()).slice(-5)}`;
+    const events = normalizeMetaPayload("WHATSAPP", {
+      object: "whatsapp_business_account",
+      entry: [{
+        id: "waba-test",
+        changes: [{
+          field: "messages",
+          value: {
+            messaging_product: "whatsapp",
+            metadata: { display_phone_number: "919000000000", phone_number_id: "pnid-test" },
+            contacts: [{ profile: { name: "Ravi" }, wa_id: waId }],
+            messages: [{ from: waId, id: `wamid.p${now.getTime()}`, timestamp: String(Math.floor(now.getTime() / 1000)), type: "image", image: { id: "img-7", mime_type: "image/jpeg", caption: "this is our problem" } }],
+          },
+        }],
+      }],
+    }, now);
+    await ingestEvents(db, { channel: "WHATSAPP", mode: "SIMULATION", events, receivedAt: now });
+    for (let index = 0; index < 12; index += 1) {
+      if (await db.outboxJob.count({ where: { status: "PENDING", availableAt: { lte: new Date() } } }) === 0) break;
+      await processAvailableJobs(db, photoRuntime, 30);
+    }
+    const identity = await db.contactIdentity.findFirstOrThrow({ where: { channel: "WHATSAPP", externalId: waId } });
+    const conversation = await db.conversation.findFirstOrThrow({ where: { contactId: identity.contactId }, include: { messages: { orderBy: { createdAt: "asc" } } } });
+    const photo = conversation.messages.find((message) => message.author === "PROSPECT")!;
+    expect(photo.body).toBe("this is our problem (Sent a photo. It shows: A screenshot of a call log showing 40 missed calls.)");
+    expect(looked).toEqual([{ url: "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=2", token: "wa-token" }]);
+    expect(conversation.messages.some((message) => message.author === "AI")).toBe(true);
+  });
+
   function inbound2(waId: string, at: Date) {
     return inbound(waId, `wamid.t${at.getTime()}`, "It is a 2BHK in Chennai", at);
   }

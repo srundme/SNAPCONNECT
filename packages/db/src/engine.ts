@@ -61,6 +61,7 @@ import {
   unrealisticAnswers,
   dropCannedLines,
   oneAddress,
+  mediaNote,
 } from "@snapsocial/domain";
 import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, neutralDirection, speechLocale, speechScript, speechSentences, zohoAdapter, ZohoOAuthError, type LlmProvider, type SendResult, type Speaker, type VoiceDirection, type ZohoAdapter } from "@snapsocial/integrations";
 import { randomBytes } from "node:crypto";
@@ -94,6 +95,7 @@ export type Runtime = {
   zohoClientSecret: string | null;
   zohoAccountsUrl: string | null;
   transcribe?: (audioUrl: string, bearerToken?: string) => Promise<string>;
+  seeImage?: (imageUrl: string, bearerToken?: string) => Promise<string>;
   whatsappMediaUrl?: (mediaId: string, token: string) => Promise<string>;
   speak?: Speaker;
   publicBaseUrl?: string;
@@ -591,6 +593,15 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
       : "";
     text = transcript.trim() ? transcript.trim() : "(Sent a voice message that could not be understood.)";
   }
+  const mediaKind = typeof body.mediaKind === "string" && body.mediaKind ? body.mediaKind : null;
+  if (mediaKind && !voice) {
+    const seen = mediaKind === "image" ? await imageDescription(runtime, connection, body).catch((error: unknown) => {
+      console.warn(`Photo description failed: ${error instanceof Error ? error.message : String(error)}`);
+      return "";
+    }) : "";
+    const note = mediaNote(mediaKind, seen);
+    text = text.trim() ? `${text.trim()} ${note}` : note;
+  }
   if (!text.trim()) return;
   try {
     await db.message.create({
@@ -707,6 +718,19 @@ async function voiceTranscript(
   const token = decryptSecret(connection.credentialCiphertext, runtime.credentialKeys);
   const url = await runtime.whatsappMediaUrl(String(body.audioMediaId), token);
   return runtime.transcribe(url, token);
+}
+
+async function imageDescription(
+  runtime: Runtime,
+  connection: { credentialCiphertext: string | null },
+  body: Record<string, unknown>,
+): Promise<string> {
+  if (!runtime.seeImage) return "";
+  if (body.imageUrl) return runtime.seeImage(String(body.imageUrl));
+  if (!body.imageMediaId || !runtime.whatsappMediaUrl || !connection.credentialCiphertext) return "";
+  const token = decryptSecret(connection.credentialCiphertext, runtime.credentialKeys);
+  const url = await runtime.whatsappMediaUrl(String(body.imageMediaId), token);
+  return runtime.seeImage(url, token);
 }
 
 async function handleMessageEdit(db: Db, connectionId: string, body: Record<string, unknown>, runtime: Runtime) {
@@ -2093,6 +2117,9 @@ function sanitize(event: NormalizedEvent): Record<string, string | boolean | nul
       audioUrl: event.audioUrl,
       senderName: event.senderName ?? null,
       audioMediaId: event.audioMediaId ?? null,
+      mediaKind: event.mediaKind ?? null,
+      imageUrl: event.imageUrl ?? null,
+      imageMediaId: event.imageMediaId ?? null,
     };
   }
   if (event.kind === "message_edit") {
