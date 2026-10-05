@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  cleanName,
+  nameInReply,
+  asksForName,
+  mentionsOwnName,
   buildZohoRecord,
   can,
   canGrantPlatformRole,
@@ -774,5 +778,40 @@ describe("shared inference limit", () => {
   it("does not allow a second generation when concurrency is one", () => {
     expect(inferenceSlotAvailable(0, 1)).toBe(true);
     expect(inferenceSlotAvailable(1, 1)).toBe(false);
+  });
+});
+
+describe("name capture", () => {
+  it("keeps full names and initials and drops fillers and honorifics", () => {
+    expect(cleanName("Karthikeyan R", "Karthikeyan R")).toBe("Karthikeyan R");
+    expect(cleanName("gopi", "en peru gopi da")).toBe("Gopi");
+    expect(cleanName("Rahul Sharma", "Mera naam Rahul Sharma hai")).toBe("Rahul Sharma");
+    expect(cleanName("Gopi sir", "Gopi sir")).toBe("Gopi");
+    expect(cleanName("my name is Priya", "my name is Priya")).toBe("Priya");
+    expect(cleanName("K Mohan", "K. Mohan")).toBe("K Mohan");
+    expect(cleanName("K", "K")).toBeNull();
+  });
+
+  it("rejects fillers, numbers and names that were never typed", () => {
+    expect(cleanName("Areee", "Areee bhaiiii")).toBeNull();
+    expect(cleanName("Enoda", "Enoda peru")).toBeNull();
+    expect(cleanName("Suresh", "my name is Gopi")).toBeNull();
+    expect(cleanName("Gopi 123", "Gopi 123")).toBeNull();
+    expect(cleanName("Acha", "Achaaaa")).toBeNull();
+    expect(cleanName(null, "anything")).toBeNull();
+  });
+
+  it("falls back to text rules when the name reader is unavailable", () => {
+    expect(nameInReply("Areee bhaiiii", true)).toBeNull();
+    expect(nameInReply("Karthikeyan", true)).toBe("Karthikeyan");
+    expect(nameInReply("I am Divya from Chennai", false)).toBe("Divya");
+    expect(nameInReply("yes", true)).toBeNull();
+  });
+
+  it("knows when the assistant asked for a name and when a correction is coming", () => {
+    expect(asksForName("Super sir. May I have your name?")).toBe(true);
+    expect(asksForName("What is your company name?")).toBe(false);
+    expect(mentionsOwnName("no my name is Gopinath")).toBe(true);
+    expect(mentionsOwnName("2000 calls a month")).toBe(false);
   });
 });

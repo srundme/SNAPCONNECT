@@ -412,6 +412,7 @@ export function absorbTranscript(input: {
   phoneE164: string | null;
   answers: Record<string, string>;
   phoneRegion?: string;
+  nameReadElsewhere?: boolean;
 }): { name: string | null; phoneE164: string | null; answers: Record<string, string> } {
   const answers = { ...input.answers };
   let name = input.name?.trim() || null;
@@ -430,7 +431,7 @@ export function absorbTranscript(input: {
     if (target) {
       const direct = directAnswer(target, text, plain, input.phoneRegion ?? "IN");
       if (direct) {
-        if (target.kind === "name") name = direct;
+        if (target.kind === "name") name = input.nameReadElsewhere ? name : direct;
         else if (target.kind === "phone") phoneE164 = direct;
         else answers[target.id] = direct;
         if (text.length <= 40) continue;
@@ -442,7 +443,7 @@ export function absorbTranscript(input: {
     }
     for (const question of input.questions) {
       const askedThis = lastAi.includes(scriptQuestion(question)) || askedAbout(question, lastAi);
-      if (question.kind === "name" && !name) name = nameFrom(text, askedThis && plain);
+      if (question.kind === "name" && !name && !input.nameReadElsewhere) name = cleanName(nameFrom(text, askedThis && plain), text);
       if (answers[question.id]) continue;
       if (/company/i.test(question.label)) {
         const found = text.match(/\bcompany(?:\s+name)?\s+is\s+([A-Za-z][A-Za-z0-9 &'-]{1,40})/i) ?? text.match(/\b([A-Za-z][A-Za-z0-9 &'-]{1,40})\s+is my company\b/i);
@@ -494,14 +495,48 @@ function notACompany(text: string): boolean {
 
 const TEAM_COUNT = /\b\d{1,4}\s*(?:peru|per(?!\s*(?:month|day|week|hour|min|call))|people|members|log|staff|agents|telecallers|callers|employees|persons)\b/i;
 
-const NOT_A_NAME = /^(enoda|ennoda|en|enga|unga|mera|mere|my|naan|nan|hi|hello|hey|bro|sir|yes|haan|name|peru|naam|looking|interested|from|here|just|not|fine|good|ok|okay|ready|sure|also|still|very|really|the|a|an|in|at|on|with|planning|trying|working|calling|asking|new|back|done|busy|happy|glad|excited|curious|thinking|available)$/i;
+const NOT_A_NAME = /^(enoda|ennoda|en|enga|unga|mera|mere|my|naan|nan|hi|hello|hey|bro|sir|yes|haan|name|peru|naam|looking|interested|from|here|just|not|fine|good|ok|okay|ready|sure|also|still|very|really|the|a|an|in|at|on|with|planning|trying|working|calling|asking|new|back|done|busy|happy|glad|excited|curious|thinking|available|are|arey|arre|aray|are|dei|da|di|yar|yaar|bhai|bai|bhaiya|anna|ana|thambi|ji|mam|madam|maam|acha|accha|theek|thik|hm|hmm|seri|sari|sollunga|solu|illa|ila|nahi|nai|no|ya|yeah|yep|what|why|how|who|enna|kya|kaun|evlo|kitna|wait|one|min|minute|thanks|thank|tq|pls|please|company|business|team|demo|call|price)$/i;
+
+const NAME_FILLER = /\b(sir|bro|bhai|bhaiya|anna|ji|mam|madam|ma'am|here|myself|this is|i am|i'm|im|my name is|my name|name is|naan|nan|en peru|enoda peru|en per|mera naam|mera nam|naam|peru|hai|dhaan|than|da|di)\b/gi;
+
+export function cleanName(candidate: string | null | undefined, source: string): string | null {
+  if (!candidate) return null;
+  const words = candidate
+    .normalize("NFKC")
+    .replace(/["'`.,!?:;()]/g, " ")
+    .replace(NAME_FILLER, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!words.length || words.length > 4) return null;
+  if (words.some((word) => !/^\p{L}+$/u.test(word))) return null;
+  const full = words.filter((word) => word.length >= 2);
+  if (!full.length || full.some((word) => NOT_A_NAME.test(word) || NOT_A_NAME.test(squeeze(word)))) return null;
+  const said = squeeze(source.normalize("NFKC"));
+  if (words.some((word) => !said.includes(squeeze(word)))) return null;
+  const name = words.map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(" ");
+  return name.length <= 40 ? name : null;
+}
+
+export function asksForName(aiText: string): boolean {
+  return askedAbout({ id: "name", label: "Name", kind: "name", zohoField: null }, aiText);
+}
+
+export function mentionsOwnName(text: string): boolean {
+  return /\b(name|naam|nam|peru|per|i am|i'm|im|this is|call me|myself|naan|mera|en peru)\b/i.test(text);
+}
+
+export function nameInReply(text: string, askedForName: boolean): string | null {
+  const plain = !YES_ANSWER.test(text) && !NO_ANSWER.test(text) && !/\?$/.test(text);
+  return cleanName(nameFrom(text, askedForName && plain), text);
+}
 
 function nameFrom(text: string, bareAllowed: boolean): string | null {
   const intro = text.match(/\b(?:i'm|i am|im|this is|naan)\s+([A-Za-z]{2,30})\b/i)?.[1]
     ?? text.match(/(?:^|\b(?:my|en|enoda|ennoda|yen|mera|mere|apna)\s+)(?:name|naam|peru)\s+(?:is\s+)?([A-Za-z]{2,30})\b/i)?.[1]
     ?? text.match(/\b([A-Za-z]{2,30})\s+(?:hai mera naam|en peru|naan dhaan|here)\b/i)?.[1];
   const bare = bareAllowed ? text.match(/^([A-Za-z]{2,30})(?:\s+[A-Za-z]{1,30}){0,2}[.!]?$/)?.[1] : undefined;
-  const picked = [intro, bare].find((word) => word && !NOT_A_NAME.test(word) && !/ing$/i.test(word));
+  const picked = [intro, bare].find((word) => word && !NOT_A_NAME.test(word) && !NOT_A_NAME.test(squeeze(word)) && !/ing$/i.test(word));
   return picked ? picked.charAt(0).toUpperCase() + picked.slice(1) : null;
 }
 
@@ -516,7 +551,7 @@ function directAnswer(question: LeadQuestion, text: string, plain: boolean, regi
     return null;
   }
   if (!plain) return null;
-  if (question.kind === "name") return nameFrom(text, true);
+  if (question.kind === "name") return cleanName(nameFrom(text, true), text);
   if (/company/i.test(question.label)) {
     const found = text.match(/\bcompany(?:\s+name)?\s+is\s+([A-Za-z][A-Za-z0-9 &'-]{1,40})/i);
     if (found?.[1]) return found[1].trim();

@@ -8,6 +8,10 @@ import {
   nextReplyPrompt,
   openingForPost,
   absorbTranscript,
+  asksForName,
+  cleanName,
+  mentionsOwnName,
+  nameInReply,
   assistantContext,
   collectionBrief,
   parseLeadFields,
@@ -751,6 +755,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     let recordedName = conversation.contact.chosenName;
     let recordedPhone = lead.phoneE164;
     let recordedAnswers = answerRecord(lead.answers);
+    const readsName = Boolean(runtime.llm.readName) && questions.some((question) => question.kind === "name");
     if (questions.length) {
       const absorbed = absorbTranscript({
         questions,
@@ -759,7 +764,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         phoneE164: lead.phoneE164,
         answers: recordedAnswers,
         phoneRegion: runtime.phoneRegion,
+        nameReadElsewhere: readsName,
       });
+      if (readsName) absorbed.name = await latestName(runtime, conversation.messages, absorbed.name);
       recordedName = absorbed.name;
       recordedPhone = absorbed.phoneE164;
       recordedAnswers = absorbed.answers;
@@ -1003,7 +1010,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       });
       return "done";
     }
-    await applyUpdates(db, lead.id, conversation.contactId, validated.updates);
+    await applyUpdates(db, lead.id, conversation.contactId, readsName ? validated.updates.filter((update) => update.field !== "chosenName") : validated.updates);
     await applyCustomAnswers(db, lead.id, validated.customAnswers);
     const updatedLead = await db.lead.findUniqueOrThrow({ where: { id: lead.id }, include: { contact: true } });
     const rule = leadRule(workspace);
@@ -1376,6 +1383,25 @@ async function applyCustomAnswers(db: Db, leadId: string, answers: Array<{ id: s
     });
   }
   await db.lead.update({ where: { id: leadId }, data: { answers: current } });
+}
+
+async function latestName(runtime: Runtime, messages: { author: string; body: string }[], current: string | null): Promise<string | null> {
+  const lastAi = messages.reduce((found, message, index) => (message.author === "AI" ? index : found), -1);
+  const reply = messages
+    .slice(lastAi + 1)
+    .filter((message) => message.author === "PROSPECT" && message.body.trim())
+    .map((message) => message.body.trim())
+    .join(". ");
+  if (!reply || lastAi < 0) return current;
+  const question = messages[lastAi]!.body;
+  const asked = asksForName(question);
+  if (current ? !mentionsOwnName(reply) : !asked && !mentionsOwnName(reply)) return current;
+  try {
+    return cleanName(await runtime.llm.readName!(question, reply), reply) ?? current;
+  } catch (error) {
+    console.warn("Name reading failed, using the text rules.", error instanceof Error ? error.message : error);
+    return current ?? nameInReply(reply, asked);
+  }
 }
 
 function answerRecord(value: unknown): Record<string, string> {

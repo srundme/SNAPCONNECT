@@ -45,6 +45,7 @@ export type LlmProvider = {
   generate(request: LlmRequest): Promise<LlmResponse>;
   summarize?(previous: string | null, transcript: string): Promise<string>;
   addressFor?(name: string): Promise<"sir" | "mam" | "bro">;
+  readName?(question: string, reply: string): Promise<string | null>;
   health(): Promise<{ ok: boolean; detail: string; gpu: boolean | null }>;
 };
 
@@ -215,6 +216,45 @@ export function sarvamLlm(options: {
       const address = word === "sir" ? "sir" : word === "bro" || !word ? "bro" : "mam";
       addressCache.set(key, address);
       return address;
+    },
+    async readName(question, reply) {
+      const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", "api-subscription-key": options.apiKey },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          max_tokens: 30,
+          messages: [
+            {
+              role: "system",
+              content: [
+                "You read a customer's Instagram reply to a sales assistant and pull out the customer's own name.",
+                "The reply can be English, Tamil, Hindi, Tanglish or Hinglish, with spelling mistakes and stretched letters.",
+                "Answer with only the name exactly as they wrote it, keeping the surname or initial. Answer NONE when there is no name.",
+                "Drop words around the name like my name is, I am, this is, myself, naan, en peru, mera naam, sir, bro, bhai, anna, ji.",
+                "Answer NONE for greetings and fillers (hi, arey, areee bhai, dei, acha, ok, haan, seri), questions, company or brand names, cities, numbers, or a refusal.",
+                "If they correct an earlier name, answer the new name. Never guess or invent a name.",
+                "Examples:",
+                "Assistant: May I have your name? | Customer: Karthikeyan R → Karthikeyan R",
+                "Assistant: Unga peru enna? | Customer: en peru gopi da → gopi",
+                "Assistant: Aapka naam kya hai? | Customer: Mera naam Rahul Sharma hai → Rahul Sharma",
+                "Assistant: May I have your name? | Customer: Areee bhaiiii → NONE",
+                "Assistant: May I have your name? | Customer: why do you need my name → NONE",
+                "Assistant: Which company? | Customer: myself priya from glow studio → priya",
+                "Assistant: Thanks Gopi sir. | Customer: no sir my name is Gopinath → Gopinath",
+              ].join("\n"),
+            },
+            { role: "user", content: `Assistant: ${question.slice(0, 300)} | Customer: ${reply.slice(0, 300)}` },
+          ],
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error(`Sarvam returned HTTP ${response.status}`);
+      const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const answer = (body.choices?.[0]?.message?.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").split("\n").map((line) => line.trim()).filter(Boolean).pop() ?? "";
+      const name = answer.replace(/^.*(?:→|->|:)\s*/, "").replace(/["'`.]+/g, "").trim();
+      return !name || /^none$/i.test(name) ? null : name;
     },
     async summarize(previous, transcript) {
       const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {
