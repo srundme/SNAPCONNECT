@@ -8,7 +8,7 @@ import { headers } from "next/headers";
 import { hashPassword } from "better-auth/crypto";
 import { can, canAssignWorkspaceRole, externalLeadKeyField, normalizeMetaPayload, questionsFromLines, questionsFromRows, replyEligibility, replyPromptFields } from "@snapsocial/domain";
 import { loadConfig } from "@snapsocial/config";
-import { decryptSecret, listFacebookPosts, listInstagramPosts } from "@snapsocial/integrations";
+import { checkWhatsAppNumber, decryptSecret, encryptSecret, listFacebookPosts, listInstagramPosts, subscribeWhatsAppAccount } from "@snapsocial/integrations";
 import {
   connectionSender,
   deleteContactData,
@@ -143,6 +143,69 @@ export async function pauseConnection(formData: FormData) {
   if (!workspace || !can(actor, "integration.manage", workspace.id)) redirect("/overview?denied=1");
   await setConnectionPaused(getPrisma(), connectionId, paused, actor.userId);
   revalidatePath("/integrations");
+}
+
+export async function connectWhatsApp(formData: FormData) {
+  const { actor, workspace } = await requireWorkspace();
+  if (!workspace || !can(actor, "integration.manage", workspace.id)) redirect("/overview?denied=1");
+  const back = (query: string) => redirect(`/integrations?${query}`);
+  if (workspace.mode !== "INTEGRATION") back(`error=${encodeURIComponent("Switch to Own accounts before connecting WhatsApp.")}`);
+  const phoneNumberId = String(formData.get("phoneNumberId") ?? "").replace(/\D/g, "");
+  const businessAccountId = String(formData.get("businessAccountId") ?? "").replace(/\D/g, "");
+  const token = String(formData.get("accessToken") ?? "").trim();
+  if (!phoneNumberId || !businessAccountId || !token) {
+    back(`error=${encodeURIComponent("Enter the phone number ID, the WhatsApp Business Account ID and the access token.")}`);
+  }
+  const { config, keys } = integrationConfig();
+  let number: { displayPhoneNumber: string; verifiedName: string | null };
+  try {
+    number = await checkWhatsAppNumber({ phoneNumberId, token, graphBaseUrl: config.META_FACEBOOK_GRAPH_BASE_URL, version: config.META_API_VERSION });
+  } catch (error) {
+    back(`error=${encodeURIComponent(error instanceof Error ? error.message : "Meta did not accept that number and token.")}`);
+    return;
+  }
+  let subscribeError: string | null = null;
+  let subscribedFields: string[] = [];
+  try {
+    subscribedFields = await subscribeWhatsAppAccount({ businessAccountId, token, graphBaseUrl: config.META_FACEBOOK_GRAPH_BASE_URL, version: config.META_API_VERSION });
+  } catch (error) {
+    subscribeError = error instanceof Error ? error.message : "Subscription failed.";
+  }
+  const keyId = config.CREDENTIAL_ENCRYPTION_KEY_ID;
+  const credentialCiphertext = encryptSecret(token, keys[keyId]!, keyId);
+  const now = new Date();
+  const displayName = number.verifiedName ? `${number.verifiedName} (${number.displayPhoneNumber})` : number.displayPhoneNumber;
+  const shared = {
+    workspaceId: workspace.id,
+    displayName,
+    username: number.displayPhoneNumber,
+    credentialCiphertext,
+    credentialKeyId: keyId,
+    scopes: ["whatsapp_business_messaging", "whatsapp_business_management"],
+    pageTasks: [`waba:${businessAccountId}`],
+    subscribedFields,
+    credentialCheckedAt: now,
+    accountSubscribedAt: subscribeError ? null : now,
+  };
+  const connection = await getPrisma().channelConnection.upsert({
+    where: { channel_mode_externalAccountId: { channel: "WHATSAPP", mode: "INTEGRATION", externalAccountId: phoneNumberId } },
+    create: { ...shared, channel: "WHATSAPP", mode: "INTEGRATION", externalAccountId: phoneNumberId },
+    update: { ...shared, revokedAt: null },
+  });
+  await getPrisma().auditEvent.create({
+    data: {
+      actorId: actor.userId,
+      workspaceId: workspace.id,
+      action: "connection.connected",
+      entityType: "ChannelConnection",
+      entityId: connection.id,
+      summary: `WhatsApp ${number.displayPhoneNumber} connected${subscribeError ? " (subscription failed)" : ""}.`,
+    },
+  });
+  revalidatePath("/integrations");
+  back(subscribeError
+    ? `error=${encodeURIComponent(`WhatsApp ${number.displayPhoneNumber} saved, but ${subscribeError}`)}`
+    : `connected=${encodeURIComponent(`WhatsApp ${number.displayPhoneNumber}`)}`);
 }
 
 export async function inviteStaff(formData: FormData) {

@@ -12,7 +12,7 @@ export type DiagnosticCheck = {
 };
 
 export type ChannelAdapter = {
-  channel: "INSTAGRAM" | "FACEBOOK";
+  channel: "INSTAGRAM" | "FACEBOOK" | "WHATSAPP";
   mode: "SIMULATION" | "INTEGRATION";
   sendPrivateReply(input: { commentId: string; text: string; token: string; accountId: string }): Promise<SendResult>;
   sendText(input: { recipientId: string; text: string; token: string; accountId: string }): Promise<SendResult>;
@@ -29,7 +29,13 @@ export async function classifyFetch(work: () => Promise<Response>, simulated = f
       return { status: "RETRYABLE_FAILURE", error: `HTTP ${response.status}`, simulated };
     }
     if (!response.ok) return { status: "PERMANENT_FAILURE", error: `HTTP ${response.status}`, simulated };
-    let body: { message_id?: string; recipient_id?: string; error?: unknown } = {};
+    let body: {
+      message_id?: string;
+      recipient_id?: string;
+      messages?: Array<{ id?: string }>;
+      contacts?: Array<{ wa_id?: string }>;
+      error?: unknown;
+    } = {};
     try {
       body = JSON.parse(text) as typeof body;
     } catch {
@@ -38,8 +44,8 @@ export async function classifyFetch(work: () => Promise<Response>, simulated = f
     if (body.error) return { status: "PERMANENT_FAILURE", error: "Provider returned an error payload.", simulated };
     return {
       status: "ACCEPTED",
-      providerMessageId: body.message_id ?? null,
-      providerRecipientId: body.recipient_id ?? null,
+      providerMessageId: body.message_id ?? body.messages?.[0]?.id ?? null,
+      providerRecipientId: body.recipient_id ?? body.contacts?.[0]?.wa_id ?? null,
       simulated,
     };
   } catch (error) {

@@ -16,13 +16,14 @@ export type ZohoMapping = {
   sourceField: "Lead_Source";
   instagramSourceValue: string;
   facebookSourceValue: string;
+  whatsappSourceValue?: string;
   externalKeyField: string | null;
   descriptionFallback: boolean;
 };
 
 export type ZohoLeadInput = {
   leadId: string;
-  channel: "INSTAGRAM" | "FACEBOOK";
+  channel: "INSTAGRAM" | "FACEBOOK" | "WHATSAPP";
   chosenName: string | null;
   username: string | null;
   displayName: string | null;
@@ -86,7 +87,11 @@ export function duplicateCheckFields(mapping: ZohoMapping): string[] {
 export function buildZohoRecord(input: ZohoLeadInput, mapping: ZohoMapping): Record<string, string> {
   const record: Record<string, string> = {
     Last_Name: displayLastName(input),
-    Lead_Source: input.channel === "INSTAGRAM" ? mapping.instagramSourceValue : mapping.facebookSourceValue,
+    Lead_Source: input.channel === "INSTAGRAM"
+      ? mapping.instagramSourceValue
+      : input.channel === "WHATSAPP"
+        ? mapping.whatsappSourceValue ?? "WhatsApp"
+        : mapping.facebookSourceValue,
   };
   if (mapping.externalKeyField) record[mapping.externalKeyField] = input.leadId;
   if (mapping.phoneField && input.phoneE164) record[mapping.phoneField] = input.phoneE164;

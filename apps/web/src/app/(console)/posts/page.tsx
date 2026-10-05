@@ -21,7 +21,7 @@ export default async function PostsPage({ searchParams }: { searchParams: Promis
   if (!workspace) return <Empty title="No workspace" body="Select a workspace." />;
   if (role === "VIEWER" || role === "AGENT") return <Empty title="Permission denied" body="Replies are managed by an admin." />;
   const connections = await getPrisma().channelConnection.findMany({
-    where: { workspaceId: workspace.id },
+    where: { workspaceId: workspace.id, channel: { not: "WHATSAPP" } },
     include: { rules: { where: { active: true }, orderBy: [{ priority: "desc" }, { id: "asc" }] }, media: { orderBy: { publishedAt: "desc" } } },
   });
   const connection = connections.find((item) => item.id === params.connectionId) ?? connections[0];

@@ -6,6 +6,7 @@ import { facebookAdapter, instagramAdapter } from "../src/meta";
 import { listInstagramPosts } from "../src/meta-media";
 import { assertPrivateOllamaUrl, sarvamLlm, sarvamTranscriber } from "../src/llm";
 import { zohoAdapter } from "../src/zoho";
+import { checkWhatsAppNumber, subscribeWhatsAppAccount, whatsappAdapter } from "../src/whatsapp";
 
 describe("integration guards", () => {
   it("encrypts credentials with an external key", () => {
@@ -191,5 +192,44 @@ describe("integration guards", () => {
       token: "token",
       fetchImpl,
     })).rejects.toThrow(/not allowed/);
+  });
+});
+
+describe("whatsapp", () => {
+  it("sends a text reply through the Cloud API and reads the message id", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchImpl = async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ messaging_product: "whatsapp", contacts: [{ wa_id: "919845012345" }], messages: [{ id: "wamid.out" }] }), { status: 200 });
+    };
+    const result = await whatsappAdapter({ baseUrl: "https://graph.facebook.com", version: "v23.0", fetchImpl }).sendText({
+      accountId: "pnid-1",
+      recipientId: "919845012345",
+      text: "Hi, I'm Maya",
+      token: "wa-token",
+    });
+    expect(result).toMatchObject({ status: "ACCEPTED", providerMessageId: "wamid.out", providerRecipientId: "919845012345" });
+    expect(calls[0]!.url).toBe("https://graph.facebook.com/v23.0/pnid-1/messages");
+    expect(new Headers(calls[0]!.init.headers).get("Authorization")).toBe("Bearer wa-token");
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: "919845012345",
+      type: "text",
+      text: { body: "Hi, I'm Maya", preview_url: false },
+    });
+  });
+
+  it("checks the number and subscribes the business account", async () => {
+    const fetchImpl = async (url: string) => new Response(JSON.stringify(
+      url.includes("subscribed_apps") ? { success: true } : { display_phone_number: "+91 90000 11111", verified_name: "SnapServe" },
+    ), { status: 200 });
+    await expect(checkWhatsAppNumber({ phoneNumberId: "pnid-1", token: "t", graphBaseUrl: "https://graph.facebook.com", version: "v23.0", fetchImpl }))
+      .resolves.toEqual({ displayPhoneNumber: "+91 90000 11111", verifiedName: "SnapServe" });
+    await expect(subscribeWhatsAppAccount({ businessAccountId: "waba-1", token: "t", graphBaseUrl: "https://graph.facebook.com", version: "v23.0", fetchImpl }))
+      .resolves.toEqual(["messages"]);
+    const denied = async () => new Response(JSON.stringify({ error: { message: "Invalid OAuth access token." } }), { status: 401 });
+    await expect(checkWhatsAppNumber({ phoneNumberId: "pnid-1", token: "bad", graphBaseUrl: "https://graph.facebook.com", version: "v23.0", fetchImpl: denied }))
+      .rejects.toThrow(/Invalid OAuth access token/);
   });
 });

@@ -95,7 +95,7 @@ export function facebookAdapter(options: {
   };
 }
 
-export function simulationAdapter(channel: "INSTAGRAM" | "FACEBOOK"): ChannelAdapter {
+export function simulationAdapter(channel: "INSTAGRAM" | "FACEBOOK" | "WHATSAPP"): ChannelAdapter {
   return {
     channel,
     mode: "SIMULATION",
@@ -110,7 +110,7 @@ export function simulationAdapter(channel: "INSTAGRAM" | "FACEBOOK"): ChannelAda
     async sendText(input) {
       return {
         status: "ACCEPTED",
-        providerMessageId: `sim_${channel.toLowerCase()}_dm_${input.recipientId}`,
+        providerMessageId: `sim_${channel.toLowerCase()}_dm_${input.recipientId}_${crypto.randomUUID()}`,
         providerRecipientId: input.recipientId,
         simulated: true,
       };

@@ -1,4 +1,4 @@
-export const channels = ["INSTAGRAM", "FACEBOOK"] as const;
+export const channels = ["INSTAGRAM", "FACEBOOK", "WHATSAPP"] as const;
 export type Channel = (typeof channels)[number];
 
 export const connectionModes = ["SIMULATION", "INTEGRATION"] as const;

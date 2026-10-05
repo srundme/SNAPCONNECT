@@ -5,37 +5,45 @@ import { decryptSecret } from "@snapsocial/integrations";
 
 export const runtime = "nodejs";
 
+type WebhookChannel = "INSTAGRAM" | "FACEBOOK" | "WHATSAPP";
+
 function key() {
   const config = loadConfig();
   return { id: config.CREDENTIAL_ENCRYPTION_KEY_ID, raw: Buffer.from(config.CREDENTIAL_ENCRYPTION_KEY, "base64") };
 }
 
+function channelFrom(path: string): WebhookChannel | null {
+  if (path === "instagram") return "INSTAGRAM";
+  if (path === "facebook") return "FACEBOOK";
+  if (path === "whatsapp") return "WHATSAPP";
+  return null;
+}
+
 export async function GET(request: Request, context: { params: Promise<{ channel: string }> }) {
   const { channel } = await context.params;
+  const normalized = channelFrom(channel);
+  if (!normalized) return new Response("not found", { status: 404 });
   const url = new URL(request.url);
   if (url.searchParams.get("hub.mode") !== "subscribe") return new Response("bad request", { status: 400 });
   const challenge = url.searchParams.get("hub.challenge") ?? "";
   const token = url.searchParams.get("hub.verify_token") ?? "";
-  const secrets = await verifyTokens(channel);
+  const secrets = await verifyTokens(normalized);
   if (!secrets.includes(token)) return new Response("forbidden", { status: 403 });
-  const normalized = channel === "instagram" ? "INSTAGRAM" : channel === "facebook" ? "FACEBOOK" : null;
-  if (normalized) {
-    const db = getPrisma();
-    const now = new Date();
-    await db.auditEvent.create({
-      data: { action: "webhook.verified", entityType: normalized, summary: `Meta verified the ${channel} webhook callback.` },
-    });
-    await db.channelConnection.updateMany({
-      where: { channel: normalized, mode: "INTEGRATION", revokedAt: null },
-      data: { webhookVerifiedAt: now },
-    });
-  }
+  const db = getPrisma();
+  const now = new Date();
+  await db.auditEvent.create({
+    data: { action: "webhook.verified", entityType: normalized, summary: `Meta verified the ${channel} webhook callback.` },
+  });
+  await db.channelConnection.updateMany({
+    where: { channel: normalized, mode: "INTEGRATION", revokedAt: null },
+    data: { webhookVerifiedAt: now },
+  });
   return new Response(challenge, { status: 200 });
 }
 
 export async function POST(request: Request, context: { params: Promise<{ channel: string }> }) {
   const { channel } = await context.params;
-  const normalized = channel === "instagram" ? "INSTAGRAM" : channel === "facebook" ? "FACEBOOK" : null;
+  const normalized = channelFrom(channel);
   if (!normalized) return new Response("not found", { status: 404 });
   const raw = await request.text();
   if (raw.length > 1_000_000) return new Response("payload too large", { status: 413 });
@@ -64,19 +72,29 @@ export async function POST(request: Request, context: { params: Promise<{ channe
   return Response.json({ received: true });
 }
 
-async function appSecrets(channel: "INSTAGRAM" | "FACEBOOK") {
-  const config = loadConfig();
-  const envSecret = channel === "INSTAGRAM" ? config.META_INSTAGRAM_APP_SECRET : config.META_FACEBOOK_APP_SECRET;
-  const rows = await getPrisma().metaAppConfig.findMany({ where: { scope: { in: [channel, "SHARED"] } } });
-  const stored = rows.map((row) => decryptSecret(row.secretCiphertext, { [key().id]: key().raw }));
-  return [...stored, envSecret].filter((item): item is string => Boolean(item));
+async function storedRows(channel: WebhookChannel) {
+  const scopes = channel === "WHATSAPP" ? ["WHATSAPP", "FACEBOOK", "SHARED"] : [channel, "SHARED"];
+  return getPrisma().metaAppConfig.findMany({ where: { scope: { in: scopes } } });
 }
 
-async function verifyTokens(channel: string) {
+async function appSecrets(channel: WebhookChannel) {
   const config = loadConfig();
-  const envToken = channel === "instagram" ? config.META_INSTAGRAM_VERIFY_TOKEN : config.META_FACEBOOK_VERIFY_TOKEN;
-  const scope = channel === "instagram" ? "INSTAGRAM" : "FACEBOOK";
-  const rows = await getPrisma().metaAppConfig.findMany({ where: { scope: { in: [scope, "SHARED"] } } });
-  const stored = rows.map((row) => decryptSecret(row.verifyTokenCiphertext, { [key().id]: key().raw }));
-  return [...stored, envToken].filter((item): item is string => Boolean(item));
+  const envSecrets = channel === "INSTAGRAM"
+    ? [config.META_INSTAGRAM_APP_SECRET]
+    : channel === "FACEBOOK"
+      ? [config.META_FACEBOOK_APP_SECRET]
+      : [config.META_WHATSAPP_APP_SECRET, config.META_FACEBOOK_APP_SECRET];
+  const stored = (await storedRows(channel)).map((row) => decryptSecret(row.secretCiphertext, { [key().id]: key().raw }));
+  return [...stored, ...envSecrets].filter((item): item is string => Boolean(item));
+}
+
+async function verifyTokens(channel: WebhookChannel) {
+  const config = loadConfig();
+  const envTokens = channel === "INSTAGRAM"
+    ? [config.META_INSTAGRAM_VERIFY_TOKEN]
+    : channel === "FACEBOOK"
+      ? [config.META_FACEBOOK_VERIFY_TOKEN]
+      : [config.META_WHATSAPP_VERIFY_TOKEN, config.META_FACEBOOK_VERIFY_TOKEN];
+  const stored = (await storedRows(channel)).map((row) => decryptSecret(row.verifyTokenCiphertext, { [key().id]: key().raw }));
+  return [...stored, ...envTokens].filter((item): item is string => Boolean(item));
 }

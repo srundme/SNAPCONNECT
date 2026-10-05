@@ -4,5 +4,6 @@ export * from "./channel";
 export * from "./meta";
 export * from "./meta-media";
 export * from "./meta-oauth";
+export * from "./whatsapp";
 export * from "./zoho";
 export * from "./llm";

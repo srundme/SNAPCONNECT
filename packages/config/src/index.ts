@@ -47,6 +47,8 @@ export const envSchema = z.object({
   META_FACEBOOK_APP_ID: optional,
   META_FACEBOOK_APP_SECRET: optional,
   META_FACEBOOK_VERIFY_TOKEN: optional,
+  META_WHATSAPP_APP_SECRET: optional,
+  META_WHATSAPP_VERIFY_TOKEN: optional,
   ZOHO_CLIENT_ID: optional,
   ZOHO_CLIENT_SECRET: optional,
   ZOHO_ACCOUNTS_URL: z.url().default("https://accounts.zoho.com"),

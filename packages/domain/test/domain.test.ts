@@ -471,6 +471,37 @@ describe("webhooks", () => {
     expect(edits([{ message_edit: { mid: "mid-10", text: "fixed", num_edit: 2 } }])[0]).toMatchObject({ kind: "message_edit", editCount: 2 });
   });
 
+  it("reads WhatsApp text, voice and button messages and skips statuses", () => {
+    const events = normalizeMetaPayload("WHATSAPP", {
+      object: "whatsapp_business_account",
+      entry: [{
+        id: "waba-1",
+        changes: [{
+          field: "messages",
+          value: {
+            messaging_product: "whatsapp",
+            metadata: { display_phone_number: "919000000000", phone_number_id: "pnid-1" },
+            contacts: [{ profile: { name: "Kishore" }, wa_id: "919845012345" }],
+            messages: [
+              { from: "919845012345", id: "wamid.1", timestamp: "1759670000", type: "text", text: { body: "Hi, need AI calling" } },
+              { from: "919845012345", id: "wamid.2", timestamp: "1759670010", type: "audio", audio: { id: "media-9", mime_type: "audio/ogg; codecs=opus", voice: true } },
+              { from: "919845012345", id: "wamid.3", timestamp: "1759670020", type: "interactive", interactive: { type: "button_reply", button_reply: { id: "yes", title: "Yes" } } },
+              { from: "919845012345", id: "wamid.4", timestamp: "1759670030", type: "reaction", reaction: { message_id: "wamid.1", emoji: "👍" } },
+            ],
+            statuses: [{ id: "wamid.out", status: "delivered" }],
+          },
+        }],
+      }],
+    }, new Date("2026-10-05T00:00:00Z"));
+    const messages = events.filter((event) => event.kind === "message");
+    expect(messages).toHaveLength(3);
+    expect(messages[0]).toMatchObject({ externalAccountId: "pnid-1", senderId: "919845012345", text: "Hi, need AI calling", senderName: "Kishore" });
+    expect(messages[1]).toMatchObject({ text: "", audioMediaId: "media-9" });
+    expect(messages[2]).toMatchObject({ text: "Yes" });
+    expect(events.some((event) => event.kind === "ignore" && event.reason.includes("reaction"))).toBe(true);
+    expect(normalizeMetaPayload("WHATSAPP", { object: "page", entry: [] }, new Date())[0]?.kind).toBe("ignore");
+  });
+
   it("rejects unknown and conflicting routes", () => {
     expect(routingDecision([])).toEqual({ reject: "Unknown account." });
     expect(routingDecision(["a", "b"])).toEqual({ reject: "Conflicting account connections." });

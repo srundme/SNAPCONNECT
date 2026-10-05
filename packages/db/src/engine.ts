@@ -37,6 +37,7 @@ import {
   agentIdentity,
   platformSystemRules,
   withAutomationDisclosure,
+  parsePhone,
   projectTypeFromText,
   replyEligibility,
   routingDecision,
@@ -81,7 +82,8 @@ export type Runtime = {
   zohoClientId: string | null;
   zohoClientSecret: string | null;
   zohoAccountsUrl: string | null;
-  transcribe?: (audioUrl: string) => Promise<string>;
+  transcribe?: (audioUrl: string, bearerToken?: string) => Promise<string>;
+  whatsappMediaUrl?: (mediaId: string, token: string) => Promise<string>;
   replySettleMs?: number;
 };
 
@@ -494,12 +496,19 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
       });
     }
   }
+  const whatsapp = connection.channel === "WHATSAPP";
+  const senderName = body.senderName ? String(body.senderName).slice(0, 120) : null;
+  const senderPhone = whatsapp ? parsePhone(`+${senderId}`, runtime.phoneRegion) : null;
+  const knownPhone = senderPhone?.kind === "valid"
+    ? { phoneE164: senderPhone.e164, phonePermission: true, whatsappE164: senderPhone.e164 }
+    : {};
   if (!contactId) {
     const created = await db.contact.create({
       data: {
         workspaceId: connection.workspaceId,
         connectionId,
         channel: connection.channel,
+        ...(senderName ? { displayName: senderName } : {}),
         identities: {
           create: {
             workspaceId: connection.workspaceId,
@@ -522,8 +531,28 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
         activeContactKey: contactId,
         sourceType: "DIRECT_MESSAGE",
         testRecord: connection.mode === "SIMULATION",
+        ...knownPhone,
       },
     });
+  } else if (whatsapp) {
+    const activeLead = await db.lead.findFirst({ where: { contactId, archivedAt: null } });
+    if (!activeLead) {
+      await db.lead.create({
+        data: {
+          workspaceId: connection.workspaceId,
+          contactId,
+          channel: connection.channel,
+          connectionId,
+          activeContactKey: contactId,
+          sourceType: "DIRECT_MESSAGE",
+          testRecord: connection.mode === "SIMULATION",
+          ...knownPhone,
+        },
+      });
+    }
+    if (senderName) {
+      await db.contact.updateMany({ where: { id: contactId, displayName: null }, data: { displayName: senderName } });
+    }
   }
   const existingConversation = await db.conversation.findFirst({
     where: { contactId, connectionId },
@@ -534,9 +563,9 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
   }));
   const nextInbound = !conversation.lastUserMessageAt || sentAt > conversation.lastUserMessageAt ? sentAt : conversation.lastUserMessageAt;
   let text = String(body.text ?? "");
-  if (!text.trim() && body.audioUrl) {
+  if (!text.trim() && (body.audioUrl || body.audioMediaId)) {
     const transcript = runtime.transcribe
-      ? await runtime.transcribe(String(body.audioUrl)).catch((error: unknown) => {
+      ? await voiceTranscript(runtime, connection, body).catch((error: unknown) => {
           console.warn(`Voice transcription failed: ${error instanceof Error ? error.message : String(error)}`);
           return "";
         })
@@ -586,6 +615,19 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
     });
   }
   await touchConnection(db, connection.id, connection.mode, "message", runtime.now());
+}
+
+async function voiceTranscript(
+  runtime: Runtime,
+  connection: { credentialCiphertext: string | null },
+  body: Record<string, unknown>,
+): Promise<string> {
+  if (!runtime.transcribe) return "";
+  if (body.audioUrl) return runtime.transcribe(String(body.audioUrl));
+  if (!runtime.whatsappMediaUrl || !connection.credentialCiphertext) return "";
+  const token = decryptSecret(connection.credentialCiphertext, runtime.credentialKeys);
+  const url = await runtime.whatsappMediaUrl(String(body.audioMediaId), token);
+  return runtime.transcribe(url, token);
 }
 
 async function handleMessageEdit(db: Db, connectionId: string, body: Record<string, unknown>, runtime: Runtime) {
@@ -786,6 +828,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const memoryLines = [
       conversation.contact.memory ? `What you remember about this person from earlier chats:\n${conversation.contact.memory}` : "",
       lead.crmState === "SYNCED" ? "Their details already went to the team earlier. Do not collect them again." : "",
+      conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI")
+        ? `They messaged ${workspace.brandName} on WhatsApp. This is your first reply: greet them, say you are ${workspace.agentName ?? "the assistant"}, an automated assistant for ${workspace.brandName}, then continue.`
+        : "",
+      conversation.channel === "WHATSAPP" && lead.phoneE164 ? "They are chatting from their WhatsApp number, so their phone number is already recorded. Never ask for their phone number." : "",
       gapHours >= 12
         ? `They are messaging again after ${gapHours >= 48 ? `${Math.round(gapHours / 24)} days` : `${Math.round(gapHours)} hours`}. Welcome them back in a few words and continue from where you stopped.`
         : "",
@@ -1166,7 +1212,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         ? validated.reply
         : [statement, scriptQuestionFor(pending, languageSample ? languageName(languageSample) : null)].filter(Boolean).join(" ")
       : validated.reply ?? fallback;
-    const reply = composed ? humanizeReply(composed) : composed;
+    const firstWhatsAppReply = conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI");
+    const humanized = composed ? humanizeReply(composed) : composed;
+    const reply = humanized && firstWhatsAppReply
+      ? withAutomationDisclosure(humanized, workspace.brandName, workspace.agentName)
+      : humanized;
     const window = replyEligibility({
       now: runtime.now(),
       lastUserMessageAt: fresh.lastUserMessageAt,
@@ -1323,7 +1373,7 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
     if (lines.length) record.Description = [record.Description, ...lines].filter(Boolean).join("\n");
     if (mapping.externalKeyField) record[mapping.externalKeyField] = lead.id;
   }
-  const result = lead.workspace.mode === "INTEGRATION"
+  let result = lead.workspace.mode === "INTEGRATION"
     ? await liveZohoUpsert(db, runtime, zoho, record, duplicateCheckFields(mapping), lead.crm?.crmId)
     : await runtime.zoho.upsert({
       apiDomain: zoho?.apiDomain ?? "https://www.zohoapis.com",
@@ -1333,6 +1383,9 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
       existingId: lead.crm?.crmId,
       trigger: [],
     });
+  if (result?.status === "FAILED" && lead.channel === "WHATSAPP" && lead.workspace.mode === "INTEGRATION" && record.Lead_Source !== mapping.facebookSourceValue) {
+    result = await liveZohoUpsert(db, runtime, zoho, { ...record, Lead_Source: mapping.facebookSourceValue }, duplicateCheckFields(mapping), lead.crm?.crmId);
+  }
   if (!result) {
     await db.lead.update({ where: { id: lead.id }, data: { crmState: "NEEDS_ATTENTION" } });
     await db.crmSyncAttempt.create({ data: { leadId: lead.id, revision: lead.revision, status: "FAILED", error: "Zoho is not connected." } });
@@ -1774,6 +1827,8 @@ function sanitize(event: NormalizedEvent): Record<string, string | boolean | nul
       referralCommentId: event.referralCommentId,
       referralPostId: event.referralPostId,
       audioUrl: event.audioUrl,
+      senderName: event.senderName ?? null,
+      audioMediaId: event.audioMediaId ?? null,
     };
   }
   if (event.kind === "message_edit") {

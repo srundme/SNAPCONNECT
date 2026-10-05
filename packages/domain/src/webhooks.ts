@@ -28,6 +28,8 @@ export type NormalizedMessage = {
   referralCommentId: string | null;
   referralPostId: string | null;
   audioUrl: string | null;
+  senderName?: string | null;
+  audioMediaId?: string | null;
 };
 
 export type NormalizedMessageEdit = {
@@ -81,13 +83,80 @@ export function normalizeMetaPayload(channel: Channel, body: unknown, receivedAt
   if (channel === "FACEBOOK" && object !== "page") {
     return [{ kind: "ignore", externalAccountId: "unknown", reason: "Unexpected webhook object for Facebook.", nativeId: object }];
   }
+  if (channel === "WHATSAPP" && object !== "whatsapp_business_account") {
+    return [{ kind: "ignore", externalAccountId: "unknown", reason: "Unexpected webhook object for WhatsApp.", nativeId: object }];
+  }
   const events: NormalizedEvent[] = [];
   for (const entry of asArray(root.entry)) {
     const item = asObject(entry);
     if (!item) continue;
     const accountId = asString(item.id) ?? "unknown";
     if (channel === "INSTAGRAM") events.push(...instagramEntry(accountId, item, receivedAt));
+    else if (channel === "WHATSAPP") events.push(...whatsappEntry(item, receivedAt));
     else events.push(...facebookEntry(accountId, item, receivedAt));
+  }
+  return events;
+}
+
+const WHATSAPP_PLACEHOLDER: Record<string, string> = {
+  image: "(Sent a photo.)",
+  video: "(Sent a video.)",
+  document: "(Sent a document.)",
+  sticker: "(Sent a sticker.)",
+  location: "(Shared a location.)",
+  contacts: "(Shared a contact.)",
+};
+
+function whatsappEntry(entry: Json, receivedAt: Date): NormalizedEvent[] {
+  const events: NormalizedEvent[] = [];
+  for (const change of asArray(entry.changes)) {
+    const node = asObject(change);
+    const value = node ? asObject(node.value) : null;
+    if (!value || asString(node?.field) !== "messages") continue;
+    const phoneNumberId = asString(asObject(value.metadata)?.phone_number_id) ?? "unknown";
+    const names = new Map<string, string>();
+    for (const contact of asArray(value.contacts)) {
+      const item = asObject(contact);
+      const waId = asString(item?.wa_id);
+      const name = asString(asObject(item?.profile)?.name);
+      if (waId && name) names.set(waId, name);
+    }
+    for (const raw of asArray(value.messages)) {
+      const message = asObject(raw);
+      const messageId = asString(message?.id);
+      const from = asString(message?.from);
+      const type = asString(message?.type) ?? "";
+      if (!message || !messageId || !from) {
+        events.push({ kind: "ignore", externalAccountId: phoneNumberId, reason: "WhatsApp message has no sender.", nativeId: messageId });
+        continue;
+      }
+      const interactive = asObject(message.interactive);
+      const media = asObject(message[type]);
+      const text = type === "text" ? asString(asObject(message.text)?.body)
+        : type === "button" ? asString(asObject(message.button)?.text)
+        : type === "interactive" ? asString(asObject(interactive?.button_reply)?.title) ?? asString(asObject(interactive?.list_reply)?.title)
+        : asString(media?.caption) ?? WHATSAPP_PLACEHOLDER[type] ?? null;
+      const audioMediaId = type === "audio" ? asString(asObject(message.audio)?.id) : null;
+      if (!text && !audioMediaId) {
+        events.push({ kind: "ignore", externalAccountId: phoneNumberId, reason: `Unsupported WhatsApp message type ${type || "unknown"}.`, nativeId: messageId });
+        continue;
+      }
+      const referral = asObject(message.referral);
+      events.push({
+        kind: "message",
+        externalAccountId: phoneNumberId,
+        messageId,
+        senderId: from,
+        text: text ?? "",
+        sentAt: numberDate(Number(message.timestamp)) ?? receivedAt.toISOString(),
+        isEcho: false,
+        referralCommentId: null,
+        referralPostId: asString(referral?.source_id),
+        audioUrl: null,
+        senderName: names.get(from) ?? null,
+        audioMediaId,
+      });
+    }
   }
   return events;
 }

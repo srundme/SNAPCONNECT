@@ -44,7 +44,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const db = getPrisma();
   const now = new Date();
   const range: RangeKey = params.range && params.range in RANGES ? (params.range as RangeKey) : "30d";
-  const channel: "INSTAGRAM" | "FACEBOOK" | null = params.channel === "INSTAGRAM" || params.channel === "FACEBOOK" ? params.channel : null;
+  const channel: "INSTAGRAM" | "FACEBOOK" | "WHATSAPP" | null = params.channel === "INSTAGRAM" || params.channel === "FACEBOOK" || params.channel === "WHATSAPP" ? params.channel : null;
   const since = rangeStart(range, now);
   const created = since ? { gte: since } : undefined;
   const scope = { workspaceId: workspace.id, ...(channel ? { channel } : {}) };
@@ -152,7 +152,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   }
   const topPosts = [...posts.entries()].sort((a, b) => b[1].zoho - a[1].zoho || b[1].chats - a[1].chats).slice(0, 5);
 
-  const channels = (["INSTAGRAM", "FACEBOOK"] as const).map((name) => ({
+  const channels = (["INSTAGRAM", "FACEBOOK", "WHATSAPP"] as const).map((name) => ({
     name,
     chats: conversations.filter((conversation) => conversation.channel === name).length,
     zoho: zoho.filter((lead) => lead.channel === name).length,
@@ -190,6 +190,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         <a href={link({ channel: null })} className={pill(!channel)}>All channels</a>
         <a href={link({ channel: "INSTAGRAM" })} className={pill(channel === "INSTAGRAM")}>Instagram</a>
         <a href={link({ channel: "FACEBOOK" })} className={pill(channel === "FACEBOOK")}>Facebook</a>
+        <a href={link({ channel: "WHATSAPP" })} className={pill(channel === "WHATSAPP")}>WhatsApp</a>
       </div>
 
       <StatGrid columns={5} items={[

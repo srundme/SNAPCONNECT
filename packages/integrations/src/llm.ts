@@ -412,12 +412,15 @@ const META_MEDIA_HOST = /(^|\.)(fbsbx\.com|fbcdn\.net|cdninstagram\.com|facebook
 
 export function sarvamTranscriber(options: { apiKey: string; fetchImpl?: typeof fetch }) {
   const fetchImpl = options.fetchImpl ?? fetch;
-  return async (audioUrl: string): Promise<string> => {
+  return async (audioUrl: string, bearerToken?: string): Promise<string> => {
     const source = new URL(audioUrl);
     if (source.protocol !== "https:" || !META_MEDIA_HOST.test(source.hostname)) {
       throw new Error("Voice message URL is not a Meta media host.");
     }
-    const download = await fetchImpl(source, { signal: AbortSignal.timeout(20_000) });
+    const download = await fetchImpl(source, {
+      ...(bearerToken ? { headers: { Authorization: `Bearer ${bearerToken}` } } : {}),
+      signal: AbortSignal.timeout(20_000),
+    });
     if (!download.ok) throw new Error(`Voice download returned HTTP ${download.status}`);
     const audio = await download.arrayBuffer();
     if (audio.byteLength > 10_000_000) throw new Error("Voice message is too large.");

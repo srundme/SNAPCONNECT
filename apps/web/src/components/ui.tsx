@@ -23,7 +23,15 @@ export function StatusLabel({ tone, children }: { tone: "ok" | "wait" | "stop" |
   return <span className={clsx("inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-semibold leading-5", color)}>{children}</span>;
 }
 
-function ChannelGlyph({ channel }: { channel: "INSTAGRAM" | "FACEBOOK" }) {
+function ChannelGlyph({ channel }: { channel: "INSTAGRAM" | "FACEBOOK" | "WHATSAPP" }) {
+  if (channel === "WHATSAPP") {
+    return (
+      <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden>
+        <path d="M8 1.6a6.4 6.4 0 0 0-5.5 9.7L1.6 14.4l3.2-.9A6.4 6.4 0 1 0 8 1.6Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+        <path d="M6 5.2c.2-.3.6-.3.8 0l.5 1.1c.1.2 0 .5-.2.7l-.3.3c.4.8 1 1.4 1.8 1.8l.3-.3c.2-.2.5-.3.7-.2l1.1.5c.3.2.3.6 0 .8-.6.6-1.5.8-2.3.4A6 6 0 0 1 5.6 7.5c-.4-.8-.2-1.7.4-2.3Z" fill="currentColor" />
+      </svg>
+    );
+  }
   if (channel === "INSTAGRAM") {
     return (
       <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden>
@@ -40,12 +48,16 @@ function ChannelGlyph({ channel }: { channel: "INSTAGRAM" | "FACEBOOK" }) {
   );
 }
 
-export function ChannelMark({ channel }: { channel: "INSTAGRAM" | "FACEBOOK" }) {
-  const instagram = channel === "INSTAGRAM";
+export function ChannelMark({ channel }: { channel: "INSTAGRAM" | "FACEBOOK" | "WHATSAPP" }) {
+  const style = channel === "INSTAGRAM"
+    ? "bg-[#fdf2f6] text-[var(--color-ig)]"
+    : channel === "WHATSAPP"
+      ? "bg-[#ecfdf3] text-[var(--color-wa)]"
+      : "bg-[#eff4ff] text-[var(--color-fb)]";
   return (
-    <span className={clsx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold", instagram ? "bg-[#fdf2f6] text-[var(--color-ig)]" : "bg-[#eff4ff] text-[var(--color-fb)]")}>
+    <span className={clsx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold", style)}>
       <ChannelGlyph channel={channel} />
-      {instagram ? "Instagram" : "Facebook"}
+      {channel === "INSTAGRAM" ? "Instagram" : channel === "WHATSAPP" ? "WhatsApp" : "Facebook"}
     </span>
   );
 }

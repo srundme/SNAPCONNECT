@@ -1,4 +1,4 @@
-import { decryptSecret, facebookAdapter, instagramAdapter, type FetchLike, type SendResult } from "@snapsocial/integrations";
+import { decryptSecret, facebookAdapter, instagramAdapter, whatsappAdapter, type FetchLike, type SendResult } from "@snapsocial/integrations";
 import { simulatedSend, type SendInput } from "./engine";
 
 /**
@@ -16,6 +16,7 @@ export function connectionSender(options: {
 }): (input: SendInput) => Promise<SendResult> {
   const instagram = instagramAdapter({ baseUrl: options.instagramGraphBaseUrl, version: options.version, fetchImpl: options.fetchImpl });
   const facebook = facebookAdapter({ baseUrl: options.facebookGraphBaseUrl, version: options.version, fetchImpl: options.fetchImpl });
+  const whatsapp = whatsappAdapter({ baseUrl: options.facebookGraphBaseUrl, version: options.version, fetchImpl: options.fetchImpl });
   return async (input) => {
     const { connection } = input;
     if (connection.mode === "SIMULATION") return simulatedSend(input);
@@ -28,7 +29,7 @@ export function connectionSender(options: {
     } catch {
       return { status: "PERMANENT_FAILURE", error: "Stored credential could not be decrypted. Reconnect it.", simulated: false };
     }
-    const adapter = connection.channel === "INSTAGRAM" ? instagram : facebook;
+    const adapter = connection.channel === "INSTAGRAM" ? instagram : connection.channel === "WHATSAPP" ? whatsapp : facebook;
     if (input.purpose === "opening") {
       if (!input.commentId) return { status: "PERMANENT_FAILURE", error: "Opening has no comment id.", simulated: false };
       return adapter.sendPrivateReply({ accountId: connection.externalAccountId, commentId: input.commentId, text: input.text, token });

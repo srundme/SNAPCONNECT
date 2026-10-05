@@ -3,7 +3,7 @@ import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { loadConfig, loadDotEnv } from "@snapsocial/config";
 import { connectionSender, getPrisma, processAvailableJobs, simulationRuntime } from "@snapsocial/db";
-import { fixtureLlm, ollamaLlm, sarvamLlm, sarvamTranscriber } from "@snapsocial/integrations";
+import { fixtureLlm, ollamaLlm, sarvamLlm, sarvamTranscriber, whatsappMediaUrl } from "@snapsocial/integrations";
 
 loadDotEnv(process.cwd());
 
@@ -33,6 +33,7 @@ const runtime = simulationRuntime({
   zohoClientSecret: config.ZOHO_CLIENT_SECRET ?? null,
   zohoAccountsUrl: config.ZOHO_ACCOUNTS_URL,
   ...(config.SARVAM_API_KEY ? { transcribe: sarvamTranscriber({ apiKey: config.SARVAM_API_KEY }) } : {}),
+  whatsappMediaUrl: (mediaId, token) => whatsappMediaUrl({ mediaId, token, graphBaseUrl: config.META_FACEBOOK_GRAPH_BASE_URL, version: config.META_API_VERSION }),
   replySettleMs: 2500,
 });
 

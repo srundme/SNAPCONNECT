@@ -26,6 +26,7 @@ enum WorkspaceMode {
 enum Channel {
   INSTAGRAM
   FACEBOOK
+  WHATSAPP
 }
 
 enum ConnectionMode {

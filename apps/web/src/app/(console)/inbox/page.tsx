@@ -14,12 +14,24 @@ function authorLabel(author: string) {
   return "System";
 }
 
+function contactLabel(
+  channel: string,
+  contact: { username: string | null; displayName: string | null; chosenName: string | null },
+  phone: string | null,
+) {
+  if (channel === "WHATSAPP") {
+    const person = contact.chosenName ?? contact.displayName ?? "WhatsApp contact";
+    return phone ? `${person} · ${phone}` : person;
+  }
+  return contact.username ?? contact.displayName ?? "Prospect";
+}
+
 export default async function InboxPage({ searchParams }: { searchParams: Promise<{ id?: string; channel?: string; error?: string }> }) {
   const params = await searchParams;
   const { workspace, role } = await requireWorkspace();
   if (!workspace) return <Empty title="No workspace" body="Select a workspace." />;
   if (role === "VIEWER") return <Empty title="Permission denied" body="Viewers do not receive transcripts." />;
-  const channel = params.channel === "INSTAGRAM" || params.channel === "FACEBOOK" ? params.channel : undefined;
+  const channel = params.channel === "INSTAGRAM" || params.channel === "FACEBOOK" || params.channel === "WHATSAPP" ? params.channel : undefined;
   const conversations = await getPrisma().conversation.findMany({
     where: { workspaceId: workspace.id, ...(channel ? { channel } : {}) },
     include: { contact: true, messages: { orderBy: { createdAt: "asc" } } },
@@ -38,7 +50,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     ownerAllowsAutomation: selected.owner === "AI",
     manual: true,
   }) : null;
-  const name = selected?.contact.username ?? selected?.contact.displayName ?? "Prospect";
+  const name = selected ? contactLabel(selected.channel, selected.contact, lead?.phoneE164 ?? null) : "Prospect";
   return (
     <section>
       {workspace.mode === "SIMULATION" && role !== "AGENT" ? (
@@ -58,13 +70,14 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
                 ["/inbox", "All", !channel],
                 ["/inbox?channel=INSTAGRAM", "Instagram", channel === "INSTAGRAM"],
                 ["/inbox?channel=FACEBOOK", "Facebook", channel === "FACEBOOK"],
+                ["/inbox?channel=WHATSAPP", "WhatsApp", channel === "WHATSAPP"],
               ].map(([href, label, active]) => (
                 <Link key={String(href)} href={String(href)} className={clsx("rounded-full px-3 py-1 text-[13px] font-semibold", active ? "bg-[var(--color-ink)] text-white" : "text-[var(--color-muted)] hover:bg-[var(--color-paper)]")}>{label}</Link>
               ))}
             </div>
             <ul>
               {conversations.map((item) => {
-                const label = item.contact.username ?? item.contact.displayName ?? "Prospect";
+                const label = contactLabel(item.channel, item.contact, null);
                 const last = item.messages.at(-1);
                 return (
                   <li key={item.id}>
@@ -113,7 +126,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
                       Send
                     </button>
                   </div>
-                  <p className="mt-2 text-[12px] text-[var(--color-muted)]">{eligibility?.allowed ? "Sends on the same Instagram or Facebook thread." : eligibility?.reason}</p>
+                  <p className="mt-2 text-[12px] text-[var(--color-muted)]">{eligibility?.allowed ? `Sends on the same ${selected.channel === "WHATSAPP" ? "WhatsApp" : selected.channel === "INSTAGRAM" ? "Instagram" : "Facebook"} chat.` : eligibility?.reason}</p>
                 </form>
               </>
             ) : null}
@@ -135,7 +148,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
                     </div>
                   ))}
                 </dl>
-                <p className="mt-4 text-[12px] leading-5 text-[var(--color-muted)]">A valid number is not proof that the person owns it, or that it is on WhatsApp.</p>
+                <p className="mt-4 text-[12px] leading-5 text-[var(--color-muted)]">{selected.channel === "WHATSAPP" ? "This person is chatting from this WhatsApp number." : "A valid number is not proof that the person owns it, or that it is on WhatsApp."}</p>
                 <p className="mt-5 text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--color-muted)]">Memory</p>
                 <p className="mt-2 whitespace-pre-line text-[13px] leading-5">
                   {selected.contact.memory ?? "Nothing older than the last 20 messages yet. The assistant reads those directly."}
