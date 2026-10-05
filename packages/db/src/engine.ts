@@ -1007,12 +1007,14 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const prospectTimes = spoken.filter((message) => message.author === "PROSPECT").map((message) => message.createdAt.getTime());
     const gapHours = prospectTimes.length >= 2 ? (prospectTimes[prospectTimes.length - 1]! - prospectTimes[prospectTimes.length - 2]!) / 3_600_000 : 0;
     const memoryLines = [
+      clockLine(runtime.now()),
       conversation.contact.memory ? `What you remember about this person from earlier chats:\n${conversation.contact.memory}` : "",
       lead.crmState === "SYNCED" ? "Their details already went to the team earlier. Do not collect them again." : "",
       conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI")
         ? `They messaged ${workspace.brandName} on WhatsApp. This is your first reply: greet them, say you are ${workspace.agentName ?? "the assistant"}, an automated assistant for ${workspace.brandName}, then continue.`
         : "",
       conversation.channel === "WHATSAPP" && lead.phoneE164 ? "They are chatting from their WhatsApp number, so their phone number is already recorded. Never ask for their phone number." : "",
+      photoLine(spoken),
       gapHours >= 12
         ? `They are messaging again after ${gapHours >= 48 ? `${Math.round(gapHours / 24)} days` : `${Math.round(gapHours)} hours`}. Welcome them back in a few words and continue from where you stopped.`
         : "",
@@ -1843,7 +1845,7 @@ async function readLeadForm(
   messages: { author: string; body: string }[],
 ): Promise<ReturnType<typeof acceptExtractedAnswers> | null> {
   if (!runtime.llm.extractAnswers) return null;
-  const transcript = messages.map((message) => ({ author: message.author, body: message.body }));
+  const transcript = messages.map((message) => ({ author: message.author, body: withoutPhotoText(message.body) }));
   const prospectText = transcript.filter((message) => message.author === "PROSPECT").map((message) => message.body).join("\n");
   if (!prospectText.trim()) return null;
   try {
@@ -1858,10 +1860,38 @@ async function readLeadForm(
   }
 }
 
+/** The model has no clock of its own; every reply gets the real day, date and time in India. */
+export function clockLine(now: Date): string {
+  const when = new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true,
+  }).format(now);
+  return `Right now it is ${when} in India (IST). Use this for today, tomorrow, weekdays, greetings and whether a time is realistic. Never guess the date.`;
+}
+
+const PHOTO_SEEN = /\(Sent a photo\. It shows: ([^]*?)\)\s*$/;
+
+/** A photo description is what is in the picture, never the customer's own name, company or number. */
+function withoutPhotoText(body: string): string {
+  return body.replace(PHOTO_SEEN, "(Sent a photo.)");
+}
+
+function photoLine(messages: { author: string; body: string }[]): string {
+  const prospect = messages.filter((message) => message.author === "PROSPECT");
+  const latest = prospect.at(-1)?.body ?? "";
+  const seen = latest.match(PHOTO_SEEN)?.[1];
+  if (seen) {
+    return `Their latest message is a photo. You can see it through this description: ${seen.trim()} Start your reply by reacting to what the photo actually shows, like a person who just looked at it, and answer anything they asked about it. Names, companies or numbers written in a photo are what the picture shows, not their own details, unless they say so. Never say you cannot see photos.`;
+  }
+  if (prospect.some((message) => PHOTO_SEEN.test(message.body))) {
+    return "They sent photos earlier in this chat. You saw them through the bracket descriptions, so if they ask about a photo, answer from its description. Never say you cannot see photos.";
+  }
+  return "";
+}
+
 async function latestName(runtime: Runtime, messages: { author: string; body: string }[], current: string | null): Promise<string | null> {
   const turns: { question: string; reply: string }[] = [];
   for (const message of messages) {
-    const body = message.body.trim();
+    const body = withoutPhotoText(message.body).trim();
     if (message.author === "AI") turns.push({ question: body, reply: "" });
     else if (message.author === "PROSPECT" && body && turns.length) {
       const turn = turns[turns.length - 1]!;
