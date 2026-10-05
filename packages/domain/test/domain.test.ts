@@ -158,6 +158,17 @@ describe("budgets and phones", () => {
     expect(validPhonesIn("8904887300")).toEqual(["+918904887300"]);
     expect(validPhonesIn("8904887300899")).toEqual([]);
   });
+
+  it("accepts only real-looking Indian mobiles", () => {
+    for (const fake of ["9876543210", "1234567890", "123456789090", "9999999999", "9898989898", "9123456789", "9000000001", "5845012345", "080 2345 6789"]) {
+      expect(parsePhone(fake).kind, fake).toBe("invalid");
+    }
+    for (const real of ["9845012345", "+91 89048 87300", "919677112233", "7019 552 846", "6382004417"]) {
+      expect(parsePhone(real).kind, real).toBe("valid");
+    }
+    expect(wrongPhoneIn("my number is 9876543210", "IN", 8)).toBe("9876543210");
+    expect(parsePhone("+1 415 555 2671").kind).toBe("valid");
+  });
 });
 
 describe("qualification", () => {

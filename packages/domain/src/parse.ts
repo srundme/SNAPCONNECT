@@ -65,7 +65,22 @@ export function parsePhone(text: string | null | undefined, defaultRegion = "IN"
   if (DECLINED.test(raw) && !/\d{5,}/.test(raw)) return { kind: "declined", raw };
   const parsed = parsePhoneNumberFromString(raw, defaultRegion as "IN");
   if (!parsed || !parsed.isValid()) return { kind: "invalid", raw };
+  if (parsed.country === "IN" && !realIndianMobile(String(parsed.nationalNumber))) return { kind: "invalid", raw };
   return { kind: "valid", e164: parsed.number, raw };
+}
+
+const ASCENDING = "01234567890123456789";
+const DESCENDING = "98765432109876543210";
+
+export function realIndianMobile(national: string): boolean {
+  if (!/^[6-9]\d{9}$/.test(national)) return false;
+  if (/(\d)\1{6,}/.test(national)) return false;
+  if (/^(\d{1,2})\1+$/.test(national)) return false;
+  for (let start = 0; start + 8 <= national.length; start += 1) {
+    const run = national.slice(start, start + 8);
+    if (ASCENDING.includes(run) || DESCENDING.includes(run)) return false;
+  }
+  return true;
 }
 
 function digitRuns(text: string, minDigits: number): string[] {

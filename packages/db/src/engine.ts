@@ -906,7 +906,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? wrongInEdit ?? wrongPhoneIn(latestProspect, runtime.phoneRegion, nextDetail?.kind === "phone" ? 6 : 8)
       : null;
     const wrongNumberLine = wrongNumber
-      ? `They typed ${wrongNumber} as their number, but that is not a valid mobile number (an Indian mobile number has 10 digits). Do not say it is noted, saved or updated, and do not repeat it. Politely say the number looks incorrect and ask them to type their correct mobile number again. Do not ask any other question.`
+      ? `They typed ${wrongNumber} as their number, but that is not a real mobile number (an Indian mobile number has exactly 10 digits, starts with 6, 7, 8 or 9, and is never a pattern like 9876543210, 1234567890 or 9999999999). Do not say it is noted, saved or updated, and do not repeat it. Politely say the number looks incorrect and ask them to type their correct mobile number again. Do not ask any other question.`
       : null;
     const safety = questions.length
       ? [
