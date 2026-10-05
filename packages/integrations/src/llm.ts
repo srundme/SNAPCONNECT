@@ -1,4 +1,5 @@
 import { aiOutputSchema, CALLBACK_TIME_KEY, parseBudget, type AiOutput } from "@snapsocial/domain";
+import { neutralDirection, VOICE_EMOTIONS, VOICE_OPENERS, type VoiceDirection } from "./cartesia";
 
 export type LlmRequest = {
   system: string;
@@ -50,8 +51,22 @@ export type LlmProvider = {
     questions: Array<{ id: string; label: string; kind: string; numeric: boolean }>;
     transcript: Array<{ author: string; body: string }>;
   }): Promise<Record<string, unknown>>;
+  directVoice?(input: { customer: string; reply: string; earlier: string }): Promise<VoiceDirection>;
   health(): Promise<{ ok: boolean; detail: string; gpu: boolean | null }>;
 };
+
+export function readVoiceDirection(value: unknown): VoiceDirection {
+  const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const emotion = VOICE_EMOTIONS.find((item) => item === String(raw.emotion ?? "").toLowerCase()) ?? neutralDirection.emotion;
+  const opener = VOICE_OPENERS.find((item) => item.toLowerCase() === String(raw.opener ?? "").trim().toLowerCase()) ?? "";
+  const speed = Number(raw.speed);
+  return {
+    laugh: raw.laugh === true || raw.laugh === "true",
+    emotion,
+    speed: Number.isFinite(speed) ? Math.min(1.15, Math.max(0.85, speed)) : 1,
+    opener,
+  };
+}
 
 export function fixtureLlm(): LlmProvider {
   return {
@@ -342,6 +357,43 @@ export function sarvamLlm(options: {
       if (!response.ok) throw new Error(`Sarvam returned HTTP ${response.status}`);
       const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
       return (body.choices?.[0]?.message?.content ?? "").trim().slice(0, 2000);
+    },
+    async directVoice({ customer, reply, earlier }) {
+      const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", "api-subscription-key": options.apiKey },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          max_tokens: 120,
+          messages: [
+            {
+              role: "system",
+              content: [
+                "You direct the voice actor who speaks a friendly Indian sales assistant's reply as a voice note.",
+                "Read the customer's last message and the assistant's reply, then choose how the reply should sound.",
+                "The chat can be English, Tamil, Hindi, Tanglish, Hinglish or mixed.",
+                "laugh: true only when the customer is clearly joking, teasing, being playful or lightly sarcastic, or laughing themselves. False when they are annoyed, complaining, confused, sad, or just answering a question. Sarcasm that is a real complaint is not a joke.",
+                `emotion: one of ${VOICE_EMOTIONS.join(", ")}. Match the reply: thanks = grateful, sorry or a problem = apologetic or sympathetic, good news = happy or excited, a question = curious, details = calm or confident.`,
+                "speed: 0.9 for careful details like numbers or times, 1.0 normally, 1.1 for short cheerful replies.",
+                `opener: one of ${VOICE_OPENERS.filter(Boolean).map((item) => `"${item}"`).join(", ")} or "" for none. Use one only for real surprise ("Oh,", "Wow,") or sympathy ("Aww,"), never on a plain question or answer. Most replies use "".`,
+                'Return only JSON like {"laugh":false,"emotion":"content","speed":1.0,"opener":""}.',
+              ].join("\n"),
+            },
+            {
+              role: "user",
+              content: `Earlier chat:\n${earlier.slice(-1200) || "none"}\n\nCustomer's last message: ${customer.slice(0, 500)}\nAssistant's reply: ${reply.slice(0, 800)}`.normalize("NFKC"),
+            },
+          ],
+        }),
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!response.ok) throw new Error(`Sarvam returned HTTP ${response.status}`);
+      const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const content = (body.choices?.[0]?.message?.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "");
+      const json = content.slice(content.indexOf("{"), content.lastIndexOf("}") + 1);
+      if (!json) throw new Error("Sarvam returned no voice direction.");
+      return readVoiceDirection(JSON.parse(json) as unknown);
     },
     async generate(request): Promise<LlmResponse> {
       const started = Date.now();

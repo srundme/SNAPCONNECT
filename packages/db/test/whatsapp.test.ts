@@ -91,8 +91,8 @@ describeDb("whatsapp chat", () => {
       credentialKeys: { test: key },
       transcribe: async () => "Hi, I need interiors for my new flat",
       whatsappMediaUrl: async () => "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1",
-      speak: async ({ text }) => {
-        spoken.push(text);
+      speak: async ({ transcript }) => {
+        spoken.push(transcript);
         return { audio: new Uint8Array(300), mimeType: "audio/mpeg" };
       },
       publicBaseUrl: "https://app.test",
@@ -145,7 +145,8 @@ describeDb("whatsapp chat", () => {
     const reply = conversation.messages.find((message) => message.author === "AI")!;
     expect(reply.voice).toBe(true);
     expect(reply.voiceClipId).toBeTruthy();
-    expect(spoken).toEqual([reply.body]);
+    expect(spoken.length).toBe(1);
+    expect(spoken[0]).not.toMatch(/\p{Extended_Pictographic}/u);
     expect(sent.at(-1)!.audioUrl).toBe(`https://app.test/api/voice/${reply.voiceClipId}.mp3`);
     const clip = await db.voiceClip.findUniqueOrThrow({ where: { id: reply.voiceClipId! } });
     expect(clip.mimeType).toBe("audio/mpeg");

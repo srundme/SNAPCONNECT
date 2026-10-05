@@ -53,7 +53,7 @@ import {
   type ReplyPromptField,
   type NormalizedEvent,
 } from "@snapsocial/domain";
-import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, speechLanguage, zohoAdapter, ZohoOAuthError, type LlmProvider, type SendResult, type Speaker, type ZohoAdapter } from "@snapsocial/integrations";
+import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, neutralDirection, soundsLikeJoke, speechLocale, speechScript, zohoAdapter, ZohoOAuthError, type LlmProvider, type SendResult, type Speaker, type VoiceDirection, type ZohoAdapter } from "@snapsocial/integrations";
 import { randomBytes } from "node:crypto";
 import type { Db } from "./client";
 
@@ -629,16 +629,42 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
 async function voiceClip(
   db: Db,
   runtime: Runtime,
-  workspaceId: string,
-  channel: Channel,
-  text: string,
+  input: {
+    workspaceId: string;
+    channel: Channel;
+    text: string;
+    chatLanguage: string | null;
+    messages: Array<{ author: string; body: string }>;
+  },
 ): Promise<{ id: string; url: string } | null> {
   if (!runtime.speak || !runtime.publicBaseUrl) return null;
-  const language = speechLanguage(text);
-  if (!language) return null;
+  const { workspaceId, channel, text } = input;
+  const spoken = speechLocale(text, input.chatLanguage);
+  if (!spoken) return null;
   try {
+    const chat = input.messages.filter((message) => message.author === "PROSPECT" || message.author === "AI");
+    const customer = [...chat].reverse().find((message) => message.author === "PROSPECT")?.body ?? "";
+    const earlier = chat
+      .slice(-9, -1)
+      .map((message) => `${message.author === "AI" ? "Assistant" : "Customer"}: ${message.body.replace(/\s+/g, " ").slice(0, 200)}`)
+      .join("\n");
+    let direction: VoiceDirection = { ...neutralDirection, laugh: soundsLikeJoke(customer) };
+    if (runtime.llm.directVoice) {
+      direction = await runtime.llm.directVoice({ customer, reply: text, earlier }).catch((error: unknown) => {
+        console.warn(`Voice direction failed, using defaults: ${error instanceof Error ? error.message : String(error)}`);
+        return direction;
+      });
+    }
+    const transcript = speechScript(text, direction);
+    if (!transcript) return null;
     const format = channel === "INSTAGRAM" ? "wav" : "mp3";
-    const speech = await runtime.speak({ text, language, format });
+    const speech = await runtime.speak({
+      transcript,
+      ...spoken,
+      emotion: direction.emotion,
+      speed: transcript.includes("<spell>") ? Math.min(direction.speed, 0.95) : direction.speed,
+      format,
+    });
     const id = randomBytes(24).toString("base64url");
     await db.voiceClip.create({ data: { id, workspaceId, mimeType: speech.mimeType, data: Buffer.from(speech.audio) } });
     return { id, url: `${runtime.publicBaseUrl.replace(/\/$/, "")}/api/voice/${id}.${format}` };
@@ -1262,7 +1288,15 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         where: { contactId: conversation.contactId, identityType: "MESSAGING_PARTICIPANT" },
       });
       const answeringVoice = [...conversation.messages].reverse().find((message) => message.author === "PROSPECT")?.voice === true;
-      const clip = answeringVoice && participant ? await voiceClip(db, runtime, workspace.id, connection.channel, reply) : null;
+      const clip = answeringVoice && participant
+        ? await voiceClip(db, runtime, {
+            workspaceId: workspace.id,
+            channel: connection.channel,
+            text: reply,
+            chatLanguage: languageSample ? languageName(languageSample) : null,
+            messages: conversation.messages,
+          })
+        : null;
       let result = clip
         ? await runtime.send({
             connection: sendConnection(connection),

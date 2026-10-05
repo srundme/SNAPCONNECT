@@ -4,10 +4,10 @@ import { classifyFetch } from "../src/channel";
 import { decryptSecret, encryptSecret } from "../src/crypto";
 import { facebookAdapter, instagramAdapter } from "../src/meta";
 import { listInstagramPosts } from "../src/meta-media";
-import { assertPrivateOllamaUrl, sarvamLlm, sarvamTranscriber } from "../src/llm";
+import { assertPrivateOllamaUrl, readVoiceDirection, sarvamLlm, sarvamTranscriber } from "../src/llm";
 import { zohoAdapter } from "../src/zoho";
 import { checkWhatsAppNumber, subscribeWhatsAppAccount, whatsappAdapter } from "../src/whatsapp";
-import { cartesiaSpeaker, speechLanguage } from "../src/cartesia";
+import { cartesiaSpeaker, soundsLikeJoke, speechLocale, speechScript } from "../src/cartesia";
 
 describe("integration guards", () => {
   it("encrypts credentials with an external key", () => {
@@ -236,33 +236,60 @@ describe("whatsapp", () => {
 });
 
 describe("voice replies", () => {
-  it("picks the spoken language from the reply script", () => {
-    expect(speechLanguage("Sure, what is your budget?")).toBe("en");
-    expect(speechLanguage("Budget evlo sir?")).toBe("en");
-    expect(speechLanguage("உங்கள் பட்ஜெட் என்ன?")).toBe("ta");
-    expect(speechLanguage("आपका बजट क्या है?")).toBe("hi");
-    expect(speechLanguage("ميزانيتك؟")).toBeNull();
+  it("picks the spoken locale from the reply script and the chat language", () => {
+    expect(speechLocale("Sure, what is your budget?")).toEqual({ locale: "en-IN" });
+    expect(speechLocale("Budget evlo sir?", "Tanglish, which is Tamil typed in English letters")).toEqual({ locale: "ta-IN", normalization: "en-IN" });
+    expect(speechLocale("Budget kitna hai?", "Hinglish, which is Hindi typed in English letters")).toEqual({ locale: "hi-IN", normalization: "en-IN" });
+    expect(speechLocale("உங்கள் பட்ஜெட் என்ன?")).toEqual({ locale: "ta-IN" });
+    expect(speechLocale("आपका बजट क्या है?")).toEqual({ locale: "hi-IN" });
+    expect(speechLocale("ميزانيتك؟")).toBeNull();
   });
 
-  it("asks Cartesia for speech in the requested format", async () => {
+  it("writes the spoken script with laughter, openers and spelled phone numbers", () => {
+    expect(speechScript("Got it 😄 we will call you on +919845012345", { laugh: false, emotion: "happy", speed: 1, opener: "" }))
+      .toBe("Got it we will call you on <spell>98450 12345</spell>.");
+    expect(speechScript("Ha, good one! So is it for your home?", { laugh: true, emotion: "happy", speed: 1.1, opener: "Haha," }))
+      .toBe("[laughter] Ha, good one! So is it for your home?");
+    expect(speechScript("That is a big space. What is the budget?", { laugh: false, emotion: "surprised", speed: 1, opener: "Oh," }))
+      .toBe("Oh, that is a big space. What is the budget?");
+    expect(speechScript("Super sir! Budget evlo?", { laugh: false, emotion: "curious", speed: 1, opener: "Ah," }))
+      .toBe("Super sir! Budget evlo?");
+    expect(speechScript("**Details** here: https://x.test/a\nThanks", { laugh: false, emotion: "calm", speed: 1, opener: "" }))
+      .toBe("Details here: the link Thanks.");
+    expect(soundsLikeJoke("hahaha my wife will decide the budget")).toBe(true);
+    expect(soundsLikeJoke("Budget is 5 lakh")).toBe(false);
+  });
+
+  it("reads a voice direction safely", () => {
+    expect(readVoiceDirection({ laugh: true, emotion: "Happy", speed: 3, opener: "oh," })).toEqual({ laugh: true, emotion: "happy", speed: 1.15, opener: "Oh," });
+    expect(readVoiceDirection({ emotion: "furious", opener: "Yo" })).toEqual({ laugh: false, emotion: "content", speed: 1, opener: "" });
+  });
+
+  it("asks Cartesia for speech with locale, emotion and speed", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
     const fetchImpl = async (url: string, init: RequestInit) => {
       calls.push({ url, init });
       return new Response(new Uint8Array(400), { status: 200, headers: { "content-type": "audio/mpeg" } });
     };
-    const speech = await cartesiaSpeaker({ apiKey: "sk_test", voiceId: "voice-1", fetchImpl })({ text: "Hello", language: "en", format: "mp3" });
+    const speak = cartesiaSpeaker({ apiKey: "sk_test", voiceId: "voice-1", fetchImpl });
+    const speech = await speak({ transcript: "[laughter] Hello.", locale: "en-IN", emotion: "happy", speed: 1.1, format: "mp3" });
     expect(speech.mimeType).toBe("audio/mpeg");
     expect(speech.audio.byteLength).toBe(400);
     expect(calls[0]!.url).toBe("https://api.cartesia.ai/tts/bytes");
     expect(new Headers(calls[0]!.init.headers).get("Authorization")).toBe("Bearer sk_test");
     expect(JSON.parse(String(calls[0]!.init.body))).toMatchObject({
-      transcript: "Hello",
+      transcript: "[laughter] Hello.",
       voice: { id: "voice-1" },
-      language: "en",
+      locale: "en-IN",
       output_format: { container: "mp3" },
+      generation_config: { emotion: "happy", speed: 1.1 },
     });
+    await speak({ transcript: "Budget evlo?", locale: "ta-IN", normalization: "en-IN", emotion: "curious", format: "wav" });
+    const tamil = JSON.parse(String(calls[1]!.init.body)) as Record<string, unknown>;
+    expect(tamil).toMatchObject({ locale: "ta-IN", normalization: "en-IN", output_format: { container: "wav" } });
+    expect(tamil.generation_config).toBeUndefined();
     const failing = async () => new Response("bad voice", { status: 400 });
-    await expect(cartesiaSpeaker({ apiKey: "k", voiceId: "v", fetchImpl: failing })({ text: "Hi", language: "en", format: "wav" })).rejects.toThrow(/HTTP 400/);
+    await expect(cartesiaSpeaker({ apiKey: "k", voiceId: "v", fetchImpl: failing })({ transcript: "Hi.", locale: "en-IN", format: "wav" })).rejects.toThrow(/HTTP 400/);
   });
 
   it("sends audio attachments on every channel", async () => {
