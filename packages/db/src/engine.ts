@@ -8,6 +8,9 @@ import {
   nextReplyPrompt,
   openingForPost,
   absorbTranscript,
+  acceptExtractedAnswers,
+  numericQuestion,
+  asksSomething,
   asksForName,
   cleanName,
   mentionsOwnName,
@@ -756,8 +759,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     let recordedPhone = lead.phoneE164;
     let recordedAnswers = answerRecord(lead.answers);
     const readsName = Boolean(runtime.llm.readName) && questions.some((question) => question.kind === "name");
+    let formRead = false;
     if (questions.length) {
-      const absorbed = absorbTranscript({
+      let absorbed = absorbTranscript({
         questions,
         messages: conversation.messages.map((message) => ({ author: message.author, body: message.body })),
         name: conversation.contact.chosenName,
@@ -766,7 +770,17 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         phoneRegion: runtime.phoneRegion,
         nameReadElsewhere: readsName,
       });
-      if (readsName) absorbed.name = await latestName(runtime, conversation.messages, absorbed.name);
+      const form = await readLeadForm(runtime, questions, conversation.messages);
+      if (form) {
+        formRead = true;
+        absorbed = {
+          name: form.name ?? conversation.contact.chosenName ?? null,
+          phoneE164: form.phoneE164 ?? absorbed.phoneE164,
+          answers: { ...recordedAnswers, ...form.answers },
+        };
+      } else if (readsName) {
+        absorbed.name = await latestName(runtime, conversation.messages, absorbed.name);
+      }
       recordedName = absorbed.name;
       recordedPhone = absorbed.phoneE164;
       recordedAnswers = absorbed.answers;
@@ -1010,8 +1024,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       });
       return "done";
     }
-    await applyUpdates(db, lead.id, conversation.contactId, readsName ? validated.updates.filter((update) => update.field !== "chosenName") : validated.updates);
-    await applyCustomAnswers(db, lead.id, validated.customAnswers);
+    await applyUpdates(db, lead.id, conversation.contactId, readsName || formRead ? validated.updates.filter((update) => update.field !== "chosenName") : validated.updates);
+    if (!formRead) await applyCustomAnswers(db, lead.id, validated.customAnswers);
     const updatedLead = await db.lead.findUniqueOrThrow({ where: { id: lead.id }, include: { contact: true } });
     const rule = leadRule(workspace);
     const screen = questions.length
@@ -1052,7 +1066,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? validated.reply.split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?")).join(" ").trim()
       : "";
     const composed = pending && validated.reply
-      ? replyAsksFor(pending, validated.reply) || validated.reply.includes("?") || validated.reply.length >= 60
+      ? replyAsksFor(pending, validated.reply) || asksSomething(validated.reply) || validated.reply.length >= 60
         ? validated.reply
         : [statement, scriptQuestionFor(pending, languageSample ? languageName(languageSample) : null)].filter(Boolean).join(" ")
       : validated.reply ?? fallback;
@@ -1383,6 +1397,27 @@ async function applyCustomAnswers(db: Db, leadId: string, answers: Array<{ id: s
     });
   }
   await db.lead.update({ where: { id: leadId }, data: { answers: current } });
+}
+
+async function readLeadForm(
+  runtime: Runtime,
+  questions: ReturnType<typeof parseLeadQuestions>,
+  messages: { author: string; body: string }[],
+): Promise<ReturnType<typeof acceptExtractedAnswers> | null> {
+  if (!runtime.llm.extractAnswers) return null;
+  const transcript = messages.map((message) => ({ author: message.author, body: message.body }));
+  const prospectText = transcript.filter((message) => message.author === "PROSPECT").map((message) => message.body).join("\n");
+  if (!prospectText.trim()) return null;
+  try {
+    const raw = await runtime.llm.extractAnswers({
+      questions: questions.map((question) => ({ id: question.id, label: question.label, kind: question.kind, numeric: numericQuestion(question) })),
+      transcript,
+    });
+    return acceptExtractedAnswers({ questions, raw, prospectText, phoneRegion: runtime.phoneRegion });
+  } catch (error) {
+    console.warn("Lead form reading failed, using the text rules.", error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 async function latestName(runtime: Runtime, messages: { author: string; body: string }[], current: string | null): Promise<string | null> {

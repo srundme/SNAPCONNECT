@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  acceptExtractedAnswers,
+  asksSomething,
   cleanName,
   nameInReply,
   asksForName,
@@ -848,5 +850,46 @@ describe("Tanglish asks without a question mark", () => {
     expect(asksForName("Demo arrange panna, unga peru enna nu sollunga.")).toBe(true);
     expect(asksForName("Apna naam bata dijiye sir.")).toBe(true);
     expect(asksForName("Unga company peru enna nu sollunga.")).toBe(false);
+  });
+});
+
+describe("lead form read by the model", () => {
+  const questions = [
+    { id: "person-name", label: "Person name", kind: "name" as const, zohoField: "Last_Name" },
+    { id: "company-name", label: "Company name", kind: "text" as const, zohoField: "Company" },
+    { id: "contact-number", label: "Contact number", kind: "phone" as const, zohoField: "Phone" },
+    { id: "team", label: "Current telecaller team size", kind: "text" as const, zohoField: null },
+    { id: "volume", label: "Monthly call volume", kind: "text" as const, zohoField: null },
+    { id: "issue", label: "What is the issue, or why do you think AI calling may help?", kind: "text" as const, zohoField: null },
+    { id: "demo", label: "Are you interested to attend the demo?", kind: "yesno" as const, zohoField: null },
+  ];
+
+  it("accepts values the customer typed, including short forms and number words", () => {
+    const prospectText = "this is Priya from Glow Studio, we have 12 telecallers\naround 25k\n98450 12345\nYes iruku\nDho azar calls\nfollow ups get missed";
+    const got = acceptExtractedAnswers({
+      questions,
+      raw: { "person-name": "Priya", "company-name": "Glow Studio", "contact-number": "98450 12345", team: 12, volume: 25000, issue: "follow ups get missed", demo: "yes" },
+      prospectText,
+    });
+    expect(got).toEqual({
+      name: "Priya",
+      phoneE164: "+919845012345",
+      answers: { "company-name": "Glow Studio", team: "12", volume: "25000", issue: "follow ups get missed", demo: "yes" },
+    });
+  });
+
+  it("rejects anything the customer never typed", () => {
+    const got = acceptExtractedAnswers({
+      questions,
+      raw: { "person-name": "Suresh", "company-name": "Acme Corp", "contact-number": "9876543210", team: 45, volume: 9999, issue: null, demo: "maybe" },
+      prospectText: "my name is Gopi\nwe are a small shop\n8904887300",
+    });
+    expect(got).toEqual({ name: null, phoneE164: null, answers: {} });
+  });
+
+  it("treats Tanglish and Hinglish requests as questions", () => {
+    expect(asksSomething("Number ah inga type pannunga.")).toBe(true);
+    expect(asksSomething("Apna naam bata dijiye sir.")).toBe(true);
+    expect(asksSomething("Super sir, noted.")).toBe(false);
   });
 });

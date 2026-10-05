@@ -509,13 +509,73 @@ export function cleanName(candidate: string | null | undefined, source: string):
     .split(/\s+/)
     .filter(Boolean);
   if (!words.length || words.length > 4) return null;
-  if (words.some((word) => !/^\p{L}+$/u.test(word))) return null;
+  if (words.some((word) => !/^[\p{L}\p{M}]+$/u.test(word))) return null;
   const full = words.filter((word) => word.length >= 2);
   if (!full.length || full.some((word) => NOT_A_NAME.test(word) || NOT_A_NAME.test(squeeze(word)))) return null;
   const said = squeeze(source.normalize("NFKC"));
   if (words.some((word) => !said.includes(squeeze(word)))) return null;
   const name = words.map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(" ");
   return name.length <= 40 ? name : null;
+}
+
+export function numericQuestion(question: LeadQuestion): boolean {
+  return question.kind === "text" && /team|size|volume|how many|count|number of|calls/i.test(question.label) && !/issue|why|problem/i.test(question.label);
+}
+
+const NUMBER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twenty: 20, thirty: 30, forty: 40, fifty: 50, hundred: 100, thousand: 1000,
+  ek: 1, dho: 2, teen: 3, char: 4, paanch: 5, panch: 5, das: 10, bees: 20, pachas: 50, sau: 100, hazar: 1000, hazaar: 1000, azar: 1000, hajar: 1000,
+  onnu: 1, rendu: 2, moonu: 3, naalu: 4, anju: 5, pathu: 10, nooru: 100, aayiram: 1000, ayiram: 1000, lakh: 100000, lakhs: 100000,
+};
+
+function saidNumber(value: number, said: string): boolean {
+  const text = said.toLowerCase().replace(/,/g, "");
+  if (new RegExp(`\\b${value}\\b`).test(text)) return true;
+  const short = text.match(/\b(\d+(?:\.\d+)?)\s*(k|thousand|lakh|lakhs|l)\b/g) ?? [];
+  if (short.some((part) => {
+    const [, amount, unit] = part.match(/(\d+(?:\.\d+)?)\s*(\w+)/) ?? [];
+    return Math.round(Number(amount) * (/^l/.test(unit ?? "") ? 100000 : 1000)) === value;
+  })) return true;
+  return squeeze(text).split(/\W+/).some((word) => word in NUMBER_WORDS || squeeze(word) in NUMBER_WORDS);
+}
+
+function wordsWereTyped(value: string, said: string, share: number): boolean {
+  const typed = squeeze(said.normalize("NFKC"));
+  const words = value.normalize("NFKC").split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 1);
+  if (!words.length) return false;
+  return words.filter((word) => typed.includes(squeeze(word))).length / words.length >= share;
+}
+
+export function acceptExtractedAnswers(input: {
+  questions: LeadQuestion[];
+  raw: Record<string, unknown>;
+  prospectText: string;
+  phoneRegion?: string;
+}): { name: string | null; phoneE164: string | null; answers: Record<string, string> } {
+  const answers: Record<string, string> = {};
+  let name: string | null = null;
+  let phoneE164: string | null = null;
+  for (const question of input.questions) {
+    const value = input.raw[question.id];
+    const text = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
+    if (!text || /^(null|none|unknown|n\/a|not provided)$/i.test(text)) continue;
+    if (question.kind === "name") {
+      name = cleanName(text, input.prospectText);
+    } else if (question.kind === "phone") {
+      const phone = parsePhone(text, input.phoneRegion ?? "IN");
+      const digits = text.replace(/\D/g, "").slice(-10);
+      if (phone.kind === "valid" && input.prospectText.replace(/\D/g, "").includes(digits)) phoneE164 = phone.e164;
+    } else if (question.kind === "yesno") {
+      if (/^(yes|y|true)$/i.test(text)) answers[question.id] = "yes";
+      else if (/^(no|n|false)$/i.test(text)) answers[question.id] = "no";
+    } else if (numericQuestion(question)) {
+      const amount = Number(text.replace(/[,\s]/g, "").match(/^\d+(?:\.\d+)?/)?.[0] ?? NaN);
+      if (Number.isFinite(amount) && amount > 0 && saidNumber(amount, input.prospectText)) answers[question.id] = String(Math.round(amount));
+    } else if (wordsWereTyped(text, input.prospectText, /issue|why|problem/i.test(question.label) ? 0.5 : 1)) {
+      answers[question.id] = text.slice(0, 180);
+    }
+  }
+  return { name, phoneE164, answers };
 }
 
 export function asksForName(aiText: string): boolean {
@@ -570,6 +630,10 @@ function directAnswer(question: LeadQuestion, text: string, plain: boolean, regi
 }
 
 const ASKING = /\b(sollunga|solunga|sollungal|sollu|chollu|cheppandi|heli|share|type|kudunga|podunga|pannunga|bataiye|bataye|batayiye|batao|bata dijiye|bataiyega|likhiye|bhejiye|tell me|let me know|please share|could you|can you|may i)\b/i;
+
+export function asksSomething(text: string): boolean {
+  return text.includes("?") || ASKING.test(text) || /\b(enna|evlo|epdi|eppo|yaaru|enga|kya|kitne|kitna|kaun|kab|kaise|kahan)\b/i.test(text);
+}
 
 function askedAbout(question: LeadQuestion, aiText: string): boolean {
   const sentences = aiText.split(/(?<=[.!?])\s+/).map((part) => part.trim()).filter(Boolean);

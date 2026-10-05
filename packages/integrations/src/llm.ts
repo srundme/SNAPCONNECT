@@ -46,6 +46,10 @@ export type LlmProvider = {
   summarize?(previous: string | null, transcript: string): Promise<string>;
   addressFor?(name: string): Promise<"sir" | "mam" | "bro">;
   readName?(question: string, reply: string): Promise<string | null>;
+  extractAnswers?(input: {
+    questions: Array<{ id: string; label: string; kind: string; numeric: boolean }>;
+    transcript: Array<{ author: string; body: string }>;
+  }): Promise<Record<string, unknown>>;
   health(): Promise<{ ok: boolean; detail: string; gpu: boolean | null }>;
 };
 
@@ -216,6 +220,61 @@ export function sarvamLlm(options: {
       const address = word === "sir" ? "sir" : word === "bro" || !word ? "bro" : "mam";
       addressCache.set(key, address);
       return address;
+    },
+    async extractAnswers({ questions, transcript }) {
+      const fields = questions.map((question) => {
+        const rule = question.kind === "name"
+          ? "the customer's own person name, with surname or initial if given. Not a greeting, filler (arey, dei, bhai, acha), company or city."
+          : question.kind === "phone"
+            ? "their mobile number exactly as typed."
+            : question.kind === "yesno"
+              ? "\"yes\" or \"no\" only."
+              : question.numeric
+                ? "a plain number in digits. Convert words and short forms: 40k = 40000, 2 lakh = 200000, dho hazar = 2000, rendu aayiram = 2000. For people counts, Tamil 'per' or 'peru' and Hindi 'log' after a number mean people: '20 per iruken' = 20, '8 log' = 8."
+                : /company/i.test(question.label)
+                  ? "only the business or company name, as typed. Not a sentence about something else."
+                  : "their answer in their own words, short.";
+        return `- "${question.id}" (${question.label}): ${rule}`;
+      });
+      const chat = transcript
+        .filter((message) => message.author === "AI" || message.author === "PROSPECT")
+        .slice(-30)
+        .map((message) => `${message.author === "AI" ? "Assistant" : "Customer"}: ${message.body.replace(/\s+/g, " ").slice(0, 400)}`)
+        .join("\n");
+      const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", "api-subscription-key": options.apiKey },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          max_tokens: 500,
+          messages: [
+            {
+              role: "system",
+              content: [
+                "You fill a sales lead form from an Instagram chat between a sales assistant and an Indian customer.",
+                "The chat can be English, Tamil, Hindi, Tanglish, Hinglish or mixed, with typos and stretched letters.",
+                "Use only what the Customer typed. The Assistant's lines only tell you what was being asked.",
+                "An answer counts even when the Assistant asked without a question mark, or when the Customer gave it before being asked.",
+                "If the Customer corrected an answer, use the latest one. If a field was not answered, use null. Never guess.",
+                "A question, a refusal, or a language request is not an answer.",
+                "Return only one JSON object with exactly these keys:",
+                ...fields,
+              ].join("\n"),
+            },
+            { role: "user", content: chat },
+          ],
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`Sarvam returned HTTP ${response.status}`);
+      const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const content = (body.choices?.[0]?.message?.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "");
+      const json = content.slice(content.indexOf("{"), content.lastIndexOf("}") + 1);
+      if (!json) throw new Error("Sarvam returned no JSON for the lead form.");
+      const parsed = JSON.parse(json) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Sarvam lead form was not an object.");
+      return parsed as Record<string, unknown>;
     },
     async readName(question, reply) {
       const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {
