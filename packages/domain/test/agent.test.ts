@@ -3,6 +3,7 @@ import {
   acceptExtractedAnswers,
   applyReplySwitches,
   customerComplaint,
+  dropIndicSentences,
   humanBubbles,
   withAutomationDisclosure,
   parseAgentSettings,
@@ -13,6 +14,14 @@ import {
   screenLead,
   unrealisticAnswers,
 } from "../src/index";
+
+describe("English chats stay English", () => {
+  it("drops Tanglish sentences from a reply in an English chat", () => {
+    expect(dropIndicSentences("haan sir send panni paarunga\ndesign ideas ku help aagum")).toBe("");
+    expect(dropIndicSentences("No problem sir. Unga details ellam already team ku pochu.\nWhat time works for you?")).toBe("No problem sir.\nWhat time works for you?");
+    expect(dropIndicSentences("Sure sir, a 3 BHK in Madiwala is more than enough space for a modular kitchen.")).toContain("Madiwala");
+  });
+});
 
 describe("home size answers", () => {
   it("keeps BHK with the number", () => {
@@ -121,7 +130,15 @@ describe("must-have and nice-to-have questions", () => {
     expect(brief).toContain("Never call them sir");
     expect(brief).toContain("Nice to have");
     expect(brief).toContain("walnut walk-in wardrobe");
-    expect(brief).toMatch(/Kanglish/);
+    expect(brief).not.toMatch(/Tanglish|Kanglish|Hinglish|pannuvanga/);
     expect(brief).not.toMatch(/telecall|\bdemo\b|AI calling|call volume/i);
+    const kannada = salesBriefing({
+      brandName: "The KariGhars", agentName: "Varun", services: "", faqs: [], teamNotes: null, questions, recorded: [],
+      nextDetail: questions[1]!, ready: false, cold: false, minutesSinceSent: null, memoryLines: [],
+      languageLine: "This chat is in Kannada typed in English letters.", chatLanguage: "Kannada typed in English letters",
+      activePost: null, otherPosts: null,
+    });
+    expect(kannada).toMatch(/Kanglish/);
+    expect(kannada).not.toMatch(/Sollunga|pannuvanga|Batao/);
   });
 });

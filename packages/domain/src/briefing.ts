@@ -15,6 +15,7 @@ export type SalesBriefingInput = {
   minutesSinceSent: number | null;
   memoryLines: string[];
   languageLine: string;
+  chatLanguage?: string | null;
   activePost: string | null;
   otherPosts: string | null;
   personName?: string | null;
@@ -73,6 +74,11 @@ export function salesBriefing(input: SalesBriefingInput): string {
   const teamRules = ruleLines(settings.rules);
   const realityChecks = ruleLines(settings.realityChecks);
   const casual = settings.casualTexting;
+  const lang = input.chatLanguage ?? "";
+  const tamil = /tanglish|tamil/i.test(lang);
+  const hindi = /hinglish|hindi/i.test(lang);
+  const kannada = /kannada/i.test(lang);
+  const local = Boolean(lang);
   const must = input.questions.filter((question) => question.required !== false);
   const nice = input.questions.filter((question) => question.required === false);
   const sent = input.minutesSinceSent === null ? null : since(input.minutesSinceSent);
@@ -176,10 +182,10 @@ export function salesBriefing(input: SalesBriefingInput): string {
     "",
     "# How to write",
     `- ${input.languageLine}`,
-    "- In any Indian language, write the way people actually text: casual, spoken, everyday words. Keep the English words people really use, such as call, team, number, flat, kitchen, budget, site visit. Never use formal, bookish, literary or textbook words.",
-    "- Tanglish: write 'Sollunga, flat enga irukku? Full home ah illa sila rooms mattum ah?', never 'Sollungal, ungal veedu engu ullathu?'. Say 'evlo', 'enna', 'irukku', 'pannalam', not 'ethanai', 'yenna', 'ullathu', 'seyyalaam'.",
-    "- Hinglish: write 'Batao, flat kis area mein hai? Poora ghar karwana hai ya kuch rooms?', never 'Kripya batayein, aapka nivas kis kshetra mein hai?'.",
-    "- Kanglish (Kannada typed in English letters): write 'Heli, nimma flat yaav area alli ide? Full home beka athva kelavu rooms maatra na?', never bookish Kannada like 'Dayavittu nimma nivasada vivaragalannu odagisi'. Say 'beka', 'ide', 'yaav', 'maadona', 'sigutte'. Kannada script gets Kannada script in the same casual style.",
+    ...(local ? ["- In any Indian language, write the way people actually text: casual, spoken, everyday words. Keep the English words people really use, such as call, team, number, flat, kitchen, budget, site visit. Never use formal, bookish, literary or textbook words."] : []),
+    ...(tamil ? ["- Tanglish: write 'Sollunga, flat enga irukku? Full home ah illa sila rooms mattum ah?', never 'Sollungal, ungal veedu engu ullathu?'. Say 'evlo', 'enna', 'irukku', 'pannalam', not 'ethanai', 'yenna', 'ullathu', 'seyyalaam'."] : []),
+    ...(hindi ? ["- Hinglish: write 'Batao, flat kis area mein hai? Poora ghar karwana hai ya kuch rooms?', never 'Kripya batayein, aapka nivas kis kshetra mein hai?'."] : []),
+    ...(kannada ? ["- Kanglish (Kannada typed in English letters): write 'Heli, nimma flat yaav area alli ide? Full home beka athva kelavu rooms maatra na?', never bookish Kannada like 'Dayavittu nimma nivasada vivaragalannu odagisi'. Say 'beka', 'ide', 'yaav', 'maadona', 'sigutte'. Kannada script gets Kannada script in the same casual style."] : []),
     "- One to three short sentences, like a WhatsApp message. At most one question. Match their length and energy: a short message gets a short reply.",
     ...(casual
       ? ["- Text like a sharp young Indian sales consultant on his phone, not a professional writer. Simple everyday words, no fancy English. Put separate thoughts on separate lines, like sending two quick messages: a short reaction on the first line, then your answer or question on the next. At most three lines, and often just one."]
@@ -194,14 +200,19 @@ export function salesBriefing(input: SalesBriefingInput): string {
       : "- Never use dashes, hyphens, semicolons, quotes or brackets.",
     ...(settings.laughter ? [] : ["- Never write haha, hehe, lol or any laughter."]),
     ...(settings.emojis ? [] : ["- Never use emojis."]),
-    "- In Tanglish or Hinglish, never join a word and its ending with a hyphen. Write 'team ku', 'correct ah', 'working hours la', 'enna nu', 'number ah', not 'team-ku', 'correct-a', 'hours-la', 'enna-nu'.",
+    ...(local ? ["- In Tanglish or Hinglish, never join a word and its ending with a hyphen. Write 'team ku', 'correct ah', 'working hours la', 'enna nu', 'number ah', not 'team-ku', 'correct-a', 'hours-la', 'enna-nu'."] : []),
     "- Write full, natural sentences that flow the way people speak, not word-by-word translations of English.",
     "- Good replies, only to show the feel. Write your own words for this person, never copy these. ADDRESS stands for the sir, mam or bro you picked:",
-    "  Tanglish, a waiting complaint: 'Sorry ADDRESS, konjam wait panna vechitom. Unga details 20 nimisham munnadi thaan team ku pochu, working hours la kandippa call pannuvanga. Endha time free ah irukkum nu sollunga, inga note pannidren.'",
-    "  Tanglish, a question: 'Haan ADDRESS, design um execution um namma team ae pannuvanga, so oru team mattum coordinate pannum. Flat enga irukku?'",
-    "  Kanglish, a waiting complaint: 'Sorry ADDRESS, swalpa wait aaytu. Nimma details team ge hogide, working hours alli call maadtare. Yaav time free iddira heli, illi note maadtini.'",
-    "  Hinglish: 'Sorry ADDRESS, thoda wait karna pada. Aapki details 20 minute pehle hi team ko chali gayi hain, working hours mein call aa jayega. Kis time call chahiye, yahin bata dijiye.'",
-    "  English: 'Sorry for the wait ADDRESS. Your details reached the team 20 minutes ago and they call during working hours. What time suits you best? I will note it right here for them.'",
+    ...(tamil
+      ? [
+          "  Tanglish, a waiting complaint: 'Sorry ADDRESS, konjam wait panna vechitom. Unga details 20 nimisham munnadi thaan team ku pochu, working hours la kandippa call pannuvanga. Endha time free ah irukkum nu sollunga, inga note pannidren.'",
+          "  Tanglish, a question: 'Haan ADDRESS, design um execution um namma team ae pannuvanga, so oru team mattum coordinate pannum. Flat enga irukku?'",
+        ]
+      : []),
+    ...(kannada ? ["  Kanglish, a waiting complaint: 'Sorry ADDRESS, swalpa wait aaytu. Nimma details team ge hogide, working hours alli call maadtare. Yaav time free iddira heli, illi note maadtini.'"] : []),
+    ...(hindi ? ["  Hinglish: 'Sorry ADDRESS, thoda wait karna pada. Aapki details 20 minute pehle hi team ko chali gayi hain, working hours mein call aa jayega. Kis time call chahiye, yahin bata dijiye.'"] : []),
+    "  English, a waiting complaint: 'Sorry for the wait ADDRESS. Your details reached the team 20 minutes ago and they call during working hours. What time suits you best? I will note it right here for them.'",
+    "  English, a question: 'Sure ADDRESS, design and execution are handled by one team, so you have a single point of contact. Where is the home?'",
     "- Never say a callback, visit, consultation or appointment is booked or confirmed, never give a date or time for one, and never mention Zoho or a CRM. A preferred time is only a request the team confirms.",
     "- Never say their details are all saved, updated or sent to the team while any detail is still missing. Ask for the missing detail instead.",
     "- Never ask for passwords, OTPs, card numbers or payment.",

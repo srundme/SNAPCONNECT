@@ -4,6 +4,7 @@ import {
   deterministicIntent,
   requestsTeamSwitch,
   customerComplaint,
+  dropIndicSentences,
   duplicateCheckFields,
   evaluateQualification,
   nextReplyPrompt,
@@ -1441,6 +1442,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           minutesSinceSent: firstSync ? (runtime.now().getTime() - firstSync.updatedAt.getTime()) / 60_000 : null,
           memoryLines: wrongNumberLine ? [...memoryLines, wrongNumberLine] : memoryLines,
           languageLine,
+          chatLanguage: languageSample ? languageName(languageSample) : null,
           activePost: context.active || null,
           otherPosts: context.catalog || null,
           personName: recordedName,
@@ -1652,7 +1654,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : validated.reply ?? fallback;
     const firstWhatsAppReply = conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI");
     const earlierReplies = conversation.messages.filter((message) => message.author === "AI").map((message) => message.body);
-    const humanized = composed ? applyReplySwitches(oneAddress(dropCannedLines(humanizeReply(composed))), agent) || null : composed;
+    const inLanguage = composed && !languageSample ? dropIndicSentences(composed) || fallback : composed;
+    const humanized = inLanguage ? applyReplySwitches(oneAddress(dropCannedLines(humanizeReply(inLanguage))), agent) || null : inLanguage;
     const written = humanized && firstWhatsAppReply
       ? withAutomationDisclosure(humanized, workspace.brandName, workspace.agentName)
       : humanized;
