@@ -44,6 +44,7 @@ import {
   surfaceSupport,
   validateAiOutput,
   wrongPhoneIn,
+  validPhonesIn,
   dedupKey,
   type Channel,
   type ConnectionMode,
@@ -846,12 +847,22 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       });
     }
     const editedTo = typeof payload.editedTo === "string" ? payload.editedTo : null;
+    if (editedTo && recordedPhone) {
+      const typedPhones = conversation.messages
+        .filter((message) => message.author === "PROSPECT")
+        .flatMap((message) => validPhonesIn(message.body, runtime.phoneRegion));
+      if (!typedPhones.includes(recordedPhone)) {
+        recordedPhone = null;
+        await db.lead.update({ where: { id: lead.id }, data: { phoneE164: null } });
+      }
+    }
+    const wrongInEdit = editedTo ? wrongPhoneIn(editedTo, runtime.phoneRegion) : null;
     if (editedTo && lastSpoken?.author === "AI") {
       const detailsChanged = recordedName !== conversation.contact.chosenName
         || recordedPhone !== lead.phoneE164
         || JSON.stringify(recordedAnswers) !== JSON.stringify(answerRecord(lead.answers))
         || Boolean(form?.callbackTime && form.callbackTime !== lead.timeframeRaw);
-      if (!detailsChanged) {
+      if (!detailsChanged && !wrongInEdit) {
         await db.aiRun.create({
           data: {
             workspaceId: workspace.id,
@@ -891,11 +902,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? questions.find((question) => complete.missing.includes(question.label))
       : undefined;
     const phoneQuestion = questions.find((question) => question.kind === "phone");
-    const wrongNumber = phoneQuestion && !recordedPhone && !complete?.cold
-      ? wrongPhoneIn(latestProspect, runtime.phoneRegion, nextDetail?.kind === "phone" ? 6 : 8)
+    const wrongNumber = phoneQuestion && !complete?.cold
+      ? wrongInEdit ?? wrongPhoneIn(latestProspect, runtime.phoneRegion, nextDetail?.kind === "phone" ? 6 : 8)
       : null;
     const wrongNumberLine = wrongNumber
-      ? `They typed ${wrongNumber} as their number, but that is not a valid mobile number (an Indian mobile number has 10 digits). Do not say it is noted and do not repeat it. Politely say the number looks incorrect and ask them to type their correct mobile number again. Do not ask any other question.`
+      ? `They typed ${wrongNumber} as their number, but that is not a valid mobile number (an Indian mobile number has 10 digits). Do not say it is noted, saved or updated, and do not repeat it. Politely say the number looks incorrect and ask them to type their correct mobile number again. Do not ask any other question.`
       : null;
     const safety = questions.length
       ? [
@@ -1148,7 +1159,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? validated.reply.split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?")).join(" ").trim()
       : "";
     const echoesWrongNumber = Boolean(wrongNumber && validated.reply && validated.reply.replace(/\D/g, "").includes(wrongNumber));
-    const composed = wrongNumber && phoneQuestion && !updatedLead.phoneE164 && (!validated.reply || echoesWrongNumber || !replyAsksFor(phoneQuestion, validated.reply))
+    const composed = wrongNumber && phoneQuestion && (!validated.reply || echoesWrongNumber || !replyAsksFor(phoneQuestion, validated.reply))
       ? `Sorry, that number does not look right. ${scriptQuestionFor(phoneQuestion, languageSample ? languageName(languageSample) : null)}`
       : pending && validated.reply
       ? replyAsksFor(pending, validated.reply) || asksSomething(validated.reply) || validated.reply.length >= 60

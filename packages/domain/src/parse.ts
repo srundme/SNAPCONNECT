@@ -68,13 +68,24 @@ export function parsePhone(text: string | null | undefined, defaultRegion = "IN"
   return { kind: "valid", e164: parsed.number, raw };
 }
 
-export function wrongPhoneIn(text: string, defaultRegion = "IN", minDigits = 6): string | null {
-  const runs = (text.match(/\+?\d[\d\s().-]{4,}\d/g) ?? [])
+function digitRuns(text: string, minDigits: number): string[] {
+  return (text.match(/\+?\d[\d\s().-]{4,}\d/g) ?? [])
     .map((run) => run.trim())
     .filter((run) => run.replace(/\D/g, "").length >= minDigits);
+}
+
+export function wrongPhoneIn(text: string, defaultRegion = "IN", minDigits = 6): string | null {
+  const runs = digitRuns(text, minDigits);
   if (!runs.length) return null;
   if (runs.some((run) => parsePhone(run, defaultRegion).kind === "valid")) return null;
   return runs[0].replace(/\D/g, "");
+}
+
+export function validPhonesIn(text: string, defaultRegion = "IN"): string[] {
+  return digitRuns(text, 6).flatMap((run) => {
+    const parsed = parsePhone(run, defaultRegion);
+    return parsed.kind === "valid" ? [parsed.e164] : [];
+  });
 }
 
 export function mentionsPermission(text: string, channel: "phone" | "whatsapp"): boolean {

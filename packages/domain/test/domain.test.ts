@@ -4,6 +4,7 @@ import {
   asksSomething,
   cleanName,
   wrongPhoneIn,
+  validPhonesIn,
   nameInReply,
   asksForName,
   mentionsOwnName,
@@ -153,6 +154,9 @@ describe("budgets and phones", () => {
     expect(wrongPhoneIn("The karighars")).toBeNull();
     expect(wrongPhoneIn("around 100000 calls", "IN", 8)).toBeNull();
     expect(wrongPhoneIn("company Karighars, number 968989889989889", "IN", 8)).toBe("968989889989889");
+    expect(wrongPhoneIn("Yes, update my number 890488747793", "IN", 8)).toBe("890488747793");
+    expect(validPhonesIn("8904887300")).toEqual(["+918904887300"]);
+    expect(validPhonesIn("8904887300899")).toEqual([]);
   });
 });
 
