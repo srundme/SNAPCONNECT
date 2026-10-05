@@ -57,7 +57,7 @@ export function replyEligibility(input: {
   return { allowed: true, reason: null };
 }
 
-const AUTOMATION_DISCLOSURE = /automated|virtual assistant|\bbot\b|not a (real )?person/i;
+const AUTOMATION_DISCLOSURE = /automated|virtual assistant|\bAI assistant\b|\bbot\b|not a (real )?person/i;
 const PLATFORM_REPLY = /zoho|appointment|i'?ve booked|i have booked|callback is confirmed|crm record|₹\s*\d|\brs\.?\s*\d|\bi(?:'m| am) (?:a )?(?:real )?(?:human|person)\b|\bnot (?:a |an )?(?:bot|automated)\b|\b(?:password|one[- ]time (?:password|code)|otp|cvv|card number|upi pin)\b|\b(?:bitcoin|crypto|wire transfer)\b/i;
 
 export function disclosesAutomation(text: string): boolean {

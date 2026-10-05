@@ -63,16 +63,16 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
       ) : null}
       {params.error ? <Notice tone="stop">{params.error}</Notice> : null}
       {conversations.length === 0 ? <Empty title="No conversations" body="A matching comment shows up here after the worker processes it." /> : (
-        <div className="grid h-[calc(100dvh-7.5rem)] min-h-[560px] overflow-hidden rounded-2xl bg-white shadow-[0_1px_0_rgba(20,23,28,0.06)] lg:grid-cols-[280px_minmax(0,1fr)_260px]">
+        <div className="grid h-[calc(100dvh-7.5rem)] min-h-[560px] overflow-hidden rounded-2xl bg-white shadow-[0_1px_0_rgba(20,23,28,0.06)] lg:grid-cols-[300px_minmax(0,1fr)_260px]">
           <div className="min-h-0 overflow-y-auto border-b border-[var(--color-line)] lg:border-b-0 lg:border-r">
-            <div className="flex gap-1 border-b border-[var(--color-line)] p-3">
+            <div className="flex flex-wrap gap-1 border-b border-[var(--color-line)] p-3">
               {[
                 ["/inbox", "All", !channel],
                 ["/inbox?channel=INSTAGRAM", "Instagram", channel === "INSTAGRAM"],
                 ["/inbox?channel=FACEBOOK", "Facebook", channel === "FACEBOOK"],
                 ["/inbox?channel=WHATSAPP", "WhatsApp", channel === "WHATSAPP"],
               ].map(([href, label, active]) => (
-                <Link key={String(href)} href={String(href)} className={clsx("rounded-full px-3 py-1 text-[13px] font-semibold", active ? "bg-[var(--color-ink)] text-white" : "text-[var(--color-muted)] hover:bg-[var(--color-paper)]")}>{label}</Link>
+                <Link key={String(href)} href={String(href)} className={clsx("shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-[13px] font-semibold", active ? "bg-[var(--color-ink)] text-white" : "text-[var(--color-muted)] hover:bg-[var(--color-paper)]")}>{label}</Link>
               ))}
             </div>
             <ul>
