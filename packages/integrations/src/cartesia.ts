@@ -81,8 +81,11 @@ function spokenPhone(digits: string): string {
   return national.length === 10 ? `<spell>${national.slice(0, 5)} ${national.slice(5)}</spell>` : `<spell>${national}</spell>`;
 }
 
+const LAUGH = /\b(?:(?:ha|ah)(?:\s*(?:ha|ah))+h?|he(?:\s*he)+|hihi+|lol+|lmao+|rofl)\b[!.]*/gi;
+
 function cleanSpeech(text: string): string {
   const script = text
+    .replace(LAUGH, "\u0002")
     .replace(/https?:\/\/\S+/g, "the link")
     .replace(/<[^>]*>/g, "")
     .replace(/[*_#`~<>]+/g, "")
@@ -90,9 +93,11 @@ function cleanSpeech(text: string): string {
     .replace(/\[[^\]]*\]/g, "")
     .replace(/(?<![\d<])\+?(?:91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}(?!\d)/g, (match) => spokenPhone(match.replace(/\D/g, "")))
     .replace(/\s*\n+\s*/g, " ")
+    .replace(/\u0002(?:[\s,]*\u0002)*/g, "[laughter]")
+    .replace(/\[laughter\]\s*,\s*/g, "[laughter] ")
     .replace(/\s{2,}/g, " ")
     .trim();
-  return !script || /[.!?।]$/.test(script) ? script : `${script}.`;
+  return !script || /[.!?।\]]$/.test(script) ? script : `${script}.`;
 }
 
 /** The sentences Sonic will speak; the director gives each one an emotion. */
@@ -126,7 +131,7 @@ export function speechScript(text: string, direction: VoiceDirection = neutralDi
     .join(" ");
 }
 
-const INTERJECTION = /^(ha+|he+y|hi+|hello|oh+|ah+|aww+|wow|hmm+|ok(ay)?|super|great|nice|sure|sorry|thanks?|thank you|yes|no|wah|arey?|aiyo|ayyo|seri|sari|achha?|vanakkam|namaste)\b/i;
+const INTERJECTION = /^(?:\[laughter\]|(ha+|he+y|hi+|hello|oh+|ah+|aww+|wow|hmm+|ok(ay)?|super|great|nice|sure|sorry|thanks?|thank you|yes|no|wah|arey?|aiyo|ayyo|seri|sari|achha?|vanakkam|namaste)\b)/i;
 
 export function cartesiaSpeaker(options: { apiKey: string; voiceId: string; model?: string; fetchImpl?: FetchLike }): Speaker {
   const fetchImpl = options.fetchImpl ?? fetch;

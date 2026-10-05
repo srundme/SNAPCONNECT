@@ -250,6 +250,11 @@ describe("voice replies", () => {
       .toBe("Got it we will call you on <spell>98450 12345</spell>.");
     expect(speechScript("[laughter] Good one! So is it for your home?", { emotions: [], speed: 1.1, opener: "" }))
       .toBe("Good one! So is it for your home?");
+    expect(speechScript("Haha sir, good one. So is it for your home?", { emotions: [], speed: 1, opener: "Oh," }))
+      .toBe("[laughter] sir, good one. So is it for your home?");
+    expect(speechScript("7000 sir? ha ha ha i think you meant 70", { emotions: [], speed: 1, opener: "" }))
+      .toBe("7000 sir? [laughter] i think you meant 70.");
+    expect(speechScript("lol ok sir", { emotions: [], speed: 1, opener: "" })).toBe("[laughter] ok sir.");
     expect(speechScript("That is a big space. What is the budget?", { emotions: [], speed: 1, opener: "Oh," }))
       .toBe("Oh, that is a big space. What is the budget?");
     expect(speechScript("Super sir! Budget evlo?", { emotions: [], speed: 1, opener: "Ah," }))
