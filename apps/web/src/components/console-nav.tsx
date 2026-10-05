@@ -11,6 +11,7 @@ import {
   Plug,
   ScrollText,
   Shield,
+  ShieldCheck,
   SquarePen,
   Users,
   UsersRound,
@@ -39,6 +40,7 @@ const groups = [
   {
     label: "System",
     items: [
+      ["/compliance", "Compliance", ShieldCheck],
       ["/audit", "Audit", ScrollText],
       ["/health", "Health", Activity],
     ],
