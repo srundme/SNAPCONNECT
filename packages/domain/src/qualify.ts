@@ -569,8 +569,12 @@ function directAnswer(question: LeadQuestion, text: string, plain: boolean, regi
   return text.length <= 120 ? text : null;
 }
 
+const ASKING = /\b(sollunga|solunga|sollungal|sollu|chollu|cheppandi|heli|share|type|kudunga|podunga|pannunga|bataiye|bataye|batayiye|batao|bata dijiye|bataiyega|likhiye|bhejiye|tell me|let me know|please share|could you|can you|may i)\b/i;
+
 function askedAbout(question: LeadQuestion, aiText: string): boolean {
-  const ask = aiText.split(/(?<=[.!])\s+/).filter((part) => part.includes("?")).join(" ").toLowerCase();
+  const sentences = aiText.split(/(?<=[.!?])\s+/).map((part) => part.trim()).filter(Boolean);
+  const requests = sentences.filter((part) => part.includes("?") || ASKING.test(part));
+  const ask = (requests.length ? requests : sentences.slice(-1)).join(" ").toLowerCase();
   if (!ask) return false;
   if (question.kind === "name") return /\b(name|peru|naam)\b/.test(ask) && !/company|business|brand|organi[sz]ation/.test(ask);
   if (question.kind === "phone") return /\b(number|phone|mobile|no\.)\b/.test(ask) && !/\b(permission|use panna|mind)\b/.test(ask);

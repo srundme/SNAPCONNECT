@@ -137,6 +137,7 @@ export function salesBriefing(input: SalesBriefingInput): string {
     "  Hinglish: 'Sorry ADDRESS, thoda wait karna pada. Aapki details 20 minute pehle hi team ko chali gayi hain, working hours mein call aa jayega. Kis time call chahiye, yahin bata dijiye.'",
     "  English: 'Sorry for the wait ADDRESS. Your details reached the team 20 minutes ago and they call during working hours. What time suits you best? I will note it right here for them.'",
     "- Do not say a demo is booked, give a date or time, mention Zoho or a CRM, or talk about budgets, fees or surveys.",
+    "- Never say their details are all saved, updated or sent to the team while any detail is still missing. Ask for the missing detail instead.",
     "- Never ask for passwords, OTPs, card numbers or payment.",
     "- If a message says it is a voice message that could not be understood, ask them to type it in one short line.",
     "",

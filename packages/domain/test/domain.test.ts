@@ -815,3 +815,38 @@ describe("name capture", () => {
     expect(mentionsOwnName("2000 calls a month")).toBe(false);
   });
 });
+
+describe("Tanglish asks without a question mark", () => {
+  const questions = [
+    { id: "person-name", label: "Person name", kind: "name" as const, zohoField: "Last_Name" },
+    { id: "company-name", label: "Company name", kind: "text" as const, zohoField: "Company" },
+    { id: "contact-number", label: "Contact number", kind: "phone" as const, zohoField: "Phone" },
+    { id: "issue", label: "What is the issue, or why do you think AI calling may help?", kind: "text" as const, zohoField: null },
+  ];
+
+  it("records the name, company and issue from the live chat", () => {
+    const absorbed = absorbTranscript({
+      questions,
+      messages: [
+        { author: "AI", body: "Super sir, unga team ku follow up miss aagama paathukalam. Demo arrange panna, unga peru enna nu sollunga." },
+        { author: "PROSPECT", body: "Kishore" },
+        { author: "AI", body: "Okay Kishore sir. Unga company peru enna nu sollunga, demo setup panna easy ah irukum." },
+        { author: "PROSPECT", body: "Sinking" },
+        { author: "AI", body: "Noted sir, 2 pm inga note panniten. Inga oru last detail, unga business la enna issue iruku, illa AI calling yen use pannanum nu yosichirukeenga nu sollunga sir." },
+        { author: "PROSPECT", body: "I want to explore that’s it" },
+      ],
+      name: null,
+      phoneE164: null,
+      answers: {},
+    });
+    expect(absorbed.name).toBe("Kishore");
+    expect(absorbed.answers["company-name"]).toBe("Sinking");
+    expect(absorbed.answers.issue).toBe("I want to explore that's it");
+  });
+
+  it("detects a Tanglish or Hinglish name request", () => {
+    expect(asksForName("Demo arrange panna, unga peru enna nu sollunga.")).toBe(true);
+    expect(asksForName("Apna naam bata dijiye sir.")).toBe(true);
+    expect(asksForName("Unga company peru enna nu sollunga.")).toBe(false);
+  });
+});

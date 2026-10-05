@@ -1386,16 +1386,24 @@ async function applyCustomAnswers(db: Db, leadId: string, answers: Array<{ id: s
 }
 
 async function latestName(runtime: Runtime, messages: { author: string; body: string }[], current: string | null): Promise<string | null> {
-  const lastAi = messages.reduce((found, message, index) => (message.author === "AI" ? index : found), -1);
-  const reply = messages
-    .slice(lastAi + 1)
-    .filter((message) => message.author === "PROSPECT" && message.body.trim())
-    .map((message) => message.body.trim())
-    .join(". ");
-  if (!reply || lastAi < 0) return current;
-  const question = messages[lastAi]!.body;
+  const turns: { question: string; reply: string }[] = [];
+  for (const message of messages) {
+    const body = message.body.trim();
+    if (message.author === "AI") turns.push({ question: body, reply: "" });
+    else if (message.author === "PROSPECT" && body && turns.length) {
+      const turn = turns[turns.length - 1]!;
+      turn.reply = turn.reply ? `${turn.reply}. ${body}` : body;
+    }
+  }
+  const answered = turns.filter((turn) => turn.reply);
+  const latest = answered[answered.length - 1];
+  if (!latest) return current;
+  const pick = current
+    ? (latest === turns[turns.length - 1] && mentionsOwnName(latest.reply) ? latest : null)
+    : [...answered].reverse().find((turn) => asksForName(turn.question) || mentionsOwnName(turn.reply));
+  if (!pick) return current;
+  const { question, reply } = pick;
   const asked = asksForName(question);
-  if (current ? !mentionsOwnName(reply) : !asked && !mentionsOwnName(reply)) return current;
   try {
     return cleanName(await runtime.llm.readName!(question, reply), reply) ?? current;
   } catch (error) {
