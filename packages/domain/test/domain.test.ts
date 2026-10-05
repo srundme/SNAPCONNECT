@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   acceptExtractedAnswers,
+  nameConcern,
+  nameFitsProfile,
+  publicFigure,
   asksSomething,
   cleanName,
   wrongPhoneIn,
@@ -968,5 +971,27 @@ describe("lead form read by the model", () => {
     expect(asksSomething("Number ah inga type pannunga.")).toBe(true);
     expect(asksSomething("Apna naam bata dijiye sir.")).toBe(true);
     expect(asksSomething("Super sir, noted.")).toBe(false);
+  });
+});
+
+describe("name sanity", () => {
+  it("flags a famous name as a likely joke", () => {
+    expect(nameConcern("Kumar Vembu", ["Karthikeyan", "karthikeyansru"])).toEqual({ kind: "public_figure", name: "Kumar Vembu", who: "the Zoho co-founder" });
+    expect(publicFigure("I am Elon Musk")).toBe("the Tesla CEO");
+    expect(publicFigure("Kumar")).toBeNull();
+  });
+
+  it("accepts nicknames, partial names and small transcription slips", () => {
+    expect(nameFitsProfile("Karthik", ["Karthikeyan", "karthikeyansru"])).toBe(true);
+    expect(nameFitsProfile("Gopi", ["gopi.talks"])).toBe(true);
+    expect(nameFitsProfile("Karthikeyan R", ["karthik_r"])).toBe(true);
+    expect(nameFitsProfile("Jumar", ["Kumar S"])).toBe(true);
+    expect(nameFitsProfile("Priya", [null, ""])).toBeNull();
+  });
+
+  it("asks once when the name clearly differs from the profile", () => {
+    expect(nameConcern("Ramesh", ["Karthikeyan", "karthikeyansru"])).toEqual({ kind: "profile_mismatch", name: "Ramesh", profile: "Karthikeyan / karthikeyansru" });
+    expect(nameConcern("Karthik", ["Karthikeyan"])).toBeNull();
+    expect(nameConcern(null, ["Karthikeyan"])).toBeNull();
   });
 });

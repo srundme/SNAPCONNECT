@@ -52,6 +52,7 @@ import {
   type LeadSnapshot,
   type ReplyPromptField,
   type NormalizedEvent,
+  nameConcern,
 } from "@snapsocial/domain";
 import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, neutralDirection, speechLocale, speechScript, speechSentences, zohoAdapter, ZohoOAuthError, type LlmProvider, type SendResult, type Speaker, type VoiceDirection, type ZohoAdapter } from "@snapsocial/integrations";
 import { randomBytes } from "node:crypto";
@@ -626,6 +627,17 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
   await touchConnection(db, connection.id, connection.mode, "message", runtime.now());
 }
 
+const CONCERN = /\?|\b(why|how|what|when|who|enna|epdi|eppadi|eppo|yen|kyun|kya|kaise|kab|nobody called|no one called|not called|didn'?t call|already (told|gave|said|shared|sent)|i told you|told you|wait|problem|issue|worst|waste|angry|irritat\w*|confus\w*|not happy|disappoint\w*)\b/i;
+
+/** The customer asked something or raised a concern, so the reply should not be pushed into the next lead question. */
+function raisesConcern(text: string): boolean {
+  return CONCERN.test(text);
+}
+
+function channelLabel(channel: Channel): string {
+  return channel === "WHATSAPP" ? "WhatsApp" : channel === "FACEBOOK" ? "Facebook" : "Instagram";
+}
+
 async function voiceClip(
   db: Db,
   runtime: Runtime,
@@ -949,6 +961,31 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         },
       });
     }
+    const concern = nameConcern(recordedName, [conversation.contact.displayName, conversation.contact.username]);
+    if (concern) {
+      const marker = `Name check: "${concern.name}"`;
+      const flagged = await db.message.findFirst({
+        where: { conversationId, author: "SYSTEM", body: { startsWith: marker } },
+        select: { id: true },
+      });
+      if (!flagged) {
+        await db.message.create({
+          data: {
+            workspaceId: workspace.id,
+            connectionId: conversation.connectionId,
+            conversationId,
+            author: "SYSTEM",
+            body: concern.kind === "public_figure"
+              ? `${marker} is the name of ${concern.who}. Self-reported, not verified.`
+              : `${marker} does not match their ${channelLabel(conversation.channel)} profile name (${concern.profile}). Self-reported, not verified.`,
+            createdAt: runtime.now(),
+          },
+        });
+        memoryLines.push(concern.kind === "public_figure"
+          ? `They said their name is "${concern.name}", which is the name of ${concern.who}. It is most likely a joke or a test. Do not treat them as that person or get excited about it. In a friendly, light way, ask for their own name, then continue.`
+          : `They said their name is "${concern.name}", but their ${channelLabel(conversation.channel)} profile name is "${concern.profile}". That is often a nickname or someone enquiring for a boss, friend or family member, so never accuse them or mention checking their profile. In this reply, ask once, lightly, whether they are ${concern.name} themselves or messaging on their behalf, then continue. Accept whatever they answer.`);
+      }
+    }
     const editedTo = typeof payload.editedTo === "string" ? payload.editedTo : null;
     if (editedTo && recordedPhone) {
       const typedPhones = conversation.messages
@@ -1049,6 +1086,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const briefing = questions.length
       ? salesBriefing({
           address,
+          channel: conversation.channel,
           brandName: workspace.brandName,
           agentName: workspace.agentName,
           services: workspace.services,
@@ -1265,7 +1303,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const composed = wrongNumber && phoneQuestion && (!validated.reply || echoesWrongNumber || !replyAsksFor(phoneQuestion, validated.reply))
       ? `Sorry, that number does not look right. ${scriptQuestionFor(phoneQuestion, languageSample ? languageName(languageSample) : null)}`
       : pending && validated.reply
-      ? replyAsksFor(pending, validated.reply) || asksSomething(validated.reply) || validated.reply.length >= 60
+      ? replyAsksFor(pending, validated.reply) || asksSomething(validated.reply) || validated.reply.length >= 60 || raisesConcern(latestUser)
         ? validated.reply
         : [statement, scriptQuestionFor(pending, languageSample ? languageName(languageSample) : null)].filter(Boolean).join(" ")
       : validated.reply ?? fallback;
@@ -1451,7 +1489,16 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
       phoneE164: lead.phoneE164,
     });
     Object.assign(record, placed.fields);
-    const lines = [...placed.lines, ...(lead.timeframeRaw ? [`Preferred call time: ${lead.timeframeRaw}`] : [])];
+    const concern = nameConcern(lead.contact.chosenName, [lead.contact.displayName, lead.contact.username]);
+    const lines = [
+      ...placed.lines,
+      ...(lead.timeframeRaw ? [`Preferred call time: ${lead.timeframeRaw}`] : []),
+      ...(concern
+        ? [concern.kind === "public_figure"
+            ? `Name check: "${concern.name}" is the name of ${concern.who}. Self-reported, please confirm on the call.`
+            : `Name check: "${concern.name}" differs from the ${channelLabel(lead.channel)} profile (${concern.profile}). Self-reported, please confirm on the call.`]
+        : []),
+    ];
     if (lines.length) record.Description = [record.Description, ...lines].filter(Boolean).join("\n");
     if (mapping.externalKeyField) record[mapping.externalKeyField] = lead.id;
   }
