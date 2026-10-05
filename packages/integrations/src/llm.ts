@@ -1,5 +1,5 @@
 import { aiOutputSchema, CALLBACK_TIME_KEY, parseBudget, type AiOutput } from "@snapsocial/domain";
-import { neutralDirection, VOICE_EMOTIONS, VOICE_OPENERS, type VoiceDirection } from "./cartesia";
+import { VOICE_EMOTIONS, VOICE_OPENERS, type VoiceDirection } from "./cartesia";
 
 export type LlmRequest = {
   system: string;
@@ -51,17 +51,19 @@ export type LlmProvider = {
     questions: Array<{ id: string; label: string; kind: string; numeric: boolean }>;
     transcript: Array<{ author: string; body: string }>;
   }): Promise<Record<string, unknown>>;
-  directVoice?(input: { customer: string; reply: string; earlier: string }): Promise<VoiceDirection>;
+  directVoice?(input: { customer: string; sentences: string[]; earlier: string }): Promise<VoiceDirection>;
   health(): Promise<{ ok: boolean; detail: string; gpu: boolean | null }>;
 };
 
-export function readVoiceDirection(value: unknown): VoiceDirection {
+export function readVoiceDirection(value: unknown, sentenceCount: number): VoiceDirection {
   const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  const emotion = VOICE_EMOTIONS.find((item) => item === String(raw.emotion ?? "").toLowerCase()) ?? neutralDirection.emotion;
+  const listed: unknown[] = Array.isArray(raw.emotions) ? raw.emotions : raw.emotion !== undefined ? [raw.emotion] : [];
+  const picked = listed.slice(0, sentenceCount).map((item) => VOICE_EMOTIONS.find((emotion) => emotion === String(item ?? "").trim().toLowerCase()) ?? "content");
+  const emotions = Array.from({ length: sentenceCount }, (_, index) => picked[Math.min(index, picked.length - 1)] ?? "content");
   const opener = VOICE_OPENERS.find((item) => item.toLowerCase() === String(raw.opener ?? "").trim().toLowerCase()) ?? "";
   const speed = Number(raw.speed);
   return {
-    emotion,
+    emotions,
     speed: Number.isFinite(speed) ? Math.min(1.15, Math.max(0.85, speed)) : 1,
     opener,
   };
@@ -357,7 +359,7 @@ export function sarvamLlm(options: {
       const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
       return (body.choices?.[0]?.message?.content ?? "").trim().slice(0, 2000);
     },
-    async directVoice({ customer, reply, earlier }) {
+    async directVoice({ customer, sentences, earlier }) {
       const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", "api-subscription-key": options.apiKey },
@@ -370,17 +372,17 @@ export function sarvamLlm(options: {
               role: "system",
               content: [
                 "You direct the voice actor who speaks a friendly Indian sales assistant's reply as a voice note.",
-                "Read the customer's last message and the assistant's reply, then choose how the reply should sound.",
+                "Read the customer's last message and the assistant's reply, which is split into numbered sentences, then choose how each sentence should sound.",
                 "The chat can be English, Tamil, Hindi, Tanglish, Hinglish or mixed.",
-                `emotion: one of ${VOICE_EMOTIONS.join(", ")}. Match the reply: thanks = grateful, sorry or a problem = apologetic or sympathetic, good news = happy or excited, a question = curious, details = calm or confident.`,
+                `emotions: a list with exactly one emotion per sentence, in order, each one of ${VOICE_EMOTIONS.join(", ")}. Match each sentence's words: thanks = grateful, sorry or a problem = apologetic or sympathetic, good news = happy or excited, a question = curious, details = calm or confident. Keep the same emotion for neighbouring sentences unless the feeling clearly changes.`,
                 "speed: 0.9 for careful details like numbers or times, 1.0 normally, 1.1 for short cheerful replies.",
                 `opener: one of ${VOICE_OPENERS.filter(Boolean).map((item) => `"${item}"`).join(", ")} or "" for none. Use one only for real surprise ("Oh,", "Wow,") or sympathy ("Aww,"), never on a plain question or answer. Most replies use "".`,
-                'Return only JSON like {"emotion":"content","speed":1.0,"opener":""}.',
+                'Return only JSON like {"emotions":["apologetic","curious"],"speed":1.0,"opener":""}.',
               ].join("\n"),
             },
             {
               role: "user",
-              content: `Earlier chat:\n${earlier.slice(-1200) || "none"}\n\nCustomer's last message: ${customer.slice(0, 500)}\nAssistant's reply: ${reply.slice(0, 800)}`.normalize("NFKC"),
+              content: `Earlier chat:\n${earlier.slice(-1200) || "none"}\n\nCustomer's last message: ${customer.slice(0, 500)}\nAssistant's reply:\n${sentences.slice(0, 12).map((sentence, index) => `${index + 1}. ${sentence.slice(0, 300)}`).join("\n")}`.normalize("NFKC"),
             },
           ],
         }),
@@ -391,7 +393,7 @@ export function sarvamLlm(options: {
       const content = (body.choices?.[0]?.message?.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "");
       const json = content.slice(content.indexOf("{"), content.lastIndexOf("}") + 1);
       if (!json) throw new Error("Sarvam returned no voice direction.");
-      return readVoiceDirection(JSON.parse(json) as unknown);
+      return readVoiceDirection(JSON.parse(json) as unknown, sentences.length);
     },
     async generate(request): Promise<LlmResponse> {
       const started = Date.now();

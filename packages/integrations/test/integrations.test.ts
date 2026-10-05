@@ -7,7 +7,7 @@ import { listInstagramPosts } from "../src/meta-media";
 import { assertPrivateOllamaUrl, readVoiceDirection, sarvamLlm, sarvamTranscriber } from "../src/llm";
 import { zohoAdapter } from "../src/zoho";
 import { checkWhatsAppNumber, subscribeWhatsAppAccount, whatsappAdapter } from "../src/whatsapp";
-import { cartesiaSpeaker, speechLocale, speechScript } from "../src/cartesia";
+import { cartesiaSpeaker, speechLocale, speechScript, speechSentences } from "../src/cartesia";
 
 describe("integration guards", () => {
   it("encrypts credentials with an external key", () => {
@@ -246,43 +246,56 @@ describe("voice replies", () => {
   });
 
   it("writes the spoken script with openers and spelled phone numbers", () => {
-    expect(speechScript("Got it 😄 we will call you on +919845012345", { emotion: "happy", speed: 1, opener: "" }))
+    expect(speechScript("Got it 😄 we will call you on +919845012345", { emotions: [], speed: 1, opener: "" }))
       .toBe("Got it we will call you on <spell>98450 12345</spell>.");
-    expect(speechScript("[laughter] Good one! So is it for your home?", { emotion: "happy", speed: 1.1, opener: "" }))
+    expect(speechScript("[laughter] Good one! So is it for your home?", { emotions: [], speed: 1.1, opener: "" }))
       .toBe("Good one! So is it for your home?");
-    expect(speechScript("That is a big space. What is the budget?", { emotion: "surprised", speed: 1, opener: "Oh," }))
+    expect(speechScript("That is a big space. What is the budget?", { emotions: [], speed: 1, opener: "Oh," }))
       .toBe("Oh, that is a big space. What is the budget?");
-    expect(speechScript("Super sir! Budget evlo?", { emotion: "curious", speed: 1, opener: "Ah," }))
+    expect(speechScript("Super sir! Budget evlo?", { emotions: [], speed: 1, opener: "Ah," }))
       .toBe("Super sir! Budget evlo?");
-    expect(speechScript("**Details** here: https://x.test/a\nThanks", { emotion: "calm", speed: 1, opener: "" }))
+    expect(speechScript("**Details** here: https://x.test/a\nThanks", { emotions: [], speed: 1, opener: "" }))
       .toBe("Details here: the link Thanks.");
   });
 
-  it("reads a voice direction safely", () => {
-    expect(readVoiceDirection({ laugh: true, emotion: "Happy", speed: 3, opener: "oh," })).toEqual({ emotion: "happy", speed: 1.15, opener: "Oh," });
-    expect(readVoiceDirection({ emotion: "furious", opener: "Yo" })).toEqual({ emotion: "content", speed: 1, opener: "" });
+  it("tags each sentence's emotion inline, only where it changes and only in English", () => {
+    const reply = "Sorry for the slow reply. The demo is free! It takes ten minutes. What time suits you?";
+    expect(speechSentences(reply)).toHaveLength(4);
+    const direction = { emotions: ["apologetic", "happy", "happy", "curious"] as const, speed: 1, opener: "" as const };
+    expect(speechScript(reply, { ...direction, emotions: [...direction.emotions] }, { emotionTags: true })).toBe(
+      '<emotion value="apologetic"/> Sorry for the slow reply. <emotion value="happy"/> The demo is free! It takes ten minutes. <emotion value="curious"/> What time suits you?',
+    );
+    expect(speechScript(reply, { ...direction, emotions: [...direction.emotions] }, { emotionTags: false })).toBe(reply);
+    expect(speechScript("<emotion value=\"angry\"/> Hi there", { emotions: ["calm"], speed: 1, opener: "" }, { emotionTags: true }))
+      .toBe('<emotion value="calm"/> Hi there.');
   });
 
-  it("asks Cartesia for speech with locale, emotion and speed", async () => {
+  it("reads a voice direction safely", () => {
+    expect(readVoiceDirection({ emotions: ["Happy", "furious"], speed: 3, opener: "oh," }, 3)).toEqual({ emotions: ["happy", "content", "content"], speed: 1.15, opener: "Oh," });
+    expect(readVoiceDirection({ emotion: "apologetic", opener: "Yo" }, 2)).toEqual({ emotions: ["apologetic", "apologetic"], speed: 1, opener: "" });
+    expect(readVoiceDirection({}, 1)).toEqual({ emotions: ["content"], speed: 1, opener: "" });
+  });
+
+  it("asks Cartesia for speech with locale and speed, with emotion only inline", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
     const fetchImpl = async (url: string, init: RequestInit) => {
       calls.push({ url, init });
       return new Response(new Uint8Array(400), { status: 200, headers: { "content-type": "audio/mpeg" } });
     };
     const speak = cartesiaSpeaker({ apiKey: "sk_test", voiceId: "voice-1", fetchImpl });
-    const speech = await speak({ transcript: "Hello.", locale: "en-IN", emotion: "happy", speed: 1.1, format: "mp3" });
+    const speech = await speak({ transcript: '<emotion value="happy"/> Hello.', locale: "en-IN", speed: 1.1, format: "mp3" });
     expect(speech.mimeType).toBe("audio/mpeg");
     expect(speech.audio.byteLength).toBe(400);
     expect(calls[0]!.url).toBe("https://api.cartesia.ai/tts/bytes");
     expect(new Headers(calls[0]!.init.headers).get("Authorization")).toBe("Bearer sk_test");
     expect(JSON.parse(String(calls[0]!.init.body))).toMatchObject({
-      transcript: "Hello.",
+      transcript: '<emotion value="happy"/> Hello.',
       voice: { id: "voice-1" },
       locale: "en-IN",
       output_format: { container: "mp3" },
-      generation_config: { emotion: "happy", speed: 1.1 },
+      generation_config: { speed: 1.1 },
     });
-    await speak({ transcript: "Budget evlo?", locale: "ta-IN", normalization: "en-IN", emotion: "curious", format: "wav" });
+    await speak({ transcript: "Budget evlo?", locale: "ta-IN", normalization: "en-IN", format: "wav" });
     const tamil = JSON.parse(String(calls[1]!.init.body)) as Record<string, unknown>;
     expect(tamil).toMatchObject({ locale: "ta-IN", normalization: "en-IN", output_format: { container: "wav" } });
     expect(tamil.generation_config).toBeUndefined();
