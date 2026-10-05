@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   acceptExtractedAnswers,
+  casualText,
+  humanBubbles,
+  plainWords,
+  readingMs,
+  typingMs,
   dropRepeatedSentences,
   phoneProblem,
   nameConcern,
@@ -1013,5 +1018,33 @@ describe("human reply style", () => {
       .toBe("Neenu voice message kalisidde, adu sariyaagi arthavagalilla.");
     expect(dropRepeatedSentences("Got it. Which number should the team call you on?", ["Which number should the team call you on, mam?"]))
       .toBe("Got it.");
+  });
+});
+
+describe("texting like a person", () => {
+  it("drops commas and full stops, uses short forms and joins short thoughts with dots", () => {
+    expect(casualText("Okay sir, please type your number. I'm waiting! Don't worry, it's safe."))
+      .toBe("ok sir pls type ur number...im waiting...dont worry its safe");
+    expect(casualText("Sure sir, 3:30 PM should be fine. Our agent handles 40,000 calls.")).toBe("sure sir 3:30 PM should be fine...our agent handles 40000 calls");
+    expect(casualText("Hi sir. SnapServe can help you?", ["SnapServe"])).toBe("hi sir...SnapServe can help u?");
+  });
+
+  it("swaps chatbot praise for plain words", () => {
+    expect(plainWords("Great sir! That's perfect. Absolutely, we can.")).toBe("ok sir! ok. sure, we can.");
+  });
+
+  it("sends a reply as one or two messages like a person would", () => {
+    expect(humanBubbles("Great sir! 25 is a good number. How many calls do you handle in a month?", []))
+      .toEqual(["ok sir", "25 is a good number...how many calls do u handle in a month?"]);
+    expect(humanBubbles("Sure sir, 3:30 PM should be fine.", [])).toEqual(["sure sir 3:30 PM should be fine"]);
+    expect(humanBubbles("Got it sir.\nWhich number should the team call you on?", ["got it sir...which number should the team call u on?"]))
+      .toEqual(["got it sir"]);
+  });
+
+  it("waits longer for longer messages", () => {
+    expect(readingMs("hi")).toBeLessThan(200);
+    expect(readingMs("x".repeat(400))).toBe(7000);
+    expect(typingMs("ok sir")).toBe(1200);
+    expect(typingMs("x".repeat(400))).toBe(5000);
   });
 });

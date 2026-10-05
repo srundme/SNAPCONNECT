@@ -635,7 +635,7 @@ function directAnswer(question: LeadQuestion, text: string, plain: boolean, regi
   return text.length <= 120 ? text : null;
 }
 
-const ASKING = /\b(sollunga|solunga|sollungal|sollu|chollu|cheppandi|heli|share|type|kudunga|podunga|pannunga|bataiye|bataye|batayiye|batao|bata dijiye|bataiyega|likhiye|bhejiye|tell me|let me know|please share|could you|can you|may i)\b/i;
+const ASKING = /\b(sollunga|solunga|sollungal|sollu|chollu|cheppandi|heli|share|type|kudunga|podunga|pannunga|bataiye|bataye|batayiye|batao|bata dijiye|bataiyega|likhiye|bhejiye|tell me|let me know|please share|pls share|pls tell|could you|can you|could u|can u|may i)\b/i;
 
 export function asksSomething(text: string): boolean {
   return text.includes("?") || ASKING.test(text) || /\b(enna|evlo|epdi|eppo|yaaru|enga|kya|kitne|kitna|kaun|kab|kaise|kahan)\b/i.test(text);

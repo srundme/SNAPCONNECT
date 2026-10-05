@@ -71,14 +71,15 @@ describeDb("whatsapp chat", () => {
     const conversation = await db.conversation.findFirstOrThrow({ where: { contactId: identity.contactId }, include: { messages: { orderBy: { createdAt: "asc" } } } });
     expect(conversation.channel).toBe("WHATSAPP");
     const replies = conversation.messages.filter((message) => message.author === "AI");
-    expect(replies.length).toBe(1);
-    expect(replies[0]!.body).toMatch(/automated/i);
+    expect(replies.length).toBeGreaterThanOrEqual(1);
+    expect(replies.map((reply) => reply.body).join("\n")).toMatch(/automated/i);
+    expect(replies.every((reply) => !/[,;!]/.test(reply.body))).toBe(true);
 
     const later = new Date(now.getTime() + 60_000);
     await ingestEvents(db, { channel: "WHATSAPP", mode: "SIMULATION", events: inbound(waId, `wamid.${later.getTime()}`, "We are in Chennai", later), receivedAt: later });
     await drain();
     const after = await db.message.count({ where: { conversationId: conversation.id, author: "AI" } });
-    expect(after).toBe(2);
+    expect(after).toBeGreaterThan(replies.length);
   });
 
   it("answers a voice note with a voice reply and a typed message with text", async () => {
@@ -157,8 +158,8 @@ describeDb("whatsapp chat", () => {
       if (await db.outboxJob.count({ where: { status: "PENDING", availableAt: { lte: new Date() } } }) === 0) break;
       await processAvailableJobs(db, voiceRuntime, 30);
     }
-    expect(sent.length).toBe(2);
-    expect(sent.at(-1)!.audioUrl).toBeUndefined();
+    expect(sent.length).toBeGreaterThanOrEqual(2);
+    expect(sent.slice(1).every((item) => item.audioUrl === undefined)).toBe(true);
     expect(spoken.length).toBe(1);
   });
 

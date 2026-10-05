@@ -41,6 +41,7 @@ const runtime = simulationRuntime({
       }
     : {}),
   replySettleMs: 2500,
+  pause: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 });
 
 let stopping = false;

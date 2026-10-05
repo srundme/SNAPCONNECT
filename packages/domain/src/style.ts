@@ -9,6 +9,86 @@ export function phoneProblem(digits: string): string {
   return "that does not look like a working mobile number";
 }
 
+const AI_PRAISE = "great|perfect|excellent|wonderful|fantastic|amazing|awesome|brilliant|superb|lovely";
+
+/** Swaps the polished words a chatbot reaches for with the plain ones people actually type. */
+export function plainWords(text: string): string {
+  return text
+    .replace(new RegExp(`\\b(?:that'?s|that is|sounds|it'?s|it is)\\s+(?:really\\s+|so\\s+)?(?:${AI_PRAISE})\\b`, "gi"), "ok")
+    .replace(new RegExp(`(^|[.!?\\n]\\s*)(?:${AI_PRAISE})(?:\\s+(?:question|choice|news))?\\b`, "gi"), "$1ok")
+    .replace(/(^|[.!?\n]\s*)(?:absolutely|certainly|of course|definitely)\b/gi, "$1sure");
+}
+
+/** Splits a reply into the separate messages a person would send, at most three. */
+export function replyBubbles(text: string): string[] {
+  const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  let parts = lines;
+  if (lines.length === 1) {
+    const sentences = sentencesOf(lines[0]!);
+    const words = (value: string) => value.split(/\s+/).length;
+    if (sentences.length >= 2 && words(sentences[0]!) <= 6 && lines[0]!.length > 50) {
+      parts = [sentences[0]!, sentences.slice(1).join(" ")];
+    } else if (sentences.length >= 3 && lines[0]!.length > 140) {
+      const middle = Math.ceil(sentences.length / 2);
+      parts = [sentences.slice(0, middle).join(" "), sentences.slice(middle).join(" ")];
+    }
+  }
+  return parts.length > 3 ? [...parts.slice(0, 2), parts.slice(2).join(" ")] : parts;
+}
+
+/**
+ * Rewrites one message the way people text on their phone: no commas or full stops, "..." between
+ * short thoughts, u / ur / ok / pls, and lower case starts. Question marks stay so a question still reads as one.
+ */
+export function casualText(text: string, keepCase: string[] = []): string {
+  const keep = new Set(keepCase.map((word) => word.toLowerCase()).filter(Boolean));
+  const links: string[] = [];
+  let out = plainWords(text)
+    .replace(/https?:\/\/\S+?(?=[.,!?]*(?:\s|$))/g, (link) => `\u0000${links.push(link) - 1}\u0000`)
+    .replace(/(\d),(?=\d)/g, "$1")
+    .replace(/\b(?:you're|youre|you are)\b/gi, "ur")
+    .replace(/\byour\b/gi, "ur")
+    .replace(/\byou\b/gi, "u")
+    .replace(/\bokay\b/gi, "ok")
+    .replace(/\bplease\b/gi, "pls")
+    .replace(/\bI(?:'m| am)\b/gi, "im")
+    .replace(/\bI'll\b/gi, "i will")
+    .replace(/\bI've\b/gi, "i have")
+    .replace(/\b(do|does|did|is|are|was|ca|wo|have|has)n't\b/gi, (_match, stem: string) => `${stem.toLowerCase() === "ca" ? "can" : stem.toLowerCase() === "wo" ? "won" : stem}nt`)
+    .replace(/\b(it|that|what|there|here|let|he|she)'s\b/gi, "$1s")
+    .replace(/\bI\b/g, "i")
+    .replace(/['‘’`]/g, "")
+    .replace(/(\d):(\d)/g, "$1\u0001$2")
+    .replace(/[,;:"“”()]/g, " ")
+    .replace(/\u0001/g, ":")
+    .replace(/!+/g, ".");
+  const sentences = out.split(/(?<=[.?।])\s+/).map((part) => part.trim()).filter(Boolean);
+  out = sentences.reduce((joined, sentence, index) => {
+    const bare = sentence.replace(/\.+$/, "").trim();
+    const first = bare.split(/\s+/)[0] ?? "";
+    const lowered = keep.has(first.toLowerCase()) || /^[A-Z0-9]{2,}$/.test(first) ? bare : bare.charAt(0).toLowerCase() + bare.slice(1);
+    if (index === 0) return lowered;
+    const previous = sentences[index - 1]!;
+    const glue = previous.endsWith("?") ? " " : "...";
+    return `${joined}${glue}${lowered}`;
+  }, "");
+  return out
+    .replace(/\u0000(\d+)\u0000/g, (_match, index: string) => links[Number(index)] ?? "")
+    .replace(/ {2,}/g, " ")
+    .replace(/\s+\?/g, "?")
+    .trim();
+}
+
+/** Typing time for one message, the way a person thumbs it out. */
+export function typingMs(text: string): number {
+  return Math.min(5000, Math.max(1200, 900 + text.length * 45));
+}
+
+/** Time to read what the customer sent before starting to answer. */
+export function readingMs(text: string): number {
+  return Math.min(7000, text.trim().length * 35);
+}
+
 function sentenceKey(sentence: string): string {
   return sentence
     .toLowerCase()
@@ -17,7 +97,43 @@ function sentenceKey(sentence: string): string {
 }
 
 function sentencesOf(text: string): string[] {
-  return text.split(/(?<=[.!?।])\s+/).map((part) => part.trim()).filter(Boolean);
+  return text.split(/(?<=[.!?।])\s+|\n+/).map((part) => part.trim()).filter(Boolean);
+}
+
+function casualKey(sentence: string): string {
+  return sentenceKey(casualText(sentence));
+}
+
+/**
+ * Turns a written reply into the casual messages to send: split like a person would, sentences
+ * Varun already sent dropped, then typed the casual way. If every sentence is a repeat, nothing is dropped.
+ */
+export function humanBubbles(text: string, earlier: string[], keepCase: string[] = []): string[] {
+  const said = new Set(
+    earlier
+      .flatMap((body) => body.split(/\.{2,}|(?<=[.!?।])\s+|\n+/))
+      .map(casualKey)
+      .filter((key) => key.length >= 12),
+  );
+  const split = replyBubbles(text).map(sentencesOf);
+  const fresh = split.map((parts) => parts.filter((part) => !said.has(casualKey(part))));
+  const chosen = fresh.some((parts) => parts.length) ? fresh : split;
+  const groups: string[][] = [];
+  for (const parts of chosen.filter((item) => item.length)) {
+    let group: string[] = [];
+    for (const part of parts) {
+      const previous = group[group.length - 1];
+      if (previous && previous.split(/\s+/).length > 4 && !previous.endsWith("?")) {
+        groups.push(group);
+        group = [];
+      }
+      group.push(part);
+    }
+    if (group.length) groups.push(group);
+  }
+  const bubbles = groups.map((parts) => casualText(parts.join(" "), keepCase)).filter(Boolean);
+  const most = text.includes("\n") ? 3 : 2;
+  return bubbles.length > most ? [...bubbles.slice(0, most - 1), bubbles.slice(most - 1).join("...")] : bubbles;
 }
 
 /**

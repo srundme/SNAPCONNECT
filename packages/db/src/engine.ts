@@ -55,6 +55,9 @@ import {
   nameConcern,
   phoneProblem,
   dropRepeatedSentences,
+  humanBubbles,
+  readingMs,
+  typingMs,
 } from "@snapsocial/domain";
 import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, neutralDirection, speechLocale, speechScript, speechSentences, zohoAdapter, ZohoOAuthError, type LlmProvider, type SendResult, type Speaker, type VoiceDirection, type ZohoAdapter } from "@snapsocial/integrations";
 import { randomBytes } from "node:crypto";
@@ -92,6 +95,8 @@ export type Runtime = {
   speak?: Speaker;
   publicBaseUrl?: string;
   replySettleMs?: number;
+  /** Waits like a person reading and typing. Left out in tests, so replies go straight away. */
+  pause?: (ms: number) => Promise<void>;
 };
 
 function sendConnection(connection: SendConnection): SendConnection {
@@ -622,7 +627,7 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
         workspaceId: connection.workspaceId,
         type: "INFERENCE",
         payload: { conversationId: conversation.id, expectedRevision: updated.revision, contactId },
-        availableAt: new Date(runtime.now().getTime() + (runtime.replySettleMs ?? 0)),
+        availableAt: new Date(runtime.now().getTime() + (runtime.replySettleMs ?? 0) + (runtime.pause ? readingMs(text) : 0)),
       },
     });
   }
@@ -1390,10 +1395,14 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : validated.reply ?? fallback;
     const firstWhatsAppReply = conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI");
     const earlierReplies = conversation.messages.filter((message) => message.author === "AI").map((message) => message.body);
-    const humanized = composed ? dropRepeatedSentences(humanizeReply(composed), earlierReplies) : composed;
-    const reply = humanized && firstWhatsAppReply
+    const humanized = composed ? humanizeReply(composed) : composed;
+    const written = humanized && firstWhatsAppReply
       ? withAutomationDisclosure(humanized, workspace.brandName, workspace.agentName)
       : humanized;
+    const keepCase = [workspace.brandName, workspace.agentName ?? "", ...workspace.brandName.split(/\s+/)];
+    const bubbles = written ? humanBubbles(written, earlierReplies, keepCase) : [];
+    const reply = bubbles.length ? bubbles.join("\n") : null;
+    const spokenReply = written ? dropRepeatedSentences(written.replace(/\s*\n+\s*/g, " "), earlierReplies) : null;
     const window = replyEligibility({
       now: runtime.now(),
       lastUserMessageAt: fresh.lastUserMessageAt,
@@ -1408,57 +1417,73 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         where: { contactId: conversation.contactId, identityType: "MESSAGING_PARTICIPANT" },
       });
       const answeringVoice = [...conversation.messages].reverse().find((message) => message.author === "PROSPECT")?.voice === true;
-      const clip = answeringVoice && participant
+      const clip = answeringVoice && participant && spokenReply
         ? await voiceClip(db, runtime, {
             workspaceId: workspace.id,
             channel: connection.channel,
-            text: reply,
+            text: spokenReply,
             chatLanguage: languageSample ? languageName(languageSample) : null,
             messages: conversation.messages,
           })
         : null;
-      let result = clip
-        ? await runtime.send({
+      const record = async (body: string, result: Awaited<ReturnType<Runtime["send"]>>, voice?: { id: string }) => {
+        if (result.status === "ACCEPTED") {
+          await db.message.create({
+            data: {
+              workspaceId: workspace.id,
+              connectionId: conversation.connectionId,
+              conversationId: conversation.id,
+              author: "AI",
+              body,
+              externalMessageId: result.providerMessageId,
+              ...(voice ? { voice: true, voiceClipId: voice.id } : {}),
+            },
+          });
+        } else if (result.status === "UNKNOWN") {
+          await db.auditEvent.create({
+            data: {
+              workspaceId: workspace.id,
+              action: "outbound.unknown",
+              entityType: "Conversation",
+              entityId: conversation.id,
+              summary: "A reply timed out and was not resent.",
+            },
+          });
+        }
+      };
+      let voiceSent = false;
+      if (clip && spokenReply) {
+        await runtime.pause?.(Math.max(0, typingMs(spokenReply) - generated.latencyMs));
+        const result = await runtime.send({
+          connection: sendConnection(connection),
+          purpose: "text",
+          recipientId: participant?.externalId,
+          text: spokenReply,
+          audioUrl: clip.url,
+        });
+        if (result.status === "ACCEPTED" || result.status === "UNKNOWN") {
+          voiceSent = true;
+          await record(spokenReply, result, clip);
+        } else {
+          console.warn(`Voice reply was not accepted, sending text instead: ${result.error}`);
+        }
+      }
+      if (!voiceSent) {
+        for (const [index, bubble] of bubbles.entries()) {
+          if (index > 0) {
+            const current = await db.conversation.findUnique({ where: { id: conversation.id }, select: { revision: true, owner: true } });
+            if (!current || current.revision !== expectedRevision || current.owner !== "AI") break;
+          }
+          await runtime.pause?.(index === 0 ? Math.max(0, typingMs(bubble) - generated.latencyMs) : typingMs(bubble));
+          const result = await runtime.send({
             connection: sendConnection(connection),
             purpose: "text",
             recipientId: participant?.externalId,
-            text: reply,
-            audioUrl: clip.url,
-          })
-        : null;
-      if (result && result.status !== "ACCEPTED" && result.status !== "UNKNOWN") {
-        console.warn(`Voice reply was not accepted, sending text instead: ${result.error}`);
-        result = null;
-      }
-      const sentVoice = Boolean(result);
-      result ??= await runtime.send({
-        connection: sendConnection(connection),
-        purpose: "text",
-        recipientId: participant?.externalId,
-        text: reply,
-      });
-      if (result.status === "ACCEPTED") {
-        await db.message.create({
-          data: {
-            workspaceId: workspace.id,
-            connectionId: conversation.connectionId,
-            conversationId: conversation.id,
-            author: "AI",
-            body: reply,
-            externalMessageId: result.providerMessageId,
-            ...(sentVoice && clip ? { voice: true, voiceClipId: clip.id } : {}),
-          },
-        });
-      } else if (result.status === "UNKNOWN") {
-        await db.auditEvent.create({
-          data: {
-            workspaceId: workspace.id,
-            action: "outbound.unknown",
-            entityType: "Conversation",
-            entityId: conversation.id,
-            summary: "A reply timed out and was not resent.",
-          },
-        });
+            text: bubble,
+          });
+          await record(bubble, result);
+          if (result.status !== "ACCEPTED") break;
+        }
       }
     }
     await db.aiRun.create({
