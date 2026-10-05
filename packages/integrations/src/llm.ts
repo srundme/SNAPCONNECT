@@ -61,7 +61,6 @@ export function readVoiceDirection(value: unknown): VoiceDirection {
   const opener = VOICE_OPENERS.find((item) => item.toLowerCase() === String(raw.opener ?? "").trim().toLowerCase()) ?? "";
   const speed = Number(raw.speed);
   return {
-    laugh: raw.laugh === true || raw.laugh === "true",
     emotion,
     speed: Number.isFinite(speed) ? Math.min(1.15, Math.max(0.85, speed)) : 1,
     opener,
@@ -373,13 +372,10 @@ export function sarvamLlm(options: {
                 "You direct the voice actor who speaks a friendly Indian sales assistant's reply as a voice note.",
                 "Read the customer's last message and the assistant's reply, then choose how the reply should sound.",
                 "The chat can be English, Tamil, Hindi, Tanglish, Hinglish or mixed.",
-                "laugh: decide from the customer's last message only, not from the reply. True when any part of it is a joke, a tease, a playful excuse, light sarcasm, or them laughing, even when it also contains a plain answer.",
-                "Playful examples that need a laugh: \"my wife holds all the money\", \"ask my wife, she decides\", \"my boss is a miser\", \"I will pay you in biryani\", \"I am broke bro\", \"are you a robot?\", \"haha\", \"lol\".",
-                "False when they are annoyed, complaining, confused, sad, or only answering a question. Sarcasm that is a real complaint, like \"wow you replied in just 3 days\", is not a joke.",
                 `emotion: one of ${VOICE_EMOTIONS.join(", ")}. Match the reply: thanks = grateful, sorry or a problem = apologetic or sympathetic, good news = happy or excited, a question = curious, details = calm or confident.`,
                 "speed: 0.9 for careful details like numbers or times, 1.0 normally, 1.1 for short cheerful replies.",
                 `opener: one of ${VOICE_OPENERS.filter(Boolean).map((item) => `"${item}"`).join(", ")} or "" for none. Use one only for real surprise ("Oh,", "Wow,") or sympathy ("Aww,"), never on a plain question or answer. Most replies use "".`,
-                'Return only JSON like {"laugh":false,"emotion":"content","speed":1.0,"opener":""}.',
+                'Return only JSON like {"emotion":"content","speed":1.0,"opener":""}.',
               ].join("\n"),
             },
             {

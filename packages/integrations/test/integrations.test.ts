@@ -7,7 +7,7 @@ import { listInstagramPosts } from "../src/meta-media";
 import { assertPrivateOllamaUrl, readVoiceDirection, sarvamLlm, sarvamTranscriber } from "../src/llm";
 import { zohoAdapter } from "../src/zoho";
 import { checkWhatsAppNumber, subscribeWhatsAppAccount, whatsappAdapter } from "../src/whatsapp";
-import { cartesiaSpeaker, soundsLikeJoke, speechLocale, speechScript } from "../src/cartesia";
+import { cartesiaSpeaker, speechLocale, speechScript } from "../src/cartesia";
 
 describe("integration guards", () => {
   it("encrypts credentials with an external key", () => {
@@ -245,24 +245,22 @@ describe("voice replies", () => {
     expect(speechLocale("ميزانيتك؟")).toBeNull();
   });
 
-  it("writes the spoken script with laughter, openers and spelled phone numbers", () => {
-    expect(speechScript("Got it 😄 we will call you on +919845012345", { laugh: false, emotion: "happy", speed: 1, opener: "" }))
+  it("writes the spoken script with openers and spelled phone numbers", () => {
+    expect(speechScript("Got it 😄 we will call you on +919845012345", { emotion: "happy", speed: 1, opener: "" }))
       .toBe("Got it we will call you on <spell>98450 12345</spell>.");
-    expect(speechScript("Ha, good one! So is it for your home?", { laugh: true, emotion: "happy", speed: 1.1, opener: "Haha," }))
-      .toBe("[laughter] Ha, good one! So is it for your home?");
-    expect(speechScript("That is a big space. What is the budget?", { laugh: false, emotion: "surprised", speed: 1, opener: "Oh," }))
+    expect(speechScript("[laughter] Good one! So is it for your home?", { emotion: "happy", speed: 1.1, opener: "" }))
+      .toBe("Good one! So is it for your home?");
+    expect(speechScript("That is a big space. What is the budget?", { emotion: "surprised", speed: 1, opener: "Oh," }))
       .toBe("Oh, that is a big space. What is the budget?");
-    expect(speechScript("Super sir! Budget evlo?", { laugh: false, emotion: "curious", speed: 1, opener: "Ah," }))
+    expect(speechScript("Super sir! Budget evlo?", { emotion: "curious", speed: 1, opener: "Ah," }))
       .toBe("Super sir! Budget evlo?");
-    expect(speechScript("**Details** here: https://x.test/a\nThanks", { laugh: false, emotion: "calm", speed: 1, opener: "" }))
+    expect(speechScript("**Details** here: https://x.test/a\nThanks", { emotion: "calm", speed: 1, opener: "" }))
       .toBe("Details here: the link Thanks.");
-    expect(soundsLikeJoke("hahaha my wife will decide the budget")).toBe(true);
-    expect(soundsLikeJoke("Budget is 5 lakh")).toBe(false);
   });
 
   it("reads a voice direction safely", () => {
-    expect(readVoiceDirection({ laugh: true, emotion: "Happy", speed: 3, opener: "oh," })).toEqual({ laugh: true, emotion: "happy", speed: 1.15, opener: "Oh," });
-    expect(readVoiceDirection({ emotion: "furious", opener: "Yo" })).toEqual({ laugh: false, emotion: "content", speed: 1, opener: "" });
+    expect(readVoiceDirection({ laugh: true, emotion: "Happy", speed: 3, opener: "oh," })).toEqual({ emotion: "happy", speed: 1.15, opener: "Oh," });
+    expect(readVoiceDirection({ emotion: "furious", opener: "Yo" })).toEqual({ emotion: "content", speed: 1, opener: "" });
   });
 
   it("asks Cartesia for speech with locale, emotion and speed", async () => {
@@ -272,13 +270,13 @@ describe("voice replies", () => {
       return new Response(new Uint8Array(400), { status: 200, headers: { "content-type": "audio/mpeg" } });
     };
     const speak = cartesiaSpeaker({ apiKey: "sk_test", voiceId: "voice-1", fetchImpl });
-    const speech = await speak({ transcript: "[laughter] Hello.", locale: "en-IN", emotion: "happy", speed: 1.1, format: "mp3" });
+    const speech = await speak({ transcript: "Hello.", locale: "en-IN", emotion: "happy", speed: 1.1, format: "mp3" });
     expect(speech.mimeType).toBe("audio/mpeg");
     expect(speech.audio.byteLength).toBe(400);
     expect(calls[0]!.url).toBe("https://api.cartesia.ai/tts/bytes");
     expect(new Headers(calls[0]!.init.headers).get("Authorization")).toBe("Bearer sk_test");
     expect(JSON.parse(String(calls[0]!.init.body))).toMatchObject({
-      transcript: "[laughter] Hello.",
+      transcript: "Hello.",
       voice: { id: "voice-1" },
       locale: "en-IN",
       output_format: { container: "mp3" },

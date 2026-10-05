@@ -28,16 +28,15 @@ export const VOICE_EMOTIONS = [
 ] as const;
 export type VoiceEmotion = (typeof VOICE_EMOTIONS)[number];
 
-export const VOICE_OPENERS = ["", "Oh,", "Hmm,", "Ah,", "Aww,", "Wow,", "Haha,"] as const;
+export const VOICE_OPENERS = ["", "Oh,", "Hmm,", "Ah,", "Aww,", "Wow,"] as const;
 
 export type VoiceDirection = {
-  laugh: boolean;
   emotion: VoiceEmotion;
   speed: number;
   opener: (typeof VOICE_OPENERS)[number];
 };
 
-export const neutralDirection: VoiceDirection = { laugh: false, emotion: "content", speed: 1, opener: "" };
+export const neutralDirection: VoiceDirection = { emotion: "content", speed: 1, opener: "" };
 
 const SCRIPT_LANGUAGES: Array<[RegExp, string]> = [
   [/[\u0B80-\u0BFF]/, "ta"],
@@ -77,13 +76,6 @@ export function speechLocale(text: string, chatLanguage?: string | null): { loca
   return { locale: "en-IN" };
 }
 
-const JOKE = /\b((?:ha){2,}h?|(?:he){2,}h?|(?:hi){2,}|lo+l+|lmao|rofl|jk|just kidding|kidding|joking|mazaak|mazak|summa sonnen|chumma)\b|😂|🤣|😆|😜|😝|😛|😹/i;
-
-/** Text cues that the customer was joking, for when no model can judge it. */
-export function soundsLikeJoke(text: string): boolean {
-  return JOKE.test(text);
-}
-
 function spokenPhone(digits: string): string {
   const national = digits.length > 10 && digits.startsWith("91") ? digits.slice(2) : digits;
   return national.length === 10 ? `<spell>${national.slice(0, 5)} ${national.slice(5)}</spell>` : `<spell>${national}</spell>`;
@@ -91,14 +83,14 @@ function spokenPhone(digits: string): string {
 
 /**
  * Turns a chat reply into what Sonic should say: no emoji, links or markdown,
- * phone numbers read digit by digit, plus the laugh or opener the director chose.
+ * phone numbers read digit by digit, plus the opener the director chose.
  */
 export function speechScript(text: string, direction: VoiceDirection = neutralDirection): string {
   let script = text
     .replace(/https?:\/\/\S+/g, "the link")
     .replace(/[*_#`~>]+/g, "")
     .replace(/\p{Extended_Pictographic}(\u200D\p{Extended_Pictographic}|\uFE0F)*/gu, "")
-    .replace(/\[(?!laughter\])[^\]]*\]/gi, "")
+    .replace(/\[[^\]]*\]/g, "")
     .replace(/<[^>]*>/g, "")
     .replace(/(?<![\d<])\+?(?:91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}(?!\d)/g, (match) => spokenPhone(match.replace(/\D/g, "")))
     .replace(/\s*\n+\s*/g, " ")
@@ -106,13 +98,12 @@ export function speechScript(text: string, direction: VoiceDirection = neutralDi
     .trim();
   if (!script) return script;
   if (!/[.!?।]$/.test(script)) script = `${script}.`;
-  if (direction.laugh) return `[laughter] ${script}`;
   if (!direction.opener || INTERJECTION.test(script)) return script;
   const rest = /^[A-Z][a-z]/.test(script) && !/^I\b/.test(script) ? `${script[0]!.toLowerCase()}${script.slice(1)}` : script;
   return `${direction.opener} ${rest}`;
 }
 
-const INTERJECTION = /^(ha+|haha\w*|he+y|hi+|hello|oh+|ah+|aww+|wow|hmm+|ok(ay)?|super|great|nice|sure|sorry|thanks?|thank you|yes|no|wah|arey?|aiyo|ayyo|seri|sari|achha?|vanakkam|namaste)\b/i;
+const INTERJECTION = /^(ha+|he+y|hi+|hello|oh+|ah+|aww+|wow|hmm+|ok(ay)?|super|great|nice|sure|sorry|thanks?|thank you|yes|no|wah|arey?|aiyo|ayyo|seri|sari|achha?|vanakkam|namaste)\b/i;
 
 export function cartesiaSpeaker(options: { apiKey: string; voiceId: string; model?: string; fetchImpl?: FetchLike }): Speaker {
   const fetchImpl = options.fetchImpl ?? fetch;
