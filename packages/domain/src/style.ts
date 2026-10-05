@@ -9,16 +9,42 @@ export function phoneProblem(digits: string): string {
   return "that does not look like a working mobile number";
 }
 
+const AMOUNT_UNITS: Array<[RegExp, number]> = [
+  [/\b(?:crores?|cr)\b/i, 10_000_000],
+  [/\b(?:lakhs?|lacs?|l)\b/i, 100_000],
+  [/\bk\b|thousand/i, 1_000],
+];
+
+/** Reads "35 lakh", "1.2 cr", "₹40,00,000" or "50k" as rupees. */
+export function rupeesIn(text: string): number | null {
+  const match = text.replace(/,/g, "").match(/(\d+(?:\.\d+)?)\s*([a-z]+)?/i);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = AMOUNT_UNITS.find(([pattern]) => pattern.test(match[2] ?? ""))
+    ?? AMOUNT_UNITS.find(([pattern]) => pattern.test(text.slice((match.index ?? 0) + match[0].length)));
+  return Number.isFinite(amount) ? amount * (unit ? unit[1] : 1) : null;
+}
+
 /**
- * Numeric answers no real customer of an AI calling product would give: a telecalling team of
- * lakhs, or crores of calls a month. These are jokes or slips, so they are checked before recording.
+ * Answers no real customer would give: a telecalling team of lakhs, crores of calls a month, a home
+ * budget of a few hundred rupees or hundreds of crores, a flat of a lakh square feet. These are jokes
+ * or slips, so they are checked before recording. Anything merely high or low is left to the agent's judgement.
  */
 export function unrealisticAnswers(
   questions: Array<{ id: string; label: string }>,
   answers: Record<string, string>,
 ): Array<{ id: string; label: string; value: number }> {
   return questions.flatMap((question) => {
-    const value = Number(String(answers[question.id] ?? "").replace(/[,\s]/g, ""));
+    const raw = String(answers[question.id] ?? "");
+    if (/budget|price|spend|cost/i.test(question.label)) {
+      const rupees = rupeesIn(raw);
+      return rupees && (rupees < 10_000 || rupees > 5_000_000_000) ? [{ id: question.id, label: question.label, value: rupees }] : [];
+    }
+    if (/sq\.?\s*ft|square|carpet/i.test(question.label)) {
+      const feet = Number(raw.replace(/,/g, "").match(/\d+(?:\.\d+)?/)?.[0]);
+      return Number.isFinite(feet) && feet > 0 && (feet < 100 || feet > 100_000) ? [{ id: question.id, label: question.label, value: feet }] : [];
+    }
+    const value = Number(raw.replace(/[,\s]/g, ""));
     if (!Number.isFinite(value) || value <= 0) return [];
     const limit = /volume|month/i.test(question.label) ? 10_000_000 : /team|telecaller|agent|staff|people/i.test(question.label) ? 5_000 : null;
     return limit && value > limit ? [{ id: question.id, label: question.label, value }] : [];
@@ -148,7 +174,13 @@ function casualKey(sentence: string): string {
  * Turns a written reply into the casual messages to send: split like a person would, sentences
  * Varun already sent dropped, then typed the casual way. If every sentence is a repeat, nothing is dropped.
  */
-export function humanBubbles(text: string, earlier: string[], keepCase: string[] = []): string[] {
+export function humanBubbles(
+  text: string,
+  earlier: string[],
+  keepCase: string[] = [],
+  options: { casual?: boolean; split?: boolean } = {},
+): string[] {
+  const casual = options.casual ?? true;
   const said = new Set(
     earlier
       .flatMap((body) => body.split(/\.{2,}|(?<=[.!?।])\s+|\n+/))
@@ -158,6 +190,14 @@ export function humanBubbles(text: string, earlier: string[], keepCase: string[]
   const split = replyBubbles(text).map(sentencesOf);
   const fresh = split.map((parts) => parts.filter((part) => !said.has(casualKey(part))));
   const chosen = fresh.some((parts) => parts.length) ? fresh : split;
+  if (options.split === false || !casual) {
+    const lines = chosen.filter((parts) => parts.length).map((parts) => parts.join(" "));
+    if (options.split === false) {
+      const whole = casual ? casualText(lines.join(" "), keepCase) : lines.join(" ");
+      return whole ? [whole] : [];
+    }
+    return lines.length > 3 ? [...lines.slice(0, 2), lines.slice(2).join(" ")] : lines;
+  }
   const groups: string[][] = [];
   for (const parts of chosen.filter((item) => item.length)) {
     let group: string[] = [];

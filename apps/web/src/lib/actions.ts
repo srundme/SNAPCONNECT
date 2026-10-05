@@ -6,7 +6,20 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { hashPassword } from "better-auth/crypto";
-import { can, canAssignWorkspaceRole, externalLeadKeyField, normalizeMetaPayload, questionsFromLines, questionsFromRows, replyEligibility, replyPromptFields } from "@snapsocial/domain";
+import {
+  agentTextLimits,
+  agentToggles,
+  can,
+  canAssignWorkspaceRole,
+  externalLeadKeyField,
+  normalizeMetaPayload,
+  parseAgentSettings,
+  parseFollowUpHours,
+  questionsFromLines,
+  questionsFromRows,
+  replyEligibility,
+  replyPromptFields,
+} from "@snapsocial/domain";
 import { loadConfig } from "@snapsocial/config";
 import { checkWhatsAppNumber, decryptSecret, encryptSecret, listFacebookPosts, listInstagramPosts, subscribeWhatsAppAccount } from "@snapsocial/integrations";
 import {
@@ -15,6 +28,7 @@ import {
   getPrisma,
   ingestEvents,
   processAvailableJobs,
+  queuePostDescriptions,
   setConnectionPaused,
   simulationRuntime,
   takeOver,
@@ -311,21 +325,37 @@ export async function saveLeadSync(formData: FormData) {
 export async function saveAiSettings(formData: FormData) {
   const { actor, workspace } = await requireWorkspace();
   if (!workspace || !can(actor, "workspace.manage", workspace.id)) redirect("/overview?denied=1");
+  const upload = formData.get("knowledgeFile");
+  let knowledgeBase = String(formData.get("knowledgeBase") ?? "");
+  if (upload instanceof File && upload.size > 0) {
+    if (upload.size > 400_000 || !/\.(txt|md|markdown|csv)$/i.test(upload.name)) {
+      redirect(`/ai?error=${encodeURIComponent("Upload a .txt or .md file under 400 KB. For a PDF or Word file, copy the text into the box instead.")}`);
+    }
+    const text = (await upload.text()).replace(/\r\n/g, "\n").trim();
+    knowledgeBase = formData.get("knowledgeMode") === "append" && knowledgeBase.trim() ? `${knowledgeBase.trim()}\n\n${text}` : text;
+  }
+  const settings: Record<string, unknown> = {};
+  for (const key of agentToggles) settings[key] = formData.get(`toggle:${key}`) === "on";
+  for (const [key, limit] of Object.entries(agentTextLimits)) settings[key] = String(formData.get(key) ?? "").trim().slice(0, limit);
+  settings.followUpHours = parseFollowUpHours(formData.get("followUpHours"));
   await getPrisma().workspace.update({
     where: { id: workspace.id },
     data: {
       brandName: String(formData.get("brandName") ?? "").trim().slice(0, 120) || workspace.brandName,
       agentName: String(formData.get("agentName") ?? "").trim().slice(0, 40) || null,
-      agentPersona: String(formData.get("agentPersona") ?? "").trim().slice(0, 500) || null,
-      services: String(formData.get("services") ?? "").trim().slice(0, 500),
+      agentPersona: String(formData.get("agentPersona") ?? "").trim().slice(0, 2000) || null,
+      services: String(formData.get("services") ?? "").trim().slice(0, 1000),
       tone: String(formData.get("tone") ?? "").trim().slice(0, 200),
       systemPrompt: String(formData.get("systemPrompt") ?? "").trim().slice(0, 4000) || null,
+      knowledgeBase: knowledgeBase.replace(/\r\n/g, "\n").trim().slice(0, 60_000),
+      agentSettings: parseAgentSettings(settings),
       leadQuestions: questionsFromRows(
         formData.getAll("questionLabel").map(String),
         formData.getAll("questionZoho").map((value, index) => {
           const chosen = String(value);
           return chosen === "__custom__" ? String(formData.getAll("questionZohoCustom")[index] ?? "") : chosen;
         }),
+        formData.getAll("questionRequired").map((value) => String(value) !== "no"),
       ),
     },
   });
@@ -433,6 +463,8 @@ export async function refreshPosts(formData: FormData) {
       },
     });
   }
+  await getPrisma().media.updateMany({ where: { connectionId: connection.id, seenSummary: "" }, data: { seenSummary: null } });
+  await queuePostDescriptions(getPrisma(), workspace.id);
   redirect(`${back}&loaded=${posts.length}`);
 }
 
@@ -558,7 +590,7 @@ export async function sendStaffReply(formData: FormData) {
   });
   if (!eligibility.allowed) redirect(`${back}&error=${encodeURIComponent(eligibility.reason ?? "Reply is unavailable.")}`);
   const participant = await getPrisma().contactIdentity.findFirst({
-    where: { contactId: conversation.contactId, identityType: "MESSAGING_PARTICIPANT" },
+    where: { contactId: conversation.contactId, identityType: "MESSAGING_PARTICIPANT", channel: conversation.channel },
   });
   if (!participant) redirect(`${back}&error=${encodeURIComponent("This person has not replied in the direct message yet.")}`);
   if (conversation.owner !== "HUMAN") await takeOver(getPrisma(), conversation.id, actor.userId);

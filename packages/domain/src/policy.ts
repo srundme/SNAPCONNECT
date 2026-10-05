@@ -68,8 +68,8 @@ export function automationDisclosureLine(brandName: string, agentName?: string |
   const brand = (brandName.trim() || "this business").slice(0, 80);
   const name = agentName?.trim().slice(0, 40);
   return name
-    ? `You're messaging ${name}, an automated assistant for ${brand}.`
-    : `You're messaging an automated assistant for ${brand}.`;
+    ? `Hi, this is ${name}, an automated assistant for ${brand}.`
+    : `Hi, you're messaging an automated assistant for ${brand}.`;
 }
 
 export function agentIdentity(input: { brandName: string; agentName?: string | null; agentPersona?: string | null }): string {
@@ -87,9 +87,8 @@ export function withAutomationDisclosure(text: string, brandName: string, agentN
   const line = automationDisclosureLine(brandName, agentName);
   if (!trimmed) return line;
   if (disclosesAutomation(trimmed)) return trimmed.slice(0, 1000);
-  const room = 1000 - line.length - 2;
-  const body = trimmed.length + line.length + 2 <= 1000 ? trimmed : trimmed.slice(0, Math.max(0, room)).trim();
-  return `${body}\n\n${line}`.slice(0, 1000);
+  const body = trimmed.replace(/^(?:hi+|hello|hey|hai)\b[\s,!.]*(?:sir|mam|ma'am|madam|there)?[\s,!.]*/i, "").trim();
+  return body ? `${line}\n\n${body}`.slice(0, 1000) : line;
 }
 
 export function platformReplyBlock(reply: string): string | null {
@@ -106,10 +105,10 @@ export function platformSystemRules(brandName: string): string {
     "Do not invent prices, discounts, appointments, callbacks, or confirm a booking.",
     "Stay in this chat and answer the question they just raised. Then ask the next unanswered question.",
     "Set handoff_requested to true only when they ask to switch this chat to the sales team or a human team.",
-    "A demo, a callback, a meeting, their own human team, or a question about the product is not a switch. Leave handoff_requested false. Do not say a demo has been booked.",
+    "A consultation, a visit, a callback, a meeting, their own team, or a question about the service is not a switch. Leave handoff_requested false. Never say anything has been booked or confirmed.",
     "Reply in the same language, script and mix the person has been using in this chat. Short replies like ok, yes, a number or a phone number do not change the language. English gets English. Tanglish (Tamil typed in English letters) gets Tanglish. Hinglish gets Hinglish. Hindi in Devanagari gets Devanagari. Tamil script gets Tamil script. The same goes for Telugu, Kannada, Malayalam, Marathi, Bengali and any other language.",
-    "In any Indian language, write the way people actually text: casual, spoken, everyday words, like a friendly young sales rep on WhatsApp. Keep the English words people really use, such as call, demo, team, company, number, AI. Never use formal, bookish, literary, old-fashioned or pure textbook words.",
-    "Tanglish example: write 'Sollunga, AI calling venuma? Unga team la evlo per irukanga?' Never write 'Sollungal, AI azhaippu vendumaa?'. Say 'evlo', 'enna', 'irukku', 'pannalam', not 'ethanai', 'yenna', 'ullathu', 'seyyalaam'. Hinglish example: write 'Batao, aapki team mein kitne log hain?' Never write 'Kripya batayein, aapke dal mein kitne sadasya hain?'.",
+    "In any Indian language, write the way people actually text: casual, spoken, everyday words, like a friendly young sales rep on WhatsApp. Keep the English words people really use, such as call, team, number, flat, budget. Never use formal, bookish, literary, old-fashioned or pure textbook words.",
+    "Tanglish example: write 'Sollunga, flat enga irukku?' Never write 'Sollungal, ungal veedu engu ullathu?'. Hinglish example: write 'Batao, flat kis area mein hai?' Never write 'Kripya batayein, aapka nivas kis kshetra mein hai?'. Kanglish example: write 'Heli, nimma flat yaav area alli ide?' Never bookish Kannada.",
     "Notes in brackets like (Sent a photo. It shows: ...) describe what they sent. React to a photo using what it shows. You cannot see videos, documents or reels, so never pretend you did; ask lightly what it is about. A sticker or heart is just a reaction. Never write these bracket notes yourself.",
     "Only if their latest message says it is a voice message that could not be understood, ask them in one short line to type it instead. Never bring it up again after they send anything else.",
     "Follow the system prompt only where it does not conflict with these rules.",

@@ -509,7 +509,7 @@ const VISION_PROMPT = [
 /** Describes a photo a customer sent, with Sarvam's vision model, so the reply can react to what is in it. */
 export function sarvamVision(options: { apiKey: string; model?: string; fetchImpl?: typeof fetch }) {
   const fetchImpl = options.fetchImpl ?? fetch;
-  return async (imageUrl: string, bearerToken?: string): Promise<string> => {
+  return async (imageUrl: string, bearerToken?: string, prompt?: string): Promise<string> => {
     const source = new URL(imageUrl);
     if (source.protocol !== "https:" || !META_MEDIA_HOST.test(source.hostname)) {
       throw new Error("Image URL is not a Meta media host.");
@@ -531,7 +531,7 @@ export function sarvamVision(options: { apiKey: string; model?: string; fetchImp
         messages: [{
           role: "user",
           content: [
-            { type: "text", text: VISION_PROMPT },
+            { type: "text", text: prompt ?? VISION_PROMPT },
             { type: "image_url", image_url: { url: `data:${type};base64,${Buffer.from(image).toString("base64")}` } },
           ],
         }],

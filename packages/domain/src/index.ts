@@ -14,6 +14,7 @@ export * from "./crm";
 export * from "./briefing";
 export * from "./identity";
 export * from "./style";
+export * from "./agent";
 
 export function pausesBlock(flags: {
   platform: boolean;

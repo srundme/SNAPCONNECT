@@ -219,6 +219,49 @@ describeDb("whatsapp chat", () => {
     expect(conversation.messages.some((message) => message.author === "AI")).toBe(true);
   });
 
+  it("joins a WhatsApp chat to the Instagram contact who gave that number, and schedules a follow-up", async () => {
+    const seeded = await seedDemo(db);
+    const instagram = await db.channelConnection.findFirstOrThrow({ where: { workspaceId: seeded.workspaceId, channel: "INSTAGRAM" } });
+    await db.channelConnection.upsert({
+      where: { channel_mode_externalAccountId: { channel: "WHATSAPP", mode: "SIMULATION", externalAccountId: "pnid-test" } },
+      update: { automationPaused: false, revokedAt: null },
+      create: { workspaceId: seeded.workspaceId, channel: "WHATSAPP", mode: "SIMULATION", externalAccountId: "pnid-test", displayName: "Demo WhatsApp", automationPaused: false },
+    });
+    const before = await db.workspace.findUniqueOrThrow({ where: { id: seeded.workspaceId }, select: { agentSettings: true } });
+    await db.workspace.update({ where: { id: seeded.workspaceId }, data: { agentSettings: { followUps: true, followUpHours: [3, 20] } } });
+    try {
+      const waId = `9198480${String(Date.now()).slice(-5)}`;
+      const contact = await db.contact.create({
+        data: {
+          workspaceId: seeded.workspaceId,
+          connectionId: instagram.id,
+          channel: "INSTAGRAM",
+          displayName: "Meera",
+          identities: { create: { workspaceId: seeded.workspaceId, connectionId: instagram.id, channel: "INSTAGRAM", identityType: "MESSAGING_PARTICIPANT", externalId: `ig-${waId}`, evidence: "INBOUND_MESSAGE" } },
+        },
+      });
+      await db.lead.create({
+        data: { workspaceId: seeded.workspaceId, contactId: contact.id, channel: "INSTAGRAM", connectionId: instagram.id, activeContactKey: contact.id, sourceType: "DIRECT_MESSAGE", testRecord: true, phoneE164: `+${waId}` },
+      });
+      const now = new Date(Date.now() - 60_000);
+      await ingestEvents(db, { channel: "WHATSAPP", mode: "SIMULATION", events: inbound(waId, `wamid.x${now.getTime()}`, "Hi, I messaged you on Instagram about my flat", now), receivedAt: now });
+      await drain();
+
+      const identity = await db.contactIdentity.findFirstOrThrow({ where: { channel: "WHATSAPP", externalId: waId } });
+      expect(identity.contactId).toBe(contact.id);
+      expect(await db.lead.count({ where: { contactId: contact.id, archivedAt: null } })).toBe(1);
+      const chat = await db.conversation.findFirstOrThrow({ where: { contactId: contact.id, channel: "WHATSAPP" } });
+      expect(await db.message.count({ where: { conversationId: chat.id, author: "AI" } })).toBeGreaterThanOrEqual(1);
+      const followUp = await db.outboxJob.findFirst({ where: { type: "FOLLOW_UP", payload: { path: ["conversationId"], equals: chat.id } } });
+      expect(followUp).toBeTruthy();
+      expect(followUp!.availableAt.getTime()).toBeLessThan(now.getTime() + 23.5 * 3_600_000);
+      expect(followUp!.availableAt.getTime()).toBeGreaterThan(now.getTime() + 2.9 * 3_600_000);
+      await db.outboxJob.update({ where: { id: followUp!.id }, data: { status: "COMPLETED" } });
+    } finally {
+      await db.workspace.update({ where: { id: seeded.workspaceId }, data: { agentSettings: before.agentSettings ?? {} } });
+    }
+  });
+
   function inbound2(waId: string, at: Date) {
     return inbound(waId, `wamid.t${at.getTime()}`, "It is a 2BHK in Chennai", at);
   }

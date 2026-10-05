@@ -202,6 +202,8 @@ model Workspace {
   zohoSendWhen       String        @default("CONTACTABLE")
   requiredLeadFields String[]      @default(["projectType"])
   leadQuestions      Json          @default("[]")
+  knowledgeBase      String        @default("")
+  agentSettings      Json          @default("{}")
   createdAt          DateTime      @default(now())
   memberships        Membership[]
   connections        ChannelConnection[]
@@ -319,6 +321,7 @@ model Media {
   unsupportedReason  String?
   openingMessage     String?
   assistantPrompt    String?
+  seenSummary        String?
   excluded           Boolean           @default(false)
   connection         ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
