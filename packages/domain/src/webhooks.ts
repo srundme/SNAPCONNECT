@@ -30,6 +30,16 @@ export type NormalizedMessage = {
   audioUrl: string | null;
 };
 
+export type NormalizedMessageEdit = {
+  kind: "message_edit";
+  externalAccountId: string;
+  messageId: string;
+  senderId: string;
+  text: string;
+  editCount: number;
+  editedAt: string;
+};
+
 export type NormalizedIgnore = {
   kind: "ignore";
   externalAccountId: string;
@@ -37,7 +47,7 @@ export type NormalizedIgnore = {
   nativeId: string | null;
 };
 
-export type NormalizedEvent = NormalizedComment | NormalizedMessage | NormalizedIgnore;
+export type NormalizedEvent = NormalizedComment | NormalizedMessage | NormalizedMessageEdit | NormalizedIgnore;
 
 type Json = Record<string, unknown>;
 
@@ -57,6 +67,7 @@ export function dedupKey(channel: Channel, event: NormalizedEvent): string {
   const account = event.externalAccountId;
   if (event.kind === "comment") return `${channel}:${account}:comment:${event.action}:${event.commentId}`;
   if (event.kind === "message") return `${channel}:${account}:message:${event.messageId}`;
+  if (event.kind === "message_edit") return `${channel}:${account}:message_edit:${event.messageId}:${event.editCount}`;
   return `${channel}:${account}:ignore:${event.reason}:${event.nativeId ?? "none"}`;
 }
 
@@ -187,8 +198,27 @@ function readMessaging(accountId: string, value: unknown, receivedAt: Date): Nor
   if (node.read || node.delivery || node.reaction) {
     return { kind: "ignore", externalAccountId: accountId, reason: "Non-message messaging event.", nativeId: null };
   }
-  const message = asObject(node.message);
   const sender = asObject(node.sender);
+  const edit = asObject(node.message_edit);
+  if (edit) {
+    const editedId = asString(edit.mid);
+    const editorId = asString(sender?.id) ?? "";
+    const editedText = asString(edit.text);
+    const editCount = Number(edit.num_edit ?? 0);
+    if (!editedId || !editedText || !(editCount >= 1) || editorId === accountId) {
+      return { kind: "ignore", externalAccountId: accountId, reason: "Message edit has no customer text change.", nativeId: editedId };
+    }
+    return {
+      kind: "message_edit",
+      externalAccountId: accountId,
+      messageId: editedId,
+      senderId: editorId,
+      text: editedText,
+      editCount,
+      editedAt: numberDate(node.timestamp) ?? receivedAt.toISOString(),
+    };
+  }
+  const message = asObject(node.message);
   const messageId = asString(message?.mid);
   const senderId = asString(sender?.id);
   if (!message || !messageId || !senderId) {

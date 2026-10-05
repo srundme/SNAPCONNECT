@@ -1,8 +1,8 @@
 import type { FetchLike } from "./channel";
 import { assertAllowedUrl } from "./hosts";
 
-export const INSTAGRAM_SUBSCRIBED_FIELDS = ["comments", "messages"] as const;
-export const FACEBOOK_SUBSCRIBED_FIELDS = ["feed", "messages"] as const;
+export const INSTAGRAM_SUBSCRIBED_FIELDS = ["comments", "messages", "message_edit"] as const;
+export const FACEBOOK_SUBSCRIBED_FIELDS = ["feed", "messages", "message_edits"] as const;
 
 /** Safe to show staff: carries Meta's error message, never a token or secret. */
 export class MetaOAuthError extends Error {

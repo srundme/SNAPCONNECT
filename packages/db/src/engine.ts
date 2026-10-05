@@ -187,7 +187,7 @@ export async function ingestEvents(
             connectionId: connection.id,
             workspaceId: connection.workspaceId,
             dedupKey: key,
-            eventType: event.kind === "comment" ? `comment.${event.action}` : "message",
+            eventType: event.kind === "comment" ? `comment.${event.action}` : event.kind === "message_edit" ? "message.edit" : "message",
             externalAccountId: event.externalAccountId,
             payload: sanitize(event),
             receivedAt: input.receivedAt,
@@ -264,6 +264,8 @@ async function processWebhook(db: Db, webhookEventId: string, runtime: Runtime):
     await handleComment(db, event.connectionId ?? "", body, event.eventType.endsWith("add"), runtime);
   } else if (event.eventType === "message") {
     await handleMessage(db, event.connectionId ?? "", body, runtime);
+  } else if (event.eventType === "message.edit") {
+    await handleMessageEdit(db, event.connectionId ?? "", body, runtime);
   }
   await db.webhookEvent.update({ where: { id: event.id }, data: { status: "PROCESSED" } });
   return "done";
@@ -585,6 +587,51 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
   await touchConnection(db, connection.id, connection.mode, "message", runtime.now());
 }
 
+async function handleMessageEdit(db: Db, connectionId: string, body: Record<string, unknown>, runtime: Runtime) {
+  const connection = await db.channelConnection.findUniqueOrThrow({ where: { id: connectionId }, include: { workspace: true } });
+  const externalMessageId = String(body.messageId ?? "");
+  const text = String(body.text ?? "").trim();
+  if (!externalMessageId || !text) return;
+  const original = await db.message.findUnique({
+    where: { connectionId_externalMessageId: { connectionId, externalMessageId } },
+  });
+  if (!original || original.author !== "PROSPECT" || original.body.trim() === text) return;
+  await db.message.update({ where: { id: original.id }, data: { body: text } });
+  await db.message.create({
+    data: {
+      workspaceId: connection.workspaceId,
+      connectionId,
+      conversationId: original.conversationId,
+      author: "SYSTEM",
+      body: `Customer edited a message. Before: "${original.body.slice(0, 300)}" Now: "${text.slice(0, 300)}"`,
+      createdAt: runtime.now(),
+    },
+  });
+  const conversation = await db.conversation.update({
+    where: { id: original.conversationId },
+    data: { revision: { increment: 1 } },
+  });
+  const contact = await db.contact.findUniqueOrThrow({ where: { id: conversation.contactId } });
+  const paused = connection.automationPaused || connection.workspace.automationPaused || Boolean(connection.revokedAt);
+  if (conversation.owner === "AI" && !paused && !contact.optedOutAt) {
+    await db.outboxJob.create({
+      data: {
+        workspaceId: connection.workspaceId,
+        type: "INFERENCE",
+        payload: {
+          conversationId: conversation.id,
+          expectedRevision: conversation.revision,
+          contactId: contact.id,
+          editedFrom: original.body.slice(0, 300),
+          editedTo: text.slice(0, 300),
+        },
+        availableAt: new Date(runtime.now().getTime() + (runtime.replySettleMs ?? 0)),
+      },
+    });
+  }
+  await touchConnection(db, connection.id, connection.mode, "message", runtime.now());
+}
+
 async function sendOpening(db: Db, attemptId: string, runtime: Runtime): Promise<"done" | "requeue"> {
   const attempt = await db.outboundAttempt.findUniqueOrThrow({ where: { id: attemptId } });
   if (attempt.status === "ACCEPTED" || attempt.status === "UNKNOWN" || attempt.status === "PERMANENT_FAILURE") return "done";
@@ -797,6 +844,30 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           answers: absorbed.answers,
         },
       });
+    }
+    const editedTo = typeof payload.editedTo === "string" ? payload.editedTo : null;
+    if (editedTo && lastSpoken?.author === "AI") {
+      const detailsChanged = recordedName !== conversation.contact.chosenName
+        || recordedPhone !== lead.phoneE164
+        || JSON.stringify(recordedAnswers) !== JSON.stringify(answerRecord(lead.answers))
+        || Boolean(form?.callbackTime && form.callbackTime !== lead.timeframeRaw);
+      if (!detailsChanged) {
+        await db.aiRun.create({
+          data: {
+            workspaceId: workspace.id,
+            conversationId,
+            model: runtime.llm.model,
+            simulated: runtime.llm.mode === "fixture",
+            latencyMs: 0,
+            valid: true,
+            diagnostic: "No reply needed: the edited message changed no lead details.",
+          },
+        });
+        return "done";
+      }
+      memoryLines.push(
+        `They just edited an earlier message from "${String(payload.editedFrom ?? "")}" to "${editedTo}". Use the edited version. Thank them for the correction in a few words, confirm the corrected detail, and continue.`,
+      );
     }
     const latestProspect = [...conversation.messages].reverse().find((message) => message.author === "PROSPECT")?.body ?? "";
     const languageSample = chatLanguageSample(conversation.messages.filter((message) => message.author === "PROSPECT").map((message) => message.body));
@@ -1689,6 +1760,16 @@ function sanitize(event: NormalizedEvent): Record<string, string | boolean | nul
       referralCommentId: event.referralCommentId,
       referralPostId: event.referralPostId,
       audioUrl: event.audioUrl,
+    };
+  }
+  if (event.kind === "message_edit") {
+    return {
+      kind: event.kind,
+      messageId: event.messageId,
+      senderId: event.senderId,
+      text: event.text,
+      editCount: String(event.editCount),
+      editedAt: event.editedAt,
     };
   }
   return { kind: "ignore", reason: event.reason };

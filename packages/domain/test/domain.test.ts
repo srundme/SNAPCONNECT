@@ -443,6 +443,17 @@ describe("webhooks", () => {
     expect(message && message.kind === "message" && message.referralCommentId).toBe("shared-native-id-42");
   });
 
+  it("reads a customer DM edit and skips empty or own edits", () => {
+    const at = new Date("2026-10-05T00:00:00Z");
+    const edits = (messaging: unknown[]) => normalizeMetaPayload("INSTAGRAM", { object: "instagram", entry: [{ id: "ig-1", messaging }] }, at);
+    const [edit] = edits([{ sender: { id: "igsid-7" }, timestamp: 1759622400000, message_edit: { mid: "mid-7", text: "9845012345", num_edit: "1" } }]);
+    expect(edit).toMatchObject({ kind: "message_edit", messageId: "mid-7", senderId: "igsid-7", text: "9845012345", editCount: 1 });
+    expect(edit && dedupKey("INSTAGRAM", edit)).toBe("INSTAGRAM:ig-1:message_edit:mid-7:1");
+    expect(edits([{ timestamp: 1, message_edit: { mid: "mid-8", num_edit: 0 } }])[0]?.kind).toBe("ignore");
+    expect(edits([{ sender: { id: "ig-1" }, message_edit: { mid: "mid-9", text: "fixed", num_edit: 1 } }])[0]?.kind).toBe("ignore");
+    expect(edits([{ message_edit: { mid: "mid-10", text: "fixed", num_edit: 2 } }])[0]).toMatchObject({ kind: "message_edit", editCount: 2 });
+  });
+
   it("rejects unknown and conflicting routes", () => {
     expect(routingDecision([])).toEqual({ reject: "Unknown account." });
     expect(routingDecision(["a", "b"])).toEqual({ reject: "Conflicting account connections." });

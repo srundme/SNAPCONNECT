@@ -71,8 +71,8 @@ describe("Meta OAuth", () => {
   it("subscribes an Instagram account to comments and messages", async () => {
     const { calls, fetchImpl } = mockFetch([[/me\/subscribed_apps/, { success: true }]]);
     const fields = await subscribeInstagramAccount({ token: "long", graphBaseUrl: "https://graph.instagram.com", version: "v23.0", fetchImpl });
-    expect(fields).toEqual(["comments", "messages"]);
-    expect(calls[0]!.url).toContain("subscribed_fields=comments%2Cmessages");
+    expect(fields).toEqual(["comments", "messages", "message_edit"]);
+    expect(calls[0]!.url).toContain("subscribed_fields=comments%2Cmessages%2Cmessage_edit");
     expect(calls[0]!.init.method).toBe("POST");
   });
 
@@ -99,7 +99,7 @@ describe("Meta OAuth", () => {
   it("subscribes a Page to feed and messages with the Page token", async () => {
     const { calls, fetchImpl } = mockFetch([[/1001\/subscribed_apps/, { success: true }]]);
     const fields = await subscribeFacebookPage({ pageId: "1001", pageToken: "page-token", graphBaseUrl: "https://graph.facebook.com", version: "v23.0", fetchImpl });
-    expect(fields).toEqual(["feed", "messages"]);
+    expect(fields).toEqual(["feed", "messages", "message_edits"]);
     expect((calls[0]!.init.headers as Record<string, string>).Authorization).toBe("Bearer page-token");
   });
 });
