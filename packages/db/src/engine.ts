@@ -43,6 +43,7 @@ import {
   selectRule,
   surfaceSupport,
   validateAiOutput,
+  wrongPhoneIn,
   dedupKey,
   type Channel,
   type ConnectionMode,
@@ -818,8 +819,13 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const nextDetail = complete && !complete.ready && !complete.cold
       ? questions.find((question) => complete.missing.includes(question.label))
       : undefined;
+    const wrongNumber = nextDetail?.kind === "phone" ? wrongPhoneIn(latestProspect, runtime.phoneRegion) : null;
+    const wrongNumberLine = wrongNumber
+      ? `They typed ${wrongNumber} as their number, but that is not a valid mobile number (an Indian mobile number has 10 digits). Do not say it is noted and do not repeat it. Politely say the number looks incorrect and ask them to type their correct mobile number again. Do not ask any other question.`
+      : null;
     const safety = questions.length
       ? [
+          ...(wrongNumberLine ? [wrongNumberLine] : []),
           ...(complete?.ready
             ? ["Every detail is collected. If they ask what happens next, say the team will call them on the number they shared to fix a demo time. Do not give a date or time, and do not ask more questions."]
             : []),
@@ -866,7 +872,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           ready: Boolean(complete?.ready),
           cold: Boolean(complete?.cold),
           minutesSinceSent: firstSync ? (runtime.now().getTime() - firstSync.updatedAt.getTime()) / 60_000 : null,
-          memoryLines,
+          memoryLines: wrongNumberLine ? [...memoryLines, wrongNumberLine] : memoryLines,
           languageLine,
           activePost: context.active || null,
           otherPosts: context.catalog || null,
@@ -1067,7 +1073,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const statement = validated.reply
       ? validated.reply.split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?")).join(" ").trim()
       : "";
-    const composed = pending && validated.reply
+    const echoesWrongNumber = Boolean(wrongNumber && validated.reply && validated.reply.replace(/\D/g, "").includes(wrongNumber));
+    const composed = wrongNumber && nextDetail && pending?.kind === "phone" && (!validated.reply || echoesWrongNumber || !replyAsksFor(nextDetail, validated.reply))
+      ? `Sorry, that number does not look right. ${scriptQuestionFor(nextDetail, languageSample ? languageName(languageSample) : null)}`
+      : pending && validated.reply
       ? replyAsksFor(pending, validated.reply) || asksSomething(validated.reply) || validated.reply.length >= 60
         ? validated.reply
         : [statement, scriptQuestionFor(pending, languageSample ? languageName(languageSample) : null)].filter(Boolean).join(" ")

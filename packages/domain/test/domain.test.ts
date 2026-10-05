@@ -3,6 +3,7 @@ import {
   acceptExtractedAnswers,
   asksSomething,
   cleanName,
+  wrongPhoneIn,
   nameInReply,
   asksForName,
   mentionsOwnName,
@@ -141,6 +142,15 @@ describe("budgets and phones", () => {
     expect(parsePhone("+91 98450 12345").kind).toBe("valid");
     expect(parsePhone("not sure").kind).toBe("declined");
     expect(parsePhone("call me maybe")).toMatchObject({ kind: "invalid" });
+  });
+
+  it("spots a mistyped mobile number but not a valid one or a small count", () => {
+    expect(wrongPhoneIn("968989889989889")).toBe("968989889989889");
+    expect(wrongPhoneIn("my number 98450 1234")).toBe("984501234");
+    expect(wrongPhoneIn("98450 12345")).toBeNull();
+    expect(wrongPhoneIn("+91-98450-12345")).toBeNull();
+    expect(wrongPhoneIn("20 calls a month")).toBeNull();
+    expect(wrongPhoneIn("The karighars")).toBeNull();
   });
 });
 

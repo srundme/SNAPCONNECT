@@ -68,6 +68,15 @@ export function parsePhone(text: string | null | undefined, defaultRegion = "IN"
   return { kind: "valid", e164: parsed.number, raw };
 }
 
+export function wrongPhoneIn(text: string, defaultRegion = "IN"): string | null {
+  const runs = (text.match(/\+?\d[\d\s().-]{4,}\d/g) ?? [])
+    .map((run) => run.trim())
+    .filter((run) => run.replace(/\D/g, "").length >= 6);
+  if (!runs.length) return null;
+  if (runs.some((run) => parsePhone(run, defaultRegion).kind === "valid")) return null;
+  return runs[0].replace(/\D/g, "");
+}
+
 export function mentionsPermission(text: string, channel: "phone" | "whatsapp"): boolean {
   const value = text.toLowerCase();
   if (!/\b(yes|ok|okay|sure|please|you can|contact me|call me|message me|follow up|reach me)\b/i.test(value)) {
