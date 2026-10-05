@@ -58,6 +58,9 @@ import {
   humanBubbles,
   readingMs,
   typingMs,
+  unrealisticAnswers,
+  dropCannedLines,
+  oneAddress,
 } from "@snapsocial/domain";
 import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, neutralDirection, speechLocale, speechScript, speechSentences, zohoAdapter, ZohoOAuthError, type LlmProvider, type SendResult, type Speaker, type VoiceDirection, type ZohoAdapter } from "@snapsocial/integrations";
 import { randomBytes } from "node:crypto";
@@ -1031,6 +1034,31 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       } else if (readsName) {
         absorbed.name = await latestName(runtime, conversation.messages, absorbed.name);
       }
+      for (const doubt of unrealisticAnswers(questions, absorbed.answers)) {
+        const marker = `Number check: ${doubt.label} ${doubt.value}`;
+        const asked = await db.message.findFirst({
+          where: { conversationId, author: "SYSTEM", body: { startsWith: marker } },
+          select: { createdAt: true },
+        });
+        const latest = [...conversation.messages].reverse().find((message) => message.author === "PROSPECT");
+        const reconfirmed = Boolean(asked && latest && latest.createdAt > asked.createdAt
+          && (/\b(yes|yeah|ya|haan|aama|really|seriously|true|confirm\w*|sure)\b/i.test(latest.body) || latest.body.replace(/\D/g, "").includes(String(doubt.value))));
+        if (reconfirmed) continue;
+        if (recordedAnswers[doubt.id] && recordedAnswers[doubt.id] !== absorbed.answers[doubt.id]) absorbed.answers[doubt.id] = recordedAnswers[doubt.id]!;
+        else delete absorbed.answers[doubt.id];
+        if (asked) continue;
+        await db.message.create({
+          data: {
+            workspaceId: workspace.id,
+            connectionId: conversation.connectionId,
+            conversationId,
+            author: "SYSTEM",
+            body: `${marker} looks unrealistic, so it was not recorded. Asked them for the real number.`,
+            createdAt: runtime.now(),
+          },
+        });
+        memoryLines.push(`They said their ${doubt.label.toLowerCase()} is ${doubt.value.toLocaleString("en-IN")}, which is not realistic for a business enquiring on ${channelLabel(conversation.channel)}. It is almost surely a joke or a slip. Do not record it, never say noted and never repeat it back as fact. React like a person who got the joke: start your reply with a short haha, then lightly ask for the real number.`);
+      }
       recordedName = absorbed.name;
       recordedPhone = absorbed.phoneE164;
       recordedAnswers = absorbed.answers;
@@ -1395,7 +1423,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : validated.reply ?? fallback;
     const firstWhatsAppReply = conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI");
     const earlierReplies = conversation.messages.filter((message) => message.author === "AI").map((message) => message.body);
-    const humanized = composed ? humanizeReply(composed) : composed;
+    const humanized = composed ? oneAddress(dropCannedLines(humanizeReply(composed))) : composed;
     const written = humanized && firstWhatsAppReply
       ? withAutomationDisclosure(humanized, workspace.brandName, workspace.agentName)
       : humanized;

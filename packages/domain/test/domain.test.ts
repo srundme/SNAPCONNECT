@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   acceptExtractedAnswers,
+  dropCannedLines,
+  oneAddress,
+  unrealisticAnswers,
   casualText,
   humanBubbles,
   plainWords,
@@ -1046,5 +1049,24 @@ describe("texting like a person", () => {
     expect(readingMs("x".repeat(400))).toBe(7000);
     expect(typingMs("ok sir")).toBe(1200);
     expect(typingMs("x".repeat(400))).toBe(5000);
+  });
+});
+
+describe("joke numbers and canned lines", () => {
+  const questions = [
+    { id: "team", label: "Telecalling team size" },
+    { id: "volume", label: "Monthly call volume" },
+    { id: "company", label: "Company name" },
+  ];
+
+  it("flags a team of lakhs or crores of calls, not normal numbers", () => {
+    expect(unrealisticAnswers(questions, { team: "100000", volume: "300000000", company: "999999" }).map((item) => item.id)).toEqual(["team", "volume"]);
+    expect(unrealisticAnswers(questions, { team: "79", volume: "40000" })).toEqual([]);
+  });
+
+  it("drops call centre sign-offs and extra sirs", () => {
+    expect(dropCannedLines("Got it sir. The team will call at 6 PM. Anything else on your mind sir?")).toBe("Got it sir. The team will call at 6 PM.");
+    expect(dropCannedLines("Is there anything else I can help you with?")).toBe("Is there anything else I can help you with?");
+    expect(oneAddress("Got it sir, one lakh noted. The team will call you at 6 PM sir. Anything else sir?")).toBe("Got it sir, one lakh noted. The team will call you at 6 PM. Anything else?");
   });
 });

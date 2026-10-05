@@ -9,6 +9,46 @@ export function phoneProblem(digits: string): string {
   return "that does not look like a working mobile number";
 }
 
+/**
+ * Numeric answers no real customer of an AI calling product would give: a telecalling team of
+ * lakhs, or crores of calls a month. These are jokes or slips, so they are checked before recording.
+ */
+export function unrealisticAnswers(
+  questions: Array<{ id: string; label: string }>,
+  answers: Record<string, string>,
+): Array<{ id: string; label: string; value: number }> {
+  return questions.flatMap((question) => {
+    const value = Number(String(answers[question.id] ?? "").replace(/[,\s]/g, ""));
+    if (!Number.isFinite(value) || value <= 0) return [];
+    const limit = /volume|month/i.test(question.label) ? 10_000_000 : /team|telecaller|agent|staff|people/i.test(question.label) ? 5_000 : null;
+    return limit && value > limit ? [{ id: question.id, label: question.label, value }] : [];
+  });
+}
+
+const CANNED = /\b(?:is there )?anything else (?:i can help(?: you)?(?: with)?|on your mind)|\bhave a (?:great|nice|good|wonderful) day\b|\brest assured\b|\bfeel free to (?:ask|reach|contact)\b|\bhope this helps\b|\bplease be informed\b|\bkindly note\b/i;
+
+/** Removes call centre sign-offs; keeps the reply as is if that would leave nothing. */
+export function dropCannedLines(text: string): string {
+  const lines = text.split(/\n+/).map((line) => sentencesOf(line).filter((sentence) => !CANNED.test(sentence)).join(" ")).filter(Boolean);
+  return lines.length ? lines.join("\n") : text;
+}
+
+/** People say sir once in a message, not in every sentence. */
+export function oneAddress(text: string): string {
+  let seen = false;
+  return text
+    .replace(/(\s*,?\s*)\b(sir|mam|madam|bro)\b/gi, (match) => {
+      if (!seen) {
+        seen = true;
+        return match;
+      }
+      return "";
+    })
+    .replace(/\s+([.?!,])/g, "$1")
+    .replace(/ {2,}/g, " ")
+    .trim();
+}
+
 const AI_PRAISE = "great|perfect|excellent|wonderful|fantastic|amazing|awesome|brilliant|superb|lovely";
 
 /** Swaps the polished words a chatbot reaches for with the plain ones people actually type. */
