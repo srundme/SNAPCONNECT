@@ -655,8 +655,10 @@ async function voiceClip(
         return direction;
       });
     }
+    if (/\b(sorry|apolog\w*|maaf\w*|mannikk\w*|kshama)\b/i.test(text)) direction = { ...direction, laugh: false };
     const transcript = speechScript(text, direction);
     if (!transcript) return null;
+    console.info(`Voice reply: ${JSON.stringify({ ...direction, locale: spoken.locale, chars: transcript.length })}`);
     const format = channel === "INSTAGRAM" ? "wav" : "mp3";
     const speech = await runtime.speak({
       transcript,
@@ -892,6 +894,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       gapHours >= 12
         ? `They are messaging again after ${gapHours >= 48 ? `${Math.round(gapHours / 24)} days` : `${Math.round(gapHours)} hours`}. Welcome them back in a few words and continue from where you stopped.`
         : "",
+      "If their latest message has a joke, a tease or playful sarcasm, like their wife or boss holding the money, first enjoy it in a few friendly words, like \"Haha, then she is the real boss!\", then continue. If they sound annoyed, do not joke.",
     ].filter(Boolean);
     const prompts = resolveReplyPrompts(workspace.replyPrompts);
     const sourceMediaId = conversation.sourceMediaId ?? lead.sourceMediaId;
