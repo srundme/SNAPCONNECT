@@ -153,7 +153,7 @@ export const defaultReplyPrompts: Record<ReplyPromptField, string> = {
   requirement: "What kind of interiors work do you need?",
   budget: "What budget range should we plan around?",
   timeframe: "When are you hoping to start?",
-  phone: "What phone number should the team use?",
+  phone: "Which number should the team call you on?",
   whatsapp: "Is WhatsApp on that same number, or a different one?",
   permission: "May the team call or WhatsApp you about this project?",
   closing: "Thanks. I have the project details and the team can follow up on your preferred channel.",
@@ -695,13 +695,13 @@ export function replyAsksFor(question: LeadQuestion, reply: string): boolean {
 }
 
 function scriptQuestion(question: LeadQuestion): string {
-  if (question.kind === "name") return "What is your name?";
-  if (question.kind === "phone") return "What phone number should the team use?";
-  if (/company/i.test(question.label)) return "What is the company name?";
-  if (/team/i.test(question.label)) return "How many people are on the telecalling team?";
-  if (/issue|why/i.test(question.label)) return "What is going wrong with the calls today?";
-  if (/volume|month/i.test(question.label)) return "About how many calls do you handle in a month?";
-  if (question.kind === "yesno") return "Do you want to attend a demo?";
+  if (question.kind === "name") return "May I know your name?";
+  if (question.kind === "phone") return "Which number should the team call you on?";
+  if (/company/i.test(question.label)) return "Which company is this for?";
+  if (/team/i.test(question.label)) return "How big is your telecalling team?";
+  if (/issue|why/i.test(question.label)) return "What's not working with your calls right now?";
+  if (/volume|month/i.test(question.label)) return "Roughly how many calls do you handle a month?";
+  if (question.kind === "yesno") return "Would you like to see a quick demo?";
   return question.label;
 }
 

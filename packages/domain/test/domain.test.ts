@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   acceptExtractedAnswers,
+  dropRepeatedSentences,
+  phoneProblem,
   nameConcern,
   nameFitsProfile,
   publicFigure,
@@ -589,7 +591,7 @@ describe("ai validation", () => {
     expect(absorbed.phoneE164).toBe("+916383653279");
     expect(absorbed.answers["company-name"]).toBe("Consoling");
     expect(absorbed.answers.demo).toBe("yes");
-    expect(scriptedReply({ ...absorbed, questions, latestUser: "Yes" })).toBe("How many people are on the telecalling team?");
+    expect(scriptedReply({ ...absorbed, questions, latestUser: "Yes" })).toBe("How big is your telecalling team?");
     const answered = absorbTranscript({
       questions,
       messages: [
@@ -703,7 +705,7 @@ describe("ai validation", () => {
         { author: "PROSPECT", body: "Mujueeee apka pricing bolo" },
         { author: "AI", body: "What is your company name sir?" },
         { author: "PROSPECT", body: "Muje dho bashaa me chaiyey" },
-        { author: "AI", body: "How many people are on the telecalling team?" },
+        { author: "AI", body: "How big is your telecalling team?" },
         { author: "PROSPECT", body: "2000 mins ko kethaa" },
       ],
       name: null,
@@ -993,5 +995,23 @@ describe("name sanity", () => {
     expect(nameConcern("Ramesh", ["Karthikeyan", "karthikeyansru"])).toEqual({ kind: "profile_mismatch", name: "Ramesh", profile: "Karthikeyan / karthikeyansru" });
     expect(nameConcern("Karthik", ["Karthikeyan"])).toBeNull();
     expect(nameConcern(null, ["Karthikeyan"])).toBeNull();
+  });
+});
+
+describe("human reply style", () => {
+  it("says what is wrong with a number", () => {
+    expect(phoneProblem("9876543210")).toBe("that looks like a sample number, not a real one");
+    expect(phoneProblem("63836532798179")).toBe("that has 14 digits, and a mobile number has 10");
+    expect(phoneProblem("3346686789")).toBe("Indian mobile numbers start with 6, 7, 8 or 9");
+  });
+
+  it("never sends the same sentence twice in a chat", () => {
+    const earlier = ["Sir, exact office address details na team demo call alli confirm madthare. Neenu voice message kalisidde, adu sariyaagi arthavagalilla."];
+    expect(dropRepeatedSentences("Sure sir, team call alli ella details share madthare. Neenu voice message kalisidde, adu sariyaagi arthavagalilla.", earlier))
+      .toBe("Sure sir, team call alli ella details share madthare.");
+    expect(dropRepeatedSentences("Neenu voice message kalisidde, adu sariyaagi arthavagalilla.", earlier))
+      .toBe("Neenu voice message kalisidde, adu sariyaagi arthavagalilla.");
+    expect(dropRepeatedSentences("Got it. Which number should the team call you on?", ["Which number should the team call you on, mam?"]))
+      .toBe("Got it.");
   });
 });

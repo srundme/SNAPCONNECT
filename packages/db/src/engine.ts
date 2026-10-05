@@ -53,6 +53,8 @@ import {
   type ReplyPromptField,
   type NormalizedEvent,
   nameConcern,
+  phoneProblem,
+  dropRepeatedSentences,
 } from "@snapsocial/domain";
 import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, neutralDirection, speechLocale, speechScript, speechSentences, zohoAdapter, ZohoOAuthError, type LlmProvider, type SendResult, type Speaker, type VoiceDirection, type ZohoAdapter } from "@snapsocial/integrations";
 import { randomBytes } from "node:crypto";
@@ -1046,7 +1048,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? wrongInEdit ?? wrongPhoneIn(latestProspect, runtime.phoneRegion, nextDetail?.kind === "phone" ? 6 : 8)
       : null;
     const wrongNumberLine = wrongNumber
-      ? `They typed ${wrongNumber} as their number, but that is not a real mobile number (an Indian mobile number has exactly 10 digits, starts with 6, 7, 8 or 9, and is never a pattern like 9876543210, 1234567890 or 9999999999). Do not say it is noted, saved or updated, and do not repeat it. Politely say the number looks incorrect and ask them to type their correct mobile number again. Do not ask any other question.`
+      ? `They typed ${wrongNumber} as their number, but that is not a real mobile number (an Indian mobile number has exactly 10 digits, starts with 6, 7, 8 or 9, and is never a pattern like 9876543210, 1234567890 or 9999999999). Do not say it is noted, saved or updated, and do not repeat it. Tell them briefly what is wrong: ${phoneProblem(wrongNumber)}. Then ask them to send it again. If you already asked before, say it differently this time, like a person would. Do not ask any other question.`
       : null;
     const safety = questions.length
       ? [
@@ -1301,14 +1303,15 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : "";
     const echoesWrongNumber = Boolean(wrongNumber && validated.reply && validated.reply.replace(/\D/g, "").includes(wrongNumber));
     const composed = wrongNumber && phoneQuestion && (!validated.reply || echoesWrongNumber || !replyAsksFor(phoneQuestion, validated.reply))
-      ? `Sorry, that number does not look right. ${scriptQuestionFor(phoneQuestion, languageSample ? languageName(languageSample) : null)}`
+      ? `Hmm, ${phoneProblem(wrongNumber)}. ${scriptQuestionFor(phoneQuestion, languageSample ? languageName(languageSample) : null)}`
       : pending && validated.reply
       ? replyAsksFor(pending, validated.reply) || asksSomething(validated.reply) || validated.reply.length >= 60 || raisesConcern(latestUser)
         ? validated.reply
         : [statement, scriptQuestionFor(pending, languageSample ? languageName(languageSample) : null)].filter(Boolean).join(" ")
       : validated.reply ?? fallback;
     const firstWhatsAppReply = conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI");
-    const humanized = composed ? humanizeReply(composed) : composed;
+    const earlierReplies = conversation.messages.filter((message) => message.author === "AI").map((message) => message.body);
+    const humanized = composed ? dropRepeatedSentences(humanizeReply(composed), earlierReplies) : composed;
     const reply = humanized && firstWhatsAppReply
       ? withAutomationDisclosure(humanized, workspace.brandName, workspace.agentName)
       : humanized;

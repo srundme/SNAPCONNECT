@@ -13,6 +13,7 @@ export * from "./webhooks";
 export * from "./crm";
 export * from "./briefing";
 export * from "./identity";
+export * from "./style";
 
 export function pausesBlock(flags: {
   platform: boolean;
