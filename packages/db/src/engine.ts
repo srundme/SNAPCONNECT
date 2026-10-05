@@ -760,6 +760,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     let recordedAnswers = answerRecord(lead.answers);
     const readsName = Boolean(runtime.llm.readName) && questions.some((question) => question.kind === "name");
     let formRead = false;
+    let form: Awaited<ReturnType<typeof readLeadForm>> = null;
     if (questions.length) {
       let absorbed = absorbTranscript({
         questions,
@@ -770,7 +771,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         phoneRegion: runtime.phoneRegion,
         nameReadElsewhere: readsName,
       });
-      const form = await readLeadForm(runtime, questions, conversation.messages);
+      form = await readLeadForm(runtime, questions, conversation.messages);
       if (form) {
         formRead = true;
         absorbed = {
@@ -791,6 +792,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         where: { id: lead.id },
         data: {
           ...(absorbed.phoneE164 ? { phoneE164: absorbed.phoneE164, phonePermission: true } : {}),
+          ...(form?.callbackTime ? { timeframeRaw: form.callbackTime } : {}),
           answers: absorbed.answers,
         },
       });
@@ -1223,7 +1225,8 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
       phoneE164: lead.phoneE164,
     });
     Object.assign(record, placed.fields);
-    if (placed.lines.length) record.Description = [record.Description, ...placed.lines].filter(Boolean).join("\n");
+    const lines = [...placed.lines, ...(lead.timeframeRaw ? [`Preferred call time: ${lead.timeframeRaw}`] : [])];
+    if (lines.length) record.Description = [record.Description, ...lines].filter(Boolean).join("\n");
     if (mapping.externalKeyField) record[mapping.externalKeyField] = lead.id;
   }
   const result = lead.workspace.mode === "INTEGRATION"

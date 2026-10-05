@@ -518,6 +518,8 @@ export function cleanName(candidate: string | null | undefined, source: string):
   return name.length <= 40 ? name : null;
 }
 
+export const CALLBACK_TIME_KEY = "preferred-call-time";
+
 export function numericQuestion(question: LeadQuestion): boolean {
   return question.kind === "text" && /team|size|volume|how many|count|number of|calls/i.test(question.label) && !/issue|why|problem/i.test(question.label);
 }
@@ -551,8 +553,12 @@ export function acceptExtractedAnswers(input: {
   raw: Record<string, unknown>;
   prospectText: string;
   phoneRegion?: string;
-}): { name: string | null; phoneE164: string | null; answers: Record<string, string> } {
+}): { name: string | null; phoneE164: string | null; answers: Record<string, string>; callbackTime: string | null } {
   const answers: Record<string, string> = {};
+  const time = input.raw[CALLBACK_TIME_KEY];
+  const callbackTime = typeof time === "string" && time.trim() && !/^(null|none)$/i.test(time.trim()) && wordsWereTyped(time, input.prospectText, 0.5)
+    ? time.trim().slice(0, 80)
+    : null;
   let name: string | null = null;
   let phoneE164: string | null = null;
   for (const question of input.questions) {
@@ -575,7 +581,7 @@ export function acceptExtractedAnswers(input: {
       answers[question.id] = text.slice(0, 180);
     }
   }
-  return { name, phoneE164, answers };
+  return { name, phoneE164, answers, callbackTime };
 }
 
 export function asksForName(aiText: string): boolean {

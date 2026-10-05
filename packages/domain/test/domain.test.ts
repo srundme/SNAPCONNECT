@@ -875,6 +875,7 @@ describe("lead form read by the model", () => {
       name: "Priya",
       phoneE164: "+919845012345",
       answers: { "company-name": "Glow Studio", team: "12", volume: "25000", issue: "follow ups get missed", demo: "yes" },
+      callbackTime: null,
     });
   });
 
@@ -884,7 +885,14 @@ describe("lead form read by the model", () => {
       raw: { "person-name": "Suresh", "company-name": "Acme Corp", "contact-number": "9876543210", team: 45, volume: 9999, issue: null, demo: "maybe" },
       prospectText: "my name is Gopi\nwe are a small shop\n8904887300",
     });
-    expect(got).toEqual({ name: null, phoneE164: null, answers: {} });
+    expect(got).toEqual({ name: null, phoneE164: null, answers: {}, callbackTime: null });
+  });
+
+  it("keeps the preferred call time only when they typed it", () => {
+    const typed = acceptExtractedAnswers({ questions, raw: { "preferred-call-time": "Tom 2 pm" }, prospectText: "Tom 2 pm" });
+    expect(typed.callbackTime).toBe("Tom 2 pm");
+    const invented = acceptExtractedAnswers({ questions, raw: { "preferred-call-time": "Friday evening" }, prospectText: "yes iruku" });
+    expect(invented.callbackTime).toBeNull();
   });
 
   it("treats Tanglish and Hinglish requests as questions", () => {

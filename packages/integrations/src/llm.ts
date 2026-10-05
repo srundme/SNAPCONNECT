@@ -1,4 +1,4 @@
-import { aiOutputSchema, parseBudget, type AiOutput } from "@snapsocial/domain";
+import { aiOutputSchema, CALLBACK_TIME_KEY, parseBudget, type AiOutput } from "@snapsocial/domain";
 
 export type LlmRequest = {
   system: string;
@@ -236,6 +236,7 @@ export function sarvamLlm(options: {
                   : "their answer in their own words, short.";
         return `- "${question.id}" (${question.label}): ${rule}`;
       });
+      fields.push(`- "${CALLBACK_TIME_KEY}" (Preferred call time): when they want the team to call them, exactly as they typed, like "Tom 2 pm" or "naalaiku evening". Null if they did not say.`);
       const chat = transcript
         .filter((message) => message.author === "AI" || message.author === "PROSPECT")
         .slice(-30)
