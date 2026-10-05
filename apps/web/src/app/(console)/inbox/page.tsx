@@ -6,6 +6,7 @@ import { claimConversation, injectSimulation, sendStaffReply } from "@/lib/actio
 import { ChannelMark, Empty, Notice } from "@/components/ui";
 import { clsx } from "clsx";
 import { requireWorkspace } from "@/lib/session";
+import { ChatThread, LiveInbox } from "@/components/live-inbox";
 
 function authorLabel(author: string) {
   if (author === "PROSPECT") return "Them";
@@ -61,6 +62,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
           <button name="scenario" value="facebook-reply" type="submit">Simulate Messenger reply</button>
         </form>
       ) : null}
+      <LiveInbox />
       {params.error ? <Notice tone="stop">{params.error}</Notice> : null}
       {conversations.length === 0 ? <Empty title="No conversations" body="A matching comment shows up here after the worker processes it." /> : (
         <div className="grid h-[calc(100dvh-7.5rem)] min-h-[560px] overflow-hidden rounded-2xl bg-white shadow-[0_1px_0_rgba(20,23,28,0.06)] lg:grid-cols-[300px_minmax(0,1fr)_260px]">
@@ -103,7 +105,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
                   </div>
                   <ChannelMark channel={selected.channel} />
                 </div>
-                <ol className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto p-4">
+                <ChatThread key={selected.id} count={selected.messages.length} className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto p-4">
                   {selected.messages.map((message) => {
                     const inbound = message.author === "PROSPECT";
                     return (
@@ -116,7 +118,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
                       </li>
                     );
                   })}
-                </ol>
+                </ChatThread>
                 <form action={sendStaffReply} className="shrink-0 border-t border-[var(--color-line)] p-3">
                   <input type="hidden" name="conversationId" value={selected.id} />
                   <div className="flex items-end gap-2">
