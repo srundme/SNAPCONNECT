@@ -169,6 +169,36 @@ describeDb("two-channel simulation", () => {
     await takeOver(db, conversation.id, "tester");
     const owned = await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } });
     expect(owned.owner).toBe("HUMAN");
+
+    const crmId = igLead?.crm?.crmId ?? "";
+    const edit = normalizeMetaPayload(
+      "INSTAGRAM",
+      {
+        object: "instagram",
+        entry: [
+          {
+            id: "17841405880000001",
+            messaging: [
+              {
+                sender: { id: igParticipant },
+                recipient: { id: "17841405880000001" },
+                timestamp: now.getTime() + 60_000,
+                message_edit: { mid: igMessageId, num_edit: 1, text: "It is a home in Mysuru. Full home interiors. Budget is 15 lakhs. Start next month. Call +91 89048 87500. You can call me. WhatsApp is different +91 90000 11111." },
+              },
+            ],
+          },
+        ],
+      },
+      now,
+    );
+    await ingestEvents(db, { channel: "INSTAGRAM", mode: "SIMULATION", events: edit, receivedAt: new Date() });
+    await drain();
+    const corrected = await db.lead.findUniqueOrThrow({ where: { id: igLead?.id ?? "" }, include: { crm: true } });
+    expect(corrected.phoneE164).toBe("+918904887500");
+    expect(corrected.crm?.crmId).toBe(crmId);
+    expect(corrected.crm?.syncedRevision).toBe(corrected.revision);
+    expect(readSimulationCrm(crmId)?.Phone).toBe("+918904887500");
+
     await deleteContactData(db, igLead?.contactId ?? "", seeded.workspaceId, "tester");
     const gone = await db.contact.findUnique({ where: { id: igLead?.contactId ?? "" } });
     expect(gone).toBeNull();

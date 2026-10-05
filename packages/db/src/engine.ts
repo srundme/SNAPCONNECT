@@ -726,6 +726,13 @@ async function handleMessageEdit(db: Db, connectionId: string, body: Record<stri
     data: { revision: { increment: 1 } },
   });
   const contact = await db.contact.findUniqueOrThrow({ where: { id: conversation.contactId } });
+  const phoneChanged = await applyEditedPhone(db, {
+    contactId: contact.id,
+    before: original.body,
+    after: text,
+    region: runtime.phoneRegion,
+    channel: conversation.channel,
+  });
   const paused = connection.automationPaused || connection.workspace.automationPaused || Boolean(connection.revokedAt);
   if (conversation.owner === "AI" && !paused && !contact.optedOutAt) {
     await db.outboxJob.create({
@@ -738,12 +745,44 @@ async function handleMessageEdit(db: Db, connectionId: string, body: Record<stri
           contactId: contact.id,
           editedFrom: original.body.slice(0, 300),
           editedTo: text.slice(0, 300),
+          ...(phoneChanged ? { phoneChanged: true } : {}),
         },
         availableAt: new Date(runtime.now().getTime() + (runtime.replySettleMs ?? 0)),
       },
     });
   }
   await touchConnection(db, connection.id, connection.mode, "message", runtime.now());
+}
+
+/**
+ * A corrected number replaces the recorded one straight away, even when staff own the chat or
+ * automation is paused, and a lead that already reached Zoho is re-synced so the same record gets it.
+ */
+async function applyEditedPhone(
+  db: Db,
+  input: { contactId: string; before: string; after: string; region?: string; channel: string },
+): Promise<boolean> {
+  if (input.channel === "WHATSAPP") return false;
+  const lead = await db.lead.findFirst({ where: { contactId: input.contactId, archivedAt: null }, include: { crm: true } });
+  if (!lead) return false;
+  const region = input.region ?? "IN";
+  const before = validPhonesIn(input.before, region);
+  const after = validPhonesIn(input.after, region);
+  const next = after.find((phone) => !before.includes(phone));
+  if (!next || next === lead.phoneE164) return false;
+  if (lead.phoneE164 && after.includes(lead.phoneE164)) return false;
+  const hadNumber = before.length > 0 || /\d{6,}/.test(input.before.replace(/[\s-]/g, ""));
+  if (lead.phoneE164 && !hadNumber) return false;
+  await db.lead.update({
+    where: { id: lead.id },
+    data: { phoneE164: next, phonePermission: true, revision: { increment: 1 } },
+  });
+  if (lead.crm?.crmId || lead.crmState === "SYNCED") {
+    await db.outboxJob.create({
+      data: { workspaceId: lead.workspaceId, type: "CRM_SYNC", payload: { leadId: lead.id, contactId: input.contactId } },
+    });
+  }
+  return true;
 }
 
 async function sendOpening(db: Db, attemptId: string, runtime: Runtime): Promise<"done" | "requeue"> {
@@ -1000,7 +1039,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     const wrongInEdit = editedTo ? wrongPhoneIn(editedTo, runtime.phoneRegion) : null;
     if (editedTo && lastSpoken?.author === "AI") {
-      const detailsChanged = recordedName !== conversation.contact.chosenName
+      const detailsChanged = payload.phoneChanged === true
+        || recordedName !== conversation.contact.chosenName
         || recordedPhone !== lead.phoneE164
         || JSON.stringify(recordedAnswers) !== JSON.stringify(answerRecord(lead.answers))
         || Boolean(form?.callbackTime && form.callbackTime !== lead.timeframeRaw);
