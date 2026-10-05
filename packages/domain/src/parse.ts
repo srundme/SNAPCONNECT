@@ -68,10 +68,10 @@ export function parsePhone(text: string | null | undefined, defaultRegion = "IN"
   return { kind: "valid", e164: parsed.number, raw };
 }
 
-export function wrongPhoneIn(text: string, defaultRegion = "IN"): string | null {
+export function wrongPhoneIn(text: string, defaultRegion = "IN", minDigits = 6): string | null {
   const runs = (text.match(/\+?\d[\d\s().-]{4,}\d/g) ?? [])
     .map((run) => run.trim())
-    .filter((run) => run.replace(/\D/g, "").length >= 6);
+    .filter((run) => run.replace(/\D/g, "").length >= minDigits);
   if (!runs.length) return null;
   if (runs.some((run) => parsePhone(run, defaultRegion).kind === "valid")) return null;
   return runs[0].replace(/\D/g, "");

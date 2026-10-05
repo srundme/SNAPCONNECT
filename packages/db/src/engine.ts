@@ -890,7 +890,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const nextDetail = complete && !complete.ready && !complete.cold
       ? questions.find((question) => complete.missing.includes(question.label))
       : undefined;
-    const wrongNumber = nextDetail?.kind === "phone" ? wrongPhoneIn(latestProspect, runtime.phoneRegion) : null;
+    const phoneQuestion = questions.find((question) => question.kind === "phone");
+    const wrongNumber = phoneQuestion && !recordedPhone && !complete?.cold
+      ? wrongPhoneIn(latestProspect, runtime.phoneRegion, nextDetail?.kind === "phone" ? 6 : 8)
+      : null;
     const wrongNumberLine = wrongNumber
       ? `They typed ${wrongNumber} as their number, but that is not a valid mobile number (an Indian mobile number has 10 digits). Do not say it is noted and do not repeat it. Politely say the number looks incorrect and ask them to type their correct mobile number again. Do not ask any other question.`
       : null;
@@ -1145,8 +1148,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? validated.reply.split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?")).join(" ").trim()
       : "";
     const echoesWrongNumber = Boolean(wrongNumber && validated.reply && validated.reply.replace(/\D/g, "").includes(wrongNumber));
-    const composed = wrongNumber && nextDetail && pending?.kind === "phone" && (!validated.reply || echoesWrongNumber || !replyAsksFor(nextDetail, validated.reply))
-      ? `Sorry, that number does not look right. ${scriptQuestionFor(nextDetail, languageSample ? languageName(languageSample) : null)}`
+    const composed = wrongNumber && phoneQuestion && !updatedLead.phoneE164 && (!validated.reply || echoesWrongNumber || !replyAsksFor(phoneQuestion, validated.reply))
+      ? `Sorry, that number does not look right. ${scriptQuestionFor(phoneQuestion, languageSample ? languageName(languageSample) : null)}`
       : pending && validated.reply
       ? replyAsksFor(pending, validated.reply) || asksSomething(validated.reply) || validated.reply.length >= 60
         ? validated.reply

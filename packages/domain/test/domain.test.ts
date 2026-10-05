@@ -151,6 +151,8 @@ describe("budgets and phones", () => {
     expect(wrongPhoneIn("+91-98450-12345")).toBeNull();
     expect(wrongPhoneIn("20 calls a month")).toBeNull();
     expect(wrongPhoneIn("The karighars")).toBeNull();
+    expect(wrongPhoneIn("around 100000 calls", "IN", 8)).toBeNull();
+    expect(wrongPhoneIn("company Karighars, number 968989889989889", "IN", 8)).toBe("968989889989889");
   });
 });
 
