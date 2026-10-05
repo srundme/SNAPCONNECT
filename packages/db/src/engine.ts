@@ -73,6 +73,7 @@ export type Runtime = {
   zohoClientSecret: string | null;
   zohoAccountsUrl: string | null;
   transcribe?: (audioUrl: string) => Promise<string>;
+  replySettleMs?: number;
 };
 
 function sendConnection(connection: SendConnection): SendConnection {
@@ -531,6 +532,7 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
       : "";
     text = transcript.trim() ? transcript.trim() : "(Sent a voice message that could not be understood.)";
   }
+  if (!text.trim()) return;
   try {
     await db.message.create({
       data: {
@@ -568,6 +570,7 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
         workspaceId: connection.workspaceId,
         type: "INFERENCE",
         payload: { conversationId: conversation.id, expectedRevision: updated.revision, contactId },
+        availableAt: new Date(runtime.now().getTime() + (runtime.replySettleMs ?? 0)),
       },
     });
   }

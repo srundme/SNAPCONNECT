@@ -291,8 +291,8 @@ const NO_ANSWER = /^(no|nope|not interested|not now|later|maybe later|nahi|nahin
 
 const ENGLISH_WORDS = /\b(the|a|an|is|are|was|were|be|am|i|we|you|he|she|it|they|me|my|our|your|this|that|what|how|why|when|where|who|which|want|wanted|need|have|has|had|do|does|did|can|could|will|would|should|know|help|about|for|to|of|in|on|at|with|from|and|or|but|not|if|so|team|calls?|yes|no|ok|okay|thanks?|thank|please|company|business|name|number|demo|month|work|works|use|get|like|more|tell|just|also|there|here)\b/gi;
 
-const WANTS_ENGLISH = /\b(speak|talk|reply|text|write|chat|message)\b.{0,20}\benglish\b|\benglish\s*(please|pls|plz|only)\b|\b(in|only)\s+english\b|\bdon'?t\s+(know|understand|speak|read)\s+(tamil|hindi|telugu|kannada|malayalam)\b|\b(no|not)\s+(tamil|hindi)\b|\bstill in (tamil|hindi)\b/i;
-const WANTS_LOCAL = /\b(tamil|hindi|telugu|kannada|malayalam)\s*(la|le|mein|me|lo)\s*(pesunga|pesu|baat|bolo|maatladu|matladandi|samsarikku)/i;
+const WANTS_ENGLISH = /\b(speak|talk|reply|text|write|chat|message)\b.{0,20}\benglish\b|\benglish\s*(please|pls|plz|only)\b|\b(in|only)\s+english\b|\b(don'?t|do not|can'?t|cannot|dont|cant)\s+(know|understand|speak|read)\s+(tamil|hindi|telugu|kannada|malayalam)\b|\b(no|not)\s+(tamil|hindi)\b|\bstill in (tamil|hindi)\b/i;
+const WANTS_LOCAL = /\b(tamil|hindi|telugu|kannada|malayalam)\s*(la|le|mein|me|lo)\s*(pesunga|pesu|baat|bolo|maatladu|matladandi|samsarikku)|\b(talk|speak|reply|chat|text|write|message)\b.{0,20}\b(tamil|hindi|telugu|kannada|malayalam)\b|\b(tamil|hindi|telugu|kannada|malayalam)\s*(please|pls|plz|only)\b/i;
 
 export function asksForLanguage(text: string): "english" | "local" | null {
   const plain = text.replace(/[‘’`]/g, "'");
@@ -314,17 +314,19 @@ export function chatLanguageSample(prospectTexts: string[]): string | null {
     if (native) return looksEnglish(text) ? null : text.slice(0, 160);
     const markers = indicMarkers(text);
     const english = text.match(ENGLISH_WORDS)?.length ?? 0;
-    return markers >= 2 && markers * 2 >= english ? text.slice(0, 160) : null;
+    if (markers >= 2 && markers * 2 >= english) return text.slice(0, 160);
+    if (english >= 2 && english > markers * 2) return null;
   }
   return null;
 }
 
 function indicMarkers(text: string): number {
+  const plain = squeeze(text);
   return Math.max(
-    text.match(TANGLISH)?.length ?? 0,
-    text.match(HINGLISH)?.length ?? 0,
-    text.match(TELUGLISH)?.length ?? 0,
-    text.match(KANGLISH)?.length ?? 0,
+    plain.match(TANGLISH)?.length ?? 0,
+    plain.match(HINGLISH)?.length ?? 0,
+    plain.match(TELUGLISH)?.length ?? 0,
+    plain.match(KANGLISH)?.length ?? 0,
   );
 }
 
@@ -336,18 +338,33 @@ const SCRIPTS: Array<[RegExp, string]> = [
   [/[\u0D00-\u0D7F]/, "Malayalam in Malayalam script"],
   [/[\u0980-\u09FF]/, "Bengali in Bengali script"],
 ];
-const TANGLISH = /\b(unga|enga|enna|enaku|ennaku|irukku|iruku|irukanga|pannanum|pannalam|panren|venum|venam|sollunga|romba|konjam|illa|aama|seri|sari|naan|neenga|epdi|eppadi|evlo|enoda|ennoda|thaan|dhaan|ah|la|ku)\b/gi;
-const HINGLISH = /\b(hai|hain|kya|kaise|mein|mera|meri|aap|aapka|hum|hamara|nahi|nahin|karna|karte|chahiye|kitne|kitna|bhai|haan|theek|accha|achha|batao|wala|ke|ka|ki)\b/gi;
-const TELUGLISH = /\b(meeru|nenu|undi|ledu|cheppandi|kavali|enti|ela|baagundi|chala)\b/gi;
-const KANGLISH = /\b(neevu|naanu|beku|illa|heli|hege|tumba|yenu|maadi)\b/gi;
+const TANGLISH = /\b(unga|enga|ena|enaku|iruku|irukanga|irukom|panum|panalam|panren|panunga|venum|venam|vendam|solunga|romba|konjam|ila|ilai|ama|seri|sari|nan|nenga|epdi|epadi|evlo|enoda|than|dhan|ah|la|ku|nu|kita|vanga|mudiyum|agum|aguma|pathi|enaiku|ipo|apo|ethuku|yen)\b/g;
+const HINGLISH = /\b(hai|hain|kya|kaya|kia|kaise|kaisa|mein|mera|meri|mere|apka|apki|apke|apko|ap|hum|humara|hamara|hamari|nahi|nai|nahin|kar|karo|karna|karte|karega|karegi|chahiye|chaiye|chaiyey|chahie|kitne|kitna|kitni|bhai|han|haan|thek|thik|acha|bata|batao|bolo|wala|wali|muje|mujhe|mujhko|aur|bhi|abhi|kab|kon|kaun|ji|ke|ka|ki|ko|se|hazar|azar)\b/g;
+const TELUGLISH = /\b(meru|nenu|undi|ledu|cheppandi|kavali|enti|ela|bagundi|chala)\b/g;
+const KANGLISH = /\b(nevu|nanu|beku|heli|hege|tumba|yenu|madi)\b/g;
+const NAMED_LANGUAGE: Array<[RegExp, string]> = [
+  [/\bhindi\b/i, "Hinglish, which is Hindi typed in English letters"],
+  [/\btamil\b/i, "Tanglish, which is Tamil typed in English letters"],
+  [/\btelugu\b/i, "Telugu typed in English letters"],
+  [/\bkannada\b/i, "Kannada typed in English letters"],
+  [/\bmalayalam\b/i, "Malayalam typed in English letters"],
+];
+
+function squeeze(text: string): string {
+  return text.toLowerCase().replace(/([a-z])\1+/g, "$1");
+}
 
 export function languageName(sample: string): string {
   for (const [pattern, name] of SCRIPTS) if (pattern.test(sample)) return name;
+  if (asksForLanguage(sample) === "local") {
+    for (const [pattern, name] of NAMED_LANGUAGE) if (pattern.test(sample)) return name;
+  }
+  const plain = squeeze(sample);
   const scores: Array<[number, string]> = [
-    [sample.match(TANGLISH)?.length ?? 0, "Tanglish, which is Tamil typed in English letters"],
-    [sample.match(HINGLISH)?.length ?? 0, "Hinglish, which is Hindi typed in English letters"],
-    [sample.match(TELUGLISH)?.length ?? 0, "Telugu typed in English letters"],
-    [sample.match(KANGLISH)?.length ?? 0, "Kannada typed in English letters"],
+    [plain.match(TANGLISH)?.length ?? 0, "Tanglish, which is Tamil typed in English letters"],
+    [plain.match(HINGLISH)?.length ?? 0, "Hinglish, which is Hindi typed in English letters"],
+    [plain.match(TELUGLISH)?.length ?? 0, "Telugu typed in English letters"],
+    [plain.match(KANGLISH)?.length ?? 0, "Kannada typed in English letters"],
   ];
   const [score, name] = scores.sort((a, b) => b[0] - a[0])[0]!;
   return score > 0 ? name : "their own language typed in English letters";
@@ -430,14 +447,15 @@ export function absorbTranscript(input: {
       if (/company/i.test(question.label)) {
         const found = text.match(/\bcompany(?:\s+name)?\s+is\s+([A-Za-z][A-Za-z0-9 &'-]{1,40})/i) ?? text.match(/\b([A-Za-z][A-Za-z0-9 &'-]{1,40})\s+is my company\b/i);
         if (found?.[1]) answers[question.id] = found[1].trim();
-        else if (askedThis && plain && text.length <= 60 && !TEAM_COUNT.test(text)) answers[question.id] = text.replace(/[.!]+$/, "");
+        else if (askedThis && plain && text.length <= 60 && !TEAM_COUNT.test(text) && !notACompany(text)) answers[question.id] = text.replace(/[.!]+$/, "");
       } else if (/volume|calls a month|per month/i.test(question.label)) {
         const amount = text.replace(/,/g, "").match(/\b(\d{2,7})\b/);
         if (amount && Number(amount[1]) >= 50 && !/^0?\d{10}$/.test(amount[1])) answers[question.id] = amount[1];
         else if (askedThis && plain && /\d/.test(text) && text.length <= 60) answers[question.id] = text;
       } else if (/team/i.test(question.label)) {
         const amount = text.match(/\b(\d{1,4})\b/);
-        if (amount && Number(amount[1]) > 0 && Number(amount[1]) < 5000 && (text.length < 40 || askedThis || TEAM_COUNT.test(text))) answers[question.id] = amount[1];
+        const unit = /\b\d{1,4}\s*(min|mins|minutes|hrs|hours|calls|rs|k\b|lakh)/i.test(text);
+        if (!unit && amount && Number(amount[1]) > 0 && Number(amount[1]) < 5000 && (text.length < 40 || askedThis || TEAM_COUNT.test(text))) answers[question.id] = amount[1];
       } else if (/issue|why/i.test(question.label) && ((text.length > 30 && /\b(call|lead|follow)/i.test(text)) || (askedThis && plain && text.length > 8))) {
         answers[question.id] = text.slice(0, 180);
       } else if (question.kind === "yesno") {
@@ -469,6 +487,11 @@ export function scriptedReply(input: {
   return asked ? `${explain} ${ask}` : ask;
 }
 
+function notACompany(text: string): boolean {
+  return /\?|\b(price|pricing|cost|fee|setup|demo|how|what|why|when|english|hindi|tamil|call me|later)\b/i.test(text)
+    || indicMarkers(text) >= 2;
+}
+
 const TEAM_COUNT = /\b\d{1,4}\s*(?:peru|per(?!\s*(?:month|day|week|hour|min|call))|people|members|log|staff|agents|telecallers|callers|employees|persons)\b/i;
 
 const NOT_A_NAME = /^(enoda|ennoda|en|enga|unga|mera|mere|my|naan|nan|hi|hello|hey|bro|sir|yes|haan|name|peru|naam|looking|interested|from|here|just|not|fine|good|ok|okay|ready|sure|also|still|very|really|the|a|an|in|at|on|with|planning|trying|working|calling|asking|new|back|done|busy|happy|glad|excited|curious|thinking|available)$/i;
@@ -497,7 +520,11 @@ function directAnswer(question: LeadQuestion, text: string, plain: boolean, regi
   if (/company/i.test(question.label)) {
     const found = text.match(/\bcompany(?:\s+name)?\s+is\s+([A-Za-z][A-Za-z0-9 &'-]{1,40})/i);
     if (found?.[1]) return found[1].trim();
-    return text.length <= 60 && !/\balready\b/i.test(text) && !TEAM_COUNT.test(text) ? text.replace(/[.!]+$/, "") : null;
+    return text.length <= 60 && !/\balready\b/i.test(text) && !TEAM_COUNT.test(text) && !notACompany(text) ? text.replace(/[.!]+$/, "") : null;
+  }
+  if (/team/i.test(question.label) && !/volume|month/i.test(question.label)) {
+    const amount = text.replace(/,/g, "").match(/\b(\d{1,5})\b(?!\s*(?:min|mins|minutes|hrs|hours|calls|rs|k\b|lakh|lakhs|per month|a month))/i);
+    return amount ? amount[1] : null;
   }
   if (/volume|month|team/i.test(question.label)) {
     const amount = text.replace(/,/g, "").match(/\b(\d{1,7})\b/);

@@ -613,6 +613,27 @@ describe("ai validation", () => {
     expect(chatLanguageSample(["Enaku calls ah scale pannanum so", "Speak in English"])).toBeNull();
     expect(chatLanguageSample(["Speak in English", "ok"])).toBeNull();
     expect(chatLanguageSample(["bhai hamari team bahut calls miss karti hai"])).not.toBeNull();
+    expect(languageName(chatLanguageSample(["Yes I want to know about cold calling.", "Achaaa setup kaya hai"]) ?? "")).toMatch(/^Hinglish/);
+    expect(languageName(chatLanguageSample(["Mujueeee apka pricing bolo", "2000 mins ko kethaa"]) ?? "")).toMatch(/^Hinglish/);
+    expect(languageName(chatLanguageSample(["Yes I want to know", "Can you talk in Hindi", "Okay ji"]) ?? "")).toMatch(/^Hinglish/);
+    expect(chatLanguageSample(["Achaaa setup kaya hai", "I can't speak Hindi"])).toBeNull();
+    expect(chatLanguageSample(["Yes I want to know about how Snapsoc can help me in my cold calling."])).toBeNull();
+    const hinglish = absorbTranscript({
+      questions,
+      messages: [
+        { author: "AI", body: "Now tell me, which company do you work with?" },
+        { author: "PROSPECT", body: "Mujueeee apka pricing bolo" },
+        { author: "AI", body: "What is your company name sir?" },
+        { author: "PROSPECT", body: "Muje dho bashaa me chaiyey" },
+        { author: "AI", body: "How many people are on the telecalling team?" },
+        { author: "PROSPECT", body: "2000 mins ko kethaa" },
+      ],
+      name: null,
+      phoneE164: null,
+      answers: {},
+    });
+    expect(hinglish.answers["company-name"]).toBeUndefined();
+    expect(hinglish.answers["team-size"]).toBeUndefined();
     expect(absorbTranscript({ questions, messages: [{ author: "AI", body: "What is going wrong with the calls today?" }, { author: "PROSPECT", body: "Speak in English" }], name: null, phoneE164: null, answers: {} }).answers).toEqual({});
     expect(languageName("Enaku calls ah scale pannanum so")).toMatch(/^Tanglish/);
     expect(humanizeReply("Sorry, wait panna. Unga details team-ku 21 minutes munnadiye pochu — Working hours-la call pannuvanga; enna-nu sollunga, appo correct-a theriyum.")).toBe(

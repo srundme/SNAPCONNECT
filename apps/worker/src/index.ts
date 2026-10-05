@@ -33,6 +33,7 @@ const runtime = simulationRuntime({
   zohoClientSecret: config.ZOHO_CLIENT_SECRET ?? null,
   zohoAccountsUrl: config.ZOHO_ACCOUNTS_URL,
   ...(config.SARVAM_API_KEY ? { transcribe: sarvamTranscriber({ apiKey: config.SARVAM_API_KEY }) } : {}),
+  replySettleMs: 2500,
 });
 
 let stopping = false;
