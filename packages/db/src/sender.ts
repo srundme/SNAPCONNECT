@@ -37,6 +37,9 @@ export function connectionSender(options: {
     if (!input.recipientId) {
       return { status: "PERMANENT_FAILURE", error: "No messaging participant id recorded yet.", simulated: false };
     }
+    if (input.audioUrl) {
+      return adapter.sendAudio({ accountId: connection.externalAccountId, recipientId: input.recipientId, audioUrl: input.audioUrl, token });
+    }
     return adapter.sendText({ accountId: connection.externalAccountId, recipientId: input.recipientId, text: input.text, token });
   };
 }

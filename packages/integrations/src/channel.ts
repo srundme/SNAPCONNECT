@@ -16,6 +16,7 @@ export type ChannelAdapter = {
   mode: "SIMULATION" | "INTEGRATION";
   sendPrivateReply(input: { commentId: string; text: string; token: string; accountId: string }): Promise<SendResult>;
   sendText(input: { recipientId: string; text: string; token: string; accountId: string }): Promise<SendResult>;
+  sendAudio(input: { recipientId: string; audioUrl: string; token: string; accountId: string }): Promise<SendResult>;
   diagnose(input: { token: string | null; scopes: string[]; subscribed: boolean }): Promise<DiagnosticCheck[]>;
 };
 

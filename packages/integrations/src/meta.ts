@@ -35,6 +35,19 @@ export function instagramAdapter(options: {
         }),
       );
     },
+    async sendAudio(input) {
+      return classifyFetch(() =>
+        fetchImpl(`${base.origin}/${options.version}/${input.accountId}/messages`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${input.token}`, "content-type": "application/json" },
+          body: JSON.stringify({
+            recipient: { id: input.recipientId },
+            message: { attachment: { type: "audio", payload: { url: input.audioUrl } } },
+          }),
+          signal: AbortSignal.timeout(30_000),
+        }),
+      );
+    },
     async diagnose(input) {
       const missing = IG_SCOPES.filter((scope) => !input.scopes.includes(scope));
       return [
@@ -84,6 +97,20 @@ export function facebookAdapter(options: {
         }),
       );
     },
+    async sendAudio(input) {
+      return classifyFetch(() =>
+        fetchImpl(`${base.origin}/${options.version}/${input.accountId}/messages`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${input.token}`, "content-type": "application/json" },
+          body: JSON.stringify({
+            recipient: { id: input.recipientId },
+            message: { attachment: { type: "audio", payload: { url: input.audioUrl, is_reusable: false } } },
+            messaging_type: "RESPONSE",
+          }),
+          signal: AbortSignal.timeout(30_000),
+        }),
+      );
+    },
     async diagnose(input) {
       const missing = FB_SCOPES.filter((scope) => !input.scopes.includes(scope));
       return [
@@ -111,6 +138,14 @@ export function simulationAdapter(channel: "INSTAGRAM" | "FACEBOOK" | "WHATSAPP"
       return {
         status: "ACCEPTED",
         providerMessageId: `sim_${channel.toLowerCase()}_dm_${input.recipientId}_${crypto.randomUUID()}`,
+        providerRecipientId: input.recipientId,
+        simulated: true,
+      };
+    },
+    async sendAudio(input) {
+      return {
+        status: "ACCEPTED",
+        providerMessageId: `sim_${channel.toLowerCase()}_voice_${input.recipientId}_${crypto.randomUUID()}`,
         providerRecipientId: input.recipientId,
         simulated: true,
       };

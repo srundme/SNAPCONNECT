@@ -7,6 +7,7 @@ import { listInstagramPosts } from "../src/meta-media";
 import { assertPrivateOllamaUrl, sarvamLlm, sarvamTranscriber } from "../src/llm";
 import { zohoAdapter } from "../src/zoho";
 import { checkWhatsAppNumber, subscribeWhatsAppAccount, whatsappAdapter } from "../src/whatsapp";
+import { cartesiaSpeaker, speechLanguage } from "../src/cartesia";
 
 describe("integration guards", () => {
   it("encrypts credentials with an external key", () => {
@@ -231,5 +232,51 @@ describe("whatsapp", () => {
     const denied = async () => new Response(JSON.stringify({ error: { message: "Invalid OAuth access token." } }), { status: 401 });
     await expect(checkWhatsAppNumber({ phoneNumberId: "pnid-1", token: "bad", graphBaseUrl: "https://graph.facebook.com", version: "v23.0", fetchImpl: denied }))
       .rejects.toThrow(/Invalid OAuth access token/);
+  });
+});
+
+describe("voice replies", () => {
+  it("picks the spoken language from the reply script", () => {
+    expect(speechLanguage("Sure, what is your budget?")).toBe("en");
+    expect(speechLanguage("Budget evlo sir?")).toBe("en");
+    expect(speechLanguage("உங்கள் பட்ஜெட் என்ன?")).toBe("ta");
+    expect(speechLanguage("आपका बजट क्या है?")).toBe("hi");
+    expect(speechLanguage("ميزانيتك؟")).toBeNull();
+  });
+
+  it("asks Cartesia for speech in the requested format", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchImpl = async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(new Uint8Array(400), { status: 200, headers: { "content-type": "audio/mpeg" } });
+    };
+    const speech = await cartesiaSpeaker({ apiKey: "sk_test", voiceId: "voice-1", fetchImpl })({ text: "Hello", language: "en", format: "mp3" });
+    expect(speech.mimeType).toBe("audio/mpeg");
+    expect(speech.audio.byteLength).toBe(400);
+    expect(calls[0]!.url).toBe("https://api.cartesia.ai/tts/bytes");
+    expect(new Headers(calls[0]!.init.headers).get("Authorization")).toBe("Bearer sk_test");
+    expect(JSON.parse(String(calls[0]!.init.body))).toMatchObject({
+      transcript: "Hello",
+      voice: { id: "voice-1" },
+      language: "en",
+      output_format: { container: "mp3" },
+    });
+    const failing = async () => new Response("bad voice", { status: 400 });
+    await expect(cartesiaSpeaker({ apiKey: "k", voiceId: "v", fetchImpl: failing })({ text: "Hi", language: "en", format: "wav" })).rejects.toThrow(/HTTP 400/);
+  });
+
+  it("sends audio attachments on every channel", async () => {
+    const bodies: unknown[] = [];
+    const fetchImpl = async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ message_id: "m1", recipient_id: "r1" }), { status: 200 });
+    };
+    const input = { accountId: "acct", recipientId: "r1", audioUrl: "https://app.test/api/voice/abc.mp3", token: "t" };
+    await instagramAdapter({ baseUrl: "https://graph.instagram.com", version: "v23.0", fetchImpl }).sendAudio(input);
+    await facebookAdapter({ baseUrl: "https://graph.facebook.com", version: "v23.0", fetchImpl }).sendAudio(input);
+    await whatsappAdapter({ baseUrl: "https://graph.facebook.com", version: "v23.0", fetchImpl }).sendAudio(input);
+    expect(bodies[0]).toEqual({ recipient: { id: "r1" }, message: { attachment: { type: "audio", payload: { url: input.audioUrl } } } });
+    expect(bodies[1]).toMatchObject({ message: { attachment: { type: "audio", payload: { url: input.audioUrl } } }, messaging_type: "RESPONSE" });
+    expect(bodies[2]).toMatchObject({ messaging_product: "whatsapp", to: "r1", type: "audio", audio: { link: input.audioUrl } });
   });
 });

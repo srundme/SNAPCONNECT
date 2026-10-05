@@ -3,7 +3,7 @@ import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { loadConfig, loadDotEnv } from "@snapsocial/config";
 import { connectionSender, getPrisma, processAvailableJobs, simulationRuntime } from "@snapsocial/db";
-import { fixtureLlm, ollamaLlm, sarvamLlm, sarvamTranscriber, whatsappMediaUrl } from "@snapsocial/integrations";
+import { cartesiaSpeaker, fixtureLlm, ollamaLlm, sarvamLlm, sarvamTranscriber, whatsappMediaUrl } from "@snapsocial/integrations";
 
 loadDotEnv(process.cwd());
 
@@ -34,6 +34,12 @@ const runtime = simulationRuntime({
   zohoAccountsUrl: config.ZOHO_ACCOUNTS_URL,
   ...(config.SARVAM_API_KEY ? { transcribe: sarvamTranscriber({ apiKey: config.SARVAM_API_KEY }) } : {}),
   whatsappMediaUrl: (mediaId, token) => whatsappMediaUrl({ mediaId, token, graphBaseUrl: config.META_FACEBOOK_GRAPH_BASE_URL, version: config.META_API_VERSION }),
+  ...(config.CARTESIA_API_KEY && config.CARTESIA_VOICE_ID
+    ? {
+        speak: cartesiaSpeaker({ apiKey: config.CARTESIA_API_KEY, voiceId: config.CARTESIA_VOICE_ID, model: config.CARTESIA_MODEL }),
+        publicBaseUrl: config.APP_BASE_URL,
+      }
+    : {}),
   replySettleMs: 2500,
 });
 

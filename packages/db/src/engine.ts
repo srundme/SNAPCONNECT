@@ -53,7 +53,8 @@ import {
   type ReplyPromptField,
   type NormalizedEvent,
 } from "@snapsocial/domain";
-import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, zohoAdapter, ZohoOAuthError, type LlmProvider, type SendResult, type ZohoAdapter } from "@snapsocial/integrations";
+import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, speechLanguage, zohoAdapter, ZohoOAuthError, type LlmProvider, type SendResult, type Speaker, type ZohoAdapter } from "@snapsocial/integrations";
+import { randomBytes } from "node:crypto";
 import type { Db } from "./client";
 
 export type SendConnection = {
@@ -70,6 +71,7 @@ export type SendInput = {
   commentId?: string;
   recipientId?: string;
   text: string;
+  audioUrl?: string;
 };
 
 export type Runtime = {
@@ -84,6 +86,8 @@ export type Runtime = {
   zohoAccountsUrl: string | null;
   transcribe?: (audioUrl: string, bearerToken?: string) => Promise<string>;
   whatsappMediaUrl?: (mediaId: string, token: string) => Promise<string>;
+  speak?: Speaker;
+  publicBaseUrl?: string;
   replySettleMs?: number;
 };
 
@@ -101,6 +105,9 @@ export function simulatedSend(input: SendInput): Promise<SendResult> {
   const adapter = simulationAdapter(input.connection.channel);
   if (input.purpose === "opening") {
     return adapter.sendPrivateReply({ accountId: "sim", commentId: input.commentId ?? "", text: input.text, token: "sim" });
+  }
+  if (input.audioUrl) {
+    return adapter.sendAudio({ accountId: "sim", recipientId: input.recipientId ?? "", audioUrl: input.audioUrl, token: "sim" });
   }
   return adapter.sendText({ accountId: "sim", recipientId: input.recipientId ?? "", text: input.text, token: "sim" });
 }
@@ -563,7 +570,8 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
   }));
   const nextInbound = !conversation.lastUserMessageAt || sentAt > conversation.lastUserMessageAt ? sentAt : conversation.lastUserMessageAt;
   let text = String(body.text ?? "");
-  if (!text.trim() && (body.audioUrl || body.audioMediaId)) {
+  const voice = !text.trim() && Boolean(body.audioUrl || body.audioMediaId);
+  if (voice) {
     const transcript = runtime.transcribe
       ? await voiceTranscript(runtime, connection, body).catch((error: unknown) => {
           console.warn(`Voice transcription failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -582,6 +590,7 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
         author: "PROSPECT",
         body: text,
         externalMessageId: String(body.messageId ?? ""),
+        voice,
         createdAt: sentAt,
       },
     });
@@ -615,6 +624,28 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
     });
   }
   await touchConnection(db, connection.id, connection.mode, "message", runtime.now());
+}
+
+async function voiceClip(
+  db: Db,
+  runtime: Runtime,
+  workspaceId: string,
+  channel: Channel,
+  text: string,
+): Promise<{ id: string; url: string } | null> {
+  if (!runtime.speak || !runtime.publicBaseUrl) return null;
+  const language = speechLanguage(text);
+  if (!language) return null;
+  try {
+    const format = channel === "INSTAGRAM" ? "wav" : "mp3";
+    const speech = await runtime.speak({ text, language, format });
+    const id = randomBytes(24).toString("base64url");
+    await db.voiceClip.create({ data: { id, workspaceId, mimeType: speech.mimeType, data: Buffer.from(speech.audio) } });
+    return { id, url: `${runtime.publicBaseUrl.replace(/\/$/, "")}/api/voice/${id}.${format}` };
+  } catch (error) {
+    console.warn(`Voice reply could not be made, sending text instead: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
 }
 
 async function voiceTranscript(
@@ -1230,7 +1261,23 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       const participant = await db.contactIdentity.findFirst({
         where: { contactId: conversation.contactId, identityType: "MESSAGING_PARTICIPANT" },
       });
-      const result = await runtime.send({
+      const answeringVoice = [...conversation.messages].reverse().find((message) => message.author === "PROSPECT")?.voice === true;
+      const clip = answeringVoice && participant ? await voiceClip(db, runtime, workspace.id, connection.channel, reply) : null;
+      let result = clip
+        ? await runtime.send({
+            connection: sendConnection(connection),
+            purpose: "text",
+            recipientId: participant?.externalId,
+            text: reply,
+            audioUrl: clip.url,
+          })
+        : null;
+      if (result && result.status !== "ACCEPTED" && result.status !== "UNKNOWN") {
+        console.warn(`Voice reply was not accepted, sending text instead: ${result.error}`);
+        result = null;
+      }
+      const sentVoice = Boolean(result);
+      result ??= await runtime.send({
         connection: sendConnection(connection),
         purpose: "text",
         recipientId: participant?.externalId,
@@ -1245,6 +1292,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
             author: "AI",
             body: reply,
             externalMessageId: result.providerMessageId,
+            ...(sentVoice && clip ? { voice: true, voiceClipId: clip.id } : {}),
           },
         });
       } else if (result.status === "UNKNOWN") {

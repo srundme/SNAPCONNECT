@@ -47,6 +47,22 @@ export function whatsappAdapter(options: { baseUrl: string; version: string; fet
         }),
       );
     },
+    async sendAudio(input) {
+      return classifyFetch(() =>
+        fetchImpl(`${base.origin}/${options.version}/${input.accountId}/messages`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${input.token}`, "content-type": "application/json" },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: input.recipientId,
+            type: "audio",
+            audio: { link: input.audioUrl },
+          }),
+          signal: AbortSignal.timeout(30_000),
+        }),
+      );
+    },
     async diagnose(input) {
       return [
         { name: "Credential", ok: Boolean(input.token), checkedAt: input.token ? new Date().toISOString() : null, detail: input.token ? "Access token is stored." : "No access token stored." },

@@ -411,11 +411,23 @@ model Message {
   author            MessageAuthor
   body              String
   externalMessageId String?
+  voice             Boolean        @default(false)
+  voiceClipId       String?
   createdAt         DateTime       @default(now())
   conversation      Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@unique([connectionId, externalMessageId])
   @@index([conversationId, createdAt])
+}
+
+model VoiceClip {
+  id          String   @id
+  workspaceId String
+  mimeType    String
+  data        Bytes
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 model Lead {
