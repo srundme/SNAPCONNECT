@@ -5,6 +5,7 @@ import {
   requestsTeamSwitch,
   customerComplaint,
   dropIndicSentences,
+  hasIndicSentence,
   duplicateCheckFields,
   evaluateQualification,
   nextReplyPrompt,
@@ -1560,6 +1561,21 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         validated = { ...validated, schemaError: "Repair failed." };
       }
     }
+    if (!languageSample && validated.reply && hasIndicSentence(validated.reply)) {
+      try {
+        const english = await runtime.llm.generate({
+          ...request,
+          system: `${request.system}\nYour last draft was written in Tamil, Hindi or Kannada typed in English letters. This chat is in English. Write the reply again in plain, simple English only, with the same meaning.`,
+        });
+        const retried = validateAiOutput(english.output, messages, runtime.phoneRegion, questionIds);
+        if (retried.reply && !retried.schemaError && !hasIndicSentence(retried.reply)) {
+          generated = english;
+          validated = retried;
+        }
+      } catch {
+        // keep the first draft
+      }
+    }
     const fresh = await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } });
     if (fresh.revision !== expectedRevision || fresh.owner !== "AI") return "done";
     const latestUser = [...recent].reverse().find((message) => message.author === "PROSPECT")?.body ?? "";
@@ -1654,7 +1670,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : validated.reply ?? fallback;
     const firstWhatsAppReply = conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI");
     const earlierReplies = conversation.messages.filter((message) => message.author === "AI").map((message) => message.body);
-    const inLanguage = composed && !languageSample ? dropIndicSentences(composed) || fallback : composed;
+    const inLanguage = composed && !languageSample ? dropIndicSentences(composed) || composed : composed;
     const humanized = inLanguage ? applyReplySwitches(oneAddress(dropCannedLines(humanizeReply(inLanguage))), agent) || null : inLanguage;
     const written = humanized && firstWhatsAppReply
       ? withAutomationDisclosure(humanized, workspace.brandName, workspace.agentName)
@@ -2081,7 +2097,9 @@ export function clockLine(now: Date): string {
   const when = new Intl.DateTimeFormat("en-IN", {
     timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true,
   }).format(now);
-  return `Right now it is ${when} in India (IST). Use this for today, tomorrow, weekdays, greetings and whether a time is realistic. Never guess the date.`;
+  const hour = Number(new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", hourCycle: "h23" }).format(now));
+  const lateNight = hour < 5 ? " It is after midnight, so when they say tomorrow they may mean later today. Confirm the day in words, like Tuesday or Wednesday." : "";
+  return `Right now it is ${when} in India (IST). Use this for today, tomorrow, weekdays, greetings and whether a time is realistic. Never guess the date. When you note a preferred time, say the day with it.${lateNight}`;
 }
 
 const PHOTO_SEEN = /\(Sent a photo\. It shows: ([^]*?)\)\s*$/;

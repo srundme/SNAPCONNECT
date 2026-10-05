@@ -59,13 +59,21 @@ export function dropCannedLines(text: string): string {
   return lines.length ? lines.join("\n") : text;
 }
 
-const INDIC_WORDS = /\b(unga|ungal|enga|enaku|iruku|irukum|irukanga|panum|panalam|panren|panunga|pani|panuvanga|parunga|venum|venam|solunga|romba|konjam|ila|ilai|seri|nenga|epdi|evlo|enoda|kita|vanga|mudiyum|agum|pochu|elam|kandipa|endha|entha|intha|ithu|athu|nu|ku|oda|dhan|thaan|hai|hain|kya|kaise|mein|mera|apka|apko|nahi|karo|karna|chahiye|kitna|bhai|haan|thik|acha|batao|bolo|mujhe|aur|bhi|abhi|beku|heli|hege|tumba|yenu|madi|nimma|alli)\b/g;
+const INDIC_WORDS = /\b(unga|ungal|enga|enaku|iruku|irukum|irukanga|panum|panalam|panren|panunga|pani|panuvanga|parunga|venum|venam|solunga|romba|konjam|ila|ilai|seri|nenga|epdi|evlo|enoda|kita|vanga|mudiyum|agum|pochu|elam|kandipa|endha|entha|intha|ithu|athu|nu|ku|la|oda|dhan|hai|hain|kya|kaise|mein|mera|apka|apko|nahi|karo|karna|chahiye|kitna|bhai|han|thik|acha|batao|bolo|mujhe|aur|bhi|abhi|beku|heli|hege|tumba|yenu|madi|nimma|alli)\b/g;
+
+function indicSentence(sentence: string): boolean {
+  return (sentence.toLowerCase().replace(/([a-z])\1+/g, "$1").match(INDIC_WORDS)?.length ?? 0) >= 2;
+}
+
+export function hasIndicSentence(text: string): boolean {
+  return text.split(/\n+/).some((line) => sentencesOf(line).some(indicSentence));
+}
 
 /** In an English chat, drops sentences written in Tanglish, Hinglish or Kanglish; empty if nothing English is left. */
 export function dropIndicSentences(text: string): string {
   return text
     .split(/\n+/)
-    .map((line) => sentencesOf(line).filter((sentence) => (sentence.toLowerCase().replace(/([a-z])\1+/g, "$1").match(INDIC_WORDS)?.length ?? 0) < 2).join(" "))
+    .map((line) => sentencesOf(line).filter((sentence) => !indicSentence(sentence)).join(" "))
     .filter(Boolean)
     .join("\n");
 }

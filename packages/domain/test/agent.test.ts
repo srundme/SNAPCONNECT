@@ -4,6 +4,7 @@ import {
   applyReplySwitches,
   customerComplaint,
   dropIndicSentences,
+  hasIndicSentence,
   humanBubbles,
   withAutomationDisclosure,
   parseAgentSettings,
@@ -20,6 +21,8 @@ describe("English chats stay English", () => {
     expect(dropIndicSentences("haan sir send panni paarunga\ndesign ideas ku help aagum")).toBe("");
     expect(dropIndicSentences("No problem sir. Unga details ellam already team ku pochu.\nWhat time works for you?")).toBe("No problem sir.\nWhat time works for you?");
     expect(dropIndicSentences("Sure sir, a 3 BHK in Madiwala is more than enough space for a modular kitchen.")).toContain("Madiwala");
+    expect(hasIndicSentence("haan sir wardrobe la marble finish irukku. side la laundry basket irukku.")).toBe(true);
+    expect(hasIndicSentence("Nice sir, that wardrobe has a marble look finish.")).toBe(false);
   });
 });
 
