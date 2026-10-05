@@ -41,6 +41,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const params = await searchParams;
   const { workspace } = await requireWorkspace();
   if (!workspace) return <Empty title="No workspace" body="Select a workspace." />;
+  const agent = workspace.agentName || "Assistant";
   const db = getPrisma();
   const now = new Date();
   const range: RangeKey = params.range && params.range in RANGES ? (params.range as RangeKey) : "30d";
@@ -114,7 +115,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const funnel = [
     { label: "Comments", value: comments },
     { label: "Openers sent", value: openersSent },
-    { label: "Replied to Maya", value: replied.length },
+    { label: `Replied to ${agent}`, value: replied.length },
     { label: "Shared phone", value: phones },
     { label: "Sent to Zoho", value: zoho.length },
   ];
@@ -198,7 +199,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         { label: "Conversations", value: replied.length },
         { label: "Sent to Zoho", value: zoho.length },
         { label: "Comment to lead", value: percent(zoho.length, comments) },
-        { label: "Maya reply time", value: seconds(medianWait) },
+        { label: `${agent} reply time`, value: seconds(medianWait) },
       ]} />
       <div className="mt-3">
         <StatGrid columns={5} items={[
@@ -206,7 +207,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           { label: "Not interested", value: cold },
           { label: "Handed to team", value: handedOff },
           { label: "Messages from people", value: prospectMessages },
-          { label: "Replies by Maya", value: aiReplies },
+          { label: `Replies by ${agent}`, value: aiReplies },
         ]} />
       </div>
 
@@ -251,7 +252,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 
         <Panel className="p-5">
           <h2 className="text-[15px] font-semibold">Languages people used</h2>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">Maya replies in the same language and style.</p>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">{agent} replies in the same language and style.</p>
           {languageRows.length ? (
             <div className="mt-4 space-y-3">
               {languageRows.map(([name, count]) => (
@@ -267,7 +268,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         </Panel>
 
         <Panel className="p-5">
-          <h2 className="text-[15px] font-semibold">Maya performance</h2>
+          <h2 className="text-[15px] font-semibold">{agent} performance</h2>
           <p className="mt-1 text-sm text-[var(--color-muted)]">Speed and reliability of the AI replies.</p>
           <dl className="mt-4 grid grid-cols-2 gap-4 text-sm">
             <div><dt className="text-[var(--color-muted)]">Median reply time</dt><dd className="mt-1 text-[22px] font-semibold">{seconds(medianWait)}</dd></div>

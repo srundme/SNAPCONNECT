@@ -77,7 +77,7 @@ export function AgentForm({
           </div>
           <div className="grid gap-4 p-5 sm:grid-cols-2">
             <label>Brand<input name="brandName" defaultValue={brandName} /></label>
-            <label>Agent name<input name="agentName" defaultValue={agentName} maxLength={40} placeholder="Maya" /></label>
+            <label>Agent name<input name="agentName" defaultValue={agentName} maxLength={40} placeholder="Varun" /></label>
             <label>Services<input name="services" defaultValue={services} /></label>
             <label>Tone<input name="tone" defaultValue={tone} /></label>
             <label className="sm:col-span-2">
