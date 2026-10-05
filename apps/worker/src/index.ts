@@ -56,7 +56,7 @@ async function tick() {
   });
   try {
     if (redis.status === "wait") await redis.connect();
-    const pending = await db.outboxJob.findMany({ where: { status: "PENDING" }, take: 20, select: { id: true } });
+    const pending = await db.outboxJob.findMany({ where: { status: "PENDING", availableAt: { lte: new Date() } }, take: 20, select: { id: true } });
     for (const job of pending) {
       await queue.add("process", { outboxJobId: job.id }, { jobId: job.id, removeOnComplete: true });
       await db.outboxJob.updateMany({ where: { id: job.id, status: "PENDING" }, data: { status: "DISPATCHED" } });
