@@ -1498,10 +1498,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         const kind = homeTypeName(prospectBodies.join("\n"));
         absorbed.answers[bhkQuestion.id] = `${count} BHK${kind ? ` ${kind}` : ""}`;
       }
-      const planBhk = sinceReply.map((body) => body.match(PHOTO_SEEN)?.[1] ?? body.match(DOCUMENT_SEEN)?.[2] ?? "")
-        .filter((seen) => FLOOR_PLAN.test(seen)).map((seen) => seen.match(/\b([1-9])\s*-?\s*BHK\b/i)?.[1]).find(Boolean);
+      const plansSeen = [...prospectBodies].reverse().map((body) => body.match(PHOTO_SEEN)?.[1] ?? body.match(DOCUMENT_SEEN)?.[2] ?? "")
+        .filter((seen) => FLOOR_PLAN.test(seen));
+      const planBhk = plansSeen.map((seen) => seen.match(/\b([1-9])\s*-?\s*BHK\b/i)?.[1]).find(Boolean);
       if (bhkQuestion && planBhk && !/\d\s*-?\s*(bhk|rk)\b/i.test(recordedAnswers[bhkQuestion.id] ?? "") && !/\d\s*-?\s*(bhk|rk)\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
-        const kind = homeTypeName(prospectBodies.join("\n"));
+        const kind = homeTypeName(prospectBodies.filter((body) => !PHOTO_SEEN.test(body)).join("\n")) ?? homeTypeName(plansSeen[0] ?? "");
         absorbed.answers[bhkQuestion.id] = `${planBhk} BHK${kind ? ` ${kind}` : ""} (from the floor plan)`;
       }
       if (bhkQuestion && !/\d\s*-?\s*(bhk|rk)\b|\bstudio\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
@@ -1559,13 +1560,13 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         absorbed.answers[styleQuestion.id] = `Reference photos: ${burstLooks.join("; ")}`.slice(0, 600);
       }
       const areaQuestion = questions.find((question) => question.kind === "text" && /\b(carpet|sq\.? ?ft|area in)\b/i.test(question.label));
-      const planArea = [...sinceReply].reverse().map((body) => body.match(PHOTO_SEEN)?.[1] ?? "").map((seen) =>
-        seen.match(/Carpet area written on the plan: ([\d,]+) sq ft/)?.[1]?.concat(" sq ft (from the floor plan)")
+      const planArea = plansSeen.map((seen) =>
+        seen.match(/\bcarpet area\b[^\d]{0,30}([\d,]{3,6})\s*(?:sq\.? ?ft|square feet|sft)/i)?.[1]?.concat(" sq ft (from the floor plan)")
         ?? seen.match(/Estimated carpet area about ([\d,]+ to [\d,]+) sq ft/)?.[1]?.concat(" sq ft (estimated from the floor plan)")).find(Boolean);
-      const typed = sinceReply.map((body) => body.replace(PHOTO_SEEN, "")).join(" ");
+      const typed = sinceReply.map((body) => body.replace(PHOTO_SEEN, "").replace(DOCUMENT_SEEN, "")).join(" ");
       const areaValue = areaQuestion ? absorbed.answers[areaQuestion.id] ?? "" : "";
       const areaTyped = /\d/.test(areaValue) && (areaValue.match(/\d[\d,]*/g) ?? []).some((n) => typed.includes(n));
-      if (areaQuestion && planArea && !recordedAnswers[areaQuestion.id] && !areaTyped) {
+      if (areaQuestion && planArea && (!recordedAnswers[areaQuestion.id] || recordedAnswers[areaQuestion.id] === "Not sure yet") && !areaTyped) {
         absorbed.answers[areaQuestion.id] = planArea;
       }
       for (const question of questions) {
@@ -2656,7 +2657,7 @@ function seenIn(body: string): { kind: "photo" | "document"; name: string | null
 }
 
 function floorPlanLine(seen: string): string {
-  return `It is the floor plan of their home. What it shows: ${seen} Reply like an interior designer who just studied the plan. In a few words say what you read (for example 'a 3 BHK of about 1,450 sq ft with the kitchen next to the dining'). Then give one or two genuine, specific planning ideas that this plan allows (for example the kitchen can take an L-shaped layout with a breakfast counter, the master bedroom has room for a walk-in wardrobe, the long living wall suits a TV unit). Say the designer will use this plan for the layout and 3D designs. If the plan shows the BHK or the area and that detail is still missing, ask them to confirm it instead of asking from scratch. ${/estimated carpet area/i.test(seen) ? "No sizes are written on this plan, so the area is your estimate from the drawing: say the estimated range written above as a rough figure ('roughly X to Y sq ft going by the plan', using those exact numbers) and that the team will take exact measurements at the site visit. Never ask them for the carpet area when you already have this estimate." : ""} Never promise exact measurements or prices.`;
+  return `It is the floor plan of their home. What it shows: ${seen} Reply like an interior designer who just studied the plan. In a few words say what you read (for example 'a 3 BHK of about 1,450 sq ft with the kitchen next to the dining'). Then give one or two genuine, specific planning ideas that this plan allows (for example the kitchen can take an L-shaped layout with a breakfast counter, the master bedroom has room for a walk-in wardrobe, the long living wall suits a TV unit). Say the designer will use this plan for the layout and 3D designs. The BHK, home type and area this plan shows are now recorded: say them as what you read, and never ask for them again, not even to confirm. ${/estimated carpet area/i.test(seen) ? "No sizes are written on this plan, so the area is your estimate from the drawing: say the estimated range written above as a rough figure ('roughly X to Y sq ft going by the plan', using those exact numbers) and that the team will take exact measurements at the site visit. Never ask them for the carpet area when you already have this estimate." : ""} Never promise exact measurements or prices.`;
 }
 
 function photoLine(messages: { author: string; body: string }[]): string {
