@@ -198,6 +198,7 @@ model Workspace {
   tone               String        @default("Clear, brief and factual")
   faqs               Json          @default("[]")
   systemPrompt       String?
+  agentPrompt        String?
   replyPrompts       Json          @default("{}")
   zohoSendWhen       String        @default("CONTACTABLE")
   requiredLeadFields String[]      @default(["projectType"])

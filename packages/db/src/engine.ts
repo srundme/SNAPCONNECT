@@ -98,10 +98,13 @@ import {
   oneAddress,
   mediaNote,
   documentNote,
+  renderAgentPrompt,
+  CALLBACK_TIME_KEY,
 } from "@snapsocial/domain";
 import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, neutralDirection, speechLocale, speechScript, speechSentences, zohoAdapter, ZohoOAuthError, type DocumentReader, type LlmProvider, type SendResult, type Speaker, type VoiceDirection, type ZohoAdapter } from "@snapsocial/integrations";
 import { randomBytes } from "node:crypto";
 import type { Db } from "./client";
+import type { Prisma } from "./generated/prisma/client";
 
 export type SendConnection = {
   id: string;
@@ -1316,7 +1319,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
   const holder = job.id;
   const acquired = await db.$queryRaw<{ id: string }[]>`
     UPDATE "InferenceLease"
-    SET "holder" = ${holder}, "expiresAt" = ${new Date(runtime.now().getTime() + 480_000)}
+    SET "holder" = ${holder}, "expiresAt" = ${new Date(runtime.now().getTime() + 900_000)}
     WHERE "id" = 'global' AND ("holder" IS NULL OR "expiresAt" < ${runtime.now()})
     RETURNING "id"
   `;
@@ -1348,6 +1351,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         },
       });
       return "done";
+    }
+    if (workspace.agentPrompt?.trim() && runtime.llm.complete) {
+      return await promptedReply(db, runtime, { payload, expectedRevision, conversation, workspace, connection, lead });
     }
     const spoken = conversation.messages.filter((message) => (message.author === "PROSPECT" || message.author === "AI") && message.body.trim());
     const lastSpoken = spoken[spoken.length - 1];
@@ -2326,6 +2332,339 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       UPDATE "InferenceLease" SET "holder" = NULL, "expiresAt" = NULL WHERE "id" = 'global' AND "holder" = ${holder}
     `;
   }
+}
+
+type PromptedInput = {
+  payload: Record<string, unknown>;
+  expectedRevision: number;
+  conversation: Prisma.ConversationGetPayload<{ include: { messages: true; contact: true } }>;
+  workspace: Prisma.WorkspaceGetPayload<object>;
+  connection: Prisma.ChannelConnectionGetPayload<object>;
+  lead: Prisma.LeadGetPayload<object>;
+};
+
+const CHANNEL_NAME = { WHATSAPP: "WhatsApp", INSTAGRAM: "Instagram", FACEBOOK: "Facebook Messenger" } as const;
+const EMPTY_VALUE = /^(null|none|unknown|n\/a|not provided|not given|-)?$/i;
+
+function indiaTime(now: Date): string {
+  return `${new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true,
+  }).format(now)} IST`;
+}
+
+function since(ms: number): string {
+  const minutes = ms / 60_000;
+  if (minutes < 60) return `${Math.max(1, Math.round(minutes))} minutes`;
+  if (minutes < 48 * 60) return `${Math.round(minutes / 60)} hours`;
+  return `${Math.round(minutes / 1440)} days`;
+}
+
+function reviewJson(text: string): Record<string, unknown> | null {
+  const json = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The reply when the workspace has its own system prompt: the model reads the lead form, drafts the
+ * reply from that prompt alone, checks its own draft against it, and the code only records and sends.
+ */
+async function promptedReply(db: Db, runtime: Runtime, input: PromptedInput): Promise<"done"> {
+  const { payload, expectedRevision, conversation, workspace, connection, lead } = input;
+  const started = Date.now();
+  const complete = runtime.llm.complete!;
+  const agent = parseAgentSettings(workspace.agentSettings);
+  const questions = parseLeadQuestions(workspace.leadQuestions);
+  const spoken = conversation.messages.filter((message) => (message.author === "PROSPECT" || message.author === "AI") && message.body.trim());
+  const transcript = spoken.map((message) => ({ author: message.author, body: message.body }));
+
+  let name = conversation.contact.chosenName;
+  let phoneE164 = lead.phoneE164;
+  let answers = answerRecord(lead.answers);
+  let callbackTime: string | null = null;
+  let phoneAgreed = lead.sameNumberConfirmed || Boolean(lead.phoneE164 && lead.phoneE164 !== lead.whatsappE164);
+  if (questions.length && runtime.llm.extractAnswers && spoken.some((message) => message.author === "PROSPECT")) {
+    const raw = await runtime.llm.extractAnswers({
+      questions: questions.map((question) => ({ id: question.id, label: question.label, kind: question.kind, numeric: numericQuestion(question) })),
+      transcript,
+    }).catch((error: unknown) => {
+      console.warn(`Lead form reading failed: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    });
+    if (raw) {
+      const read: Record<string, string> = {};
+      for (const question of questions) {
+        const value = raw[question.id];
+        const text = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
+        if (EMPTY_VALUE.test(text)) continue;
+        if (question.kind === "name") name = text.slice(0, 60);
+        else if (question.kind === "phone") {
+          const phone = parsePhone(text, runtime.phoneRegion);
+          if (/^same$/i.test(text) && lead.whatsappE164) {
+            phoneE164 = lead.whatsappE164;
+            phoneAgreed = true;
+          } else if (phone.kind === "valid") {
+            phoneE164 = phone.e164;
+            phoneAgreed = true;
+          }
+        } else read[question.id] = text.slice(0, 300);
+      }
+      answers = { ...answers, ...read };
+      const time = raw[CALLBACK_TIME_KEY];
+      if (typeof time === "string" && !EMPTY_VALUE.test(time.trim())) callbackTime = time.trim().slice(0, 80);
+    }
+    if (name && name !== conversation.contact.chosenName) {
+      await db.contact.update({ where: { id: conversation.contactId }, data: { chosenName: name } });
+    }
+    await db.lead.update({
+      where: { id: lead.id },
+      data: {
+        answers,
+        ...(phoneE164 && phoneE164 !== lead.phoneE164 ? { phoneE164, phonePermission: true } : {}),
+        ...(phoneAgreed && !lead.sameNumberConfirmed && phoneE164 === lead.whatsappE164 ? { sameNumberConfirmed: true } : {}),
+        ...(callbackTime ? { timeframeRaw: callbackTime } : {}),
+      },
+    });
+  }
+
+  const callNumber = phoneAgreed ? phoneE164 : null;
+  const screen = questions.length ? screenLead({ questions, answers, name, phoneE164: callNumber }) : null;
+  const valueOf = (question: LeadQuestion) => question.kind === "name" ? name : question.kind === "phone" ? callNumber : answers[question.id];
+  const answered = questions.filter((question) => valueOf(question)?.trim());
+  const open = questions.filter((question) => !valueOf(question)?.trim());
+  const firstSync = lead.crmState === "SYNCED"
+    ? await db.outboxJob.findFirst({
+        where: { type: "CRM_SYNC", status: "COMPLETED", payload: { path: ["leadId"], equals: lead.id } },
+        orderBy: { createdAt: "asc" },
+        select: { updatedAt: true },
+      })
+    : null;
+  const prospectTimes = spoken.filter((message) => message.author === "PROSPECT").map((message) => message.createdAt.getTime());
+  const gapMs = prospectTimes.length >= 2 ? prospectTimes[prospectTimes.length - 1]! - prospectTimes[prospectTimes.length - 2]! : 0;
+  const posts = await db.media.findMany({ where: { workspaceId: workspace.id }, orderBy: { publishedAt: "desc" }, take: 30 });
+  const context = assistantContext({
+    accountPrompt: null,
+    activePostId: conversation.sourceMediaId ?? lead.sourceMediaId,
+    posts: posts.map((post) => ({
+      id: post.externalId,
+      caption: post.caption ?? "",
+      prompt: post.assistantPrompt ?? "",
+      seen: post.seenSummary,
+      link: post.permalink,
+      where: post.channel === "FACEBOOK" ? "Facebook" : "Instagram",
+    })),
+  });
+  const followUp = payload.followUp !== undefined && spoken[spoken.length - 1]?.author === "AI";
+  const languageSample = chatLanguageSample(spoken.filter((message) => message.author === "PROSPECT").map((message) => message.body));
+  const language = languageSample ? `${languageName(languageSample)}, like "${languageSample}"` : "English";
+  const lastAiAt = [...spoken].reverse().find((message) => message.author === "AI")?.createdAt;
+  const system = renderAgentPrompt(workspace.agentPrompt!, {
+    now: indiaTime(runtime.now()),
+    channel: CHANNEL_NAME[conversation.channel],
+    customer: [
+      `Name: ${name ?? "not given yet"}`,
+      `Profile name: ${[conversation.contact.displayName, conversation.contact.username].filter(Boolean).join(" / ") || "unknown"}`,
+      `They write in: ${language}`,
+      conversation.channel === "WHATSAPP" && lead.whatsappE164
+        ? `Chatting from WhatsApp number ${lead.whatsappE164}${phoneAgreed ? "" : ". They have not yet said the team can call them on it"}`
+        : "",
+      spoken.some((message) => message.author === "AI") ? "" : "You have not replied in this chat yet.",
+      gapMs >= 12 * 3_600_000 ? `They are writing again after ${since(gapMs)}.` : "",
+      followUp && lastAiAt ? `They have not replied for ${since(runtime.now().getTime() - lastAiAt.getTime())} since your last message. This is follow up ${Number(payload.followUp) + 1}.` : "",
+    ].filter(Boolean).join("\n"),
+    lead_status: lead.crmState === "SYNCED"
+      ? `Already sent to the team${firstSync ? ` ${since(runtime.now().getTime() - firstSync.updatedAt.getTime())} ago` : ""}.`
+      : screen?.ready ? "Every must-have is answered; it goes to the team now." : "Not sent to the team yet. It goes once every must-have is answered.",
+    lead_questions: questions.map((question) => `- ${question.label} (${question.required === false ? "nice to have" : "must-have"})`).join("\n"),
+    recorded: answered.length ? answered.map((question) => `- ${question.label}: ${valueOf(question)}`).join("\n") : "Nothing yet.",
+    still_needed: open.length ? open.map((question) => `- ${question.label} (${question.required === false ? "nice to have" : "must-have"})`).join("\n") : "Nothing. Every question is answered.",
+    memory: conversation.contact.memory ?? "",
+    knowledge_base: workspace.knowledgeBase,
+    design_knowledge: agent.designKnowledge,
+    posts: [context.active ? `Post they came from:\n${context.active}` : "", context.catalog ? `Other posts:\n${context.catalog}` : ""].filter(Boolean).join("\n\n"),
+  });
+  const turns = spoken.slice(-60).map((message) => ({ role: message.author === "PROSPECT" ? ("user" as const) : ("assistant" as const), content: message.body }));
+  const chatText = spoken.slice(-60).map((message) => `${message.author === "PROSPECT" ? "Customer" : "You"}: ${message.body}`).join("\n");
+
+  let draft: string;
+  try {
+    draft = await complete({
+      system: `${system}\n\nWrite only the message to send to the customer now, exactly as it should appear. No labels, no quotes, no notes.`,
+      messages: followUp ? [...turns, { role: "user", content: "(No reply from the customer yet.)" }] : turns,
+      temperature: 0.5,
+    });
+  } catch (error) {
+    await db.aiRun.create({
+      data: { workspaceId: workspace.id, conversationId: conversation.id, model: runtime.llm.model, simulated: false, latencyMs: Date.now() - started, valid: false, diagnostic: `Prompt mode: ${error instanceof Error ? error.message.slice(0, 280) : "the model failed"}` },
+    });
+    return "done";
+  }
+  draft = draft.replace(/^(?:reply|message|you|assistant)\s*:\s*/i, "").replace(/^["'“]+|["'”]+$/g, "").trim();
+
+  let review: Record<string, unknown> | null = null;
+  try {
+    review = reviewJson(await complete({
+      system,
+      messages: [{
+        role: "user",
+        content: [
+          "The chat so far:",
+          chatText || "(empty)",
+          "",
+          "Your draft reply, not sent yet:",
+          draft,
+          "",
+          "Already answered:",
+          answered.length ? answered.map((question) => `- ${question.label}: ${valueOf(question)}`).join("\n") : "nothing yet",
+          `They write in: ${language}`,
+          "",
+          "Before it is sent, check the draft against every instruction in your system prompt and against the whole chat, one by one:",
+          "1. Does it ask about anything already answered above or in the chat, even in other words? Then ask about something still open instead.",
+          "2. Is it in the language they write in?",
+          "3. Does it use a banned word, repeat their answer back, sound like the project is already ours, or use the wrong sir or mam?",
+          "4. Does it break any other rule in the prompt (facts, promises, length, one question)?",
+          "5. Is it a natural reply to their latest message?",
+          "If anything fails, rewrite the reply so it follows the prompt. If nothing fails, keep the draft exactly as it is.",
+          "Also give the lead rating from the rating rules in your system prompt, and say whether this chat must go to the team now.",
+          'Return only JSON: {"problems": ["..."], "reply": "the message to send", "rating": "HOT" or "JUNK" or "UNRATED", "rating_reason": "short reason", "handoff": true or false, "handoff_reason": "short reason or null"}',
+        ].join("\n"),
+      }],
+      temperature: 0.1,
+    }));
+  } catch (error) {
+    console.warn(`Draft check failed, sending the draft: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const checked = typeof review?.reply === "string" ? review.reply.replace(/^["'“]+|["'”]+$/g, "").trim() : "";
+  const replyText = checked || draft;
+  const problems = Array.isArray(review?.problems) ? review.problems.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [];
+  const rating = typeof review?.rating === "string" && ["HOT", "JUNK", "UNRATED"].includes(review.rating.toUpperCase()) ? review.rating.toUpperCase() : null;
+  const handoffWanted = review?.handoff === true || requestsTeamSwitch(spoken.filter((message) => message.author === "PROSPECT").slice(-1)[0]?.body ?? "");
+
+  const qualification = screen
+    ? screen.cold
+      ? { qualification: "DISQUALIFIED" as const, reasons: ["Said they are not interested. This stays a cold lead and is not sent to Zoho."], contactable: false }
+      : screen.ready
+        ? { qualification: "QUALIFIED" as const, reasons: ["Every screening question is answered."], contactable: Boolean(phoneE164) }
+        : { qualification: "IN_PROGRESS" as const, reasons: [`Still needed: ${screen.missing.join(", ")}`], contactable: false }
+    : null;
+  const current = await db.lead.findUniqueOrThrow({ where: { id: lead.id } });
+  await db.lead.update({
+    where: { id: lead.id },
+    data: {
+      ...(rating ? { rating, ratingReason: typeof review?.rating_reason === "string" ? review.rating_reason.slice(0, 200) : null } : {}),
+      ...(qualification
+        ? {
+            qualification: qualification.qualification,
+            qualificationReasons: qualification.reasons,
+            contactableAt: qualification.contactable ? current.contactableAt ?? runtime.now() : current.contactableAt,
+            qualifiedAt: qualification.qualification === "QUALIFIED" ? current.qualifiedAt ?? runtime.now() : current.qualifiedAt,
+            crmState: qualification.contactable && current.crmState !== "SYNCED" ? "PENDING" : current.crmState,
+          }
+        : {}),
+      revision: { increment: 1 },
+    },
+  });
+  if (screen?.ready) {
+    await db.outboxJob.create({ data: { workspaceId: workspace.id, type: "CRM_SYNC", payload: { leadId: lead.id, contactId: conversation.contactId } } });
+  }
+
+  const fresh = await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } });
+  if (fresh.revision !== expectedRevision || fresh.owner !== "AI") return "done";
+  const lines = replyText.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const bubbles = agent.splitMessages ? lines : lines.length ? [lines.join(" ")] : [];
+  const window = replyEligibility({
+    now: runtime.now(),
+    lastUserMessageAt: fresh.lastUserMessageAt,
+    paused: connection.automationPaused || workspace.automationPaused,
+    optedOut: Boolean(conversation.contact.optedOutAt),
+    connectionReady: !connection.revokedAt,
+    ownerAllowsAutomation: fresh.owner === "AI",
+    manual: false,
+  });
+  let delivered = false;
+  if (bubbles.length && window.allowed) {
+    const participant = await db.contactIdentity.findFirst({
+      where: { contactId: conversation.contactId, identityType: "MESSAGING_PARTICIPANT", channel: conversation.channel },
+    });
+    const record = async (body: string, result: SendResult, voice?: { id: string }) => {
+      if (result.status === "ACCEPTED") {
+        delivered = true;
+        await db.message.create({
+          data: {
+            workspaceId: workspace.id,
+            connectionId: conversation.connectionId,
+            conversationId: conversation.id,
+            author: "AI",
+            body,
+            externalMessageId: result.providerMessageId,
+            ...(voice ? { voice: true, voiceClipId: voice.id } : {}),
+          },
+        });
+      } else if (result.status === "UNKNOWN") {
+        await db.auditEvent.create({
+          data: { workspaceId: workspace.id, action: "outbound.unknown", entityType: "Conversation", entityId: conversation.id, summary: "A reply timed out and was not resent." },
+        });
+      }
+    };
+    const spokenText = lines.join(" ");
+    const answeringVoice = [...conversation.messages].reverse().find((message) => message.author === "PROSPECT")?.voice === true;
+    const clip = agent.voiceReplies && answeringVoice && participant
+      ? await voiceClip(db, runtime, {
+          workspaceId: workspace.id,
+          channel: connection.channel,
+          text: spokenText,
+          chatLanguage: languageSample ? languageName(languageSample) : null,
+          messages: conversation.messages,
+        })
+      : null;
+    let voiceSent = false;
+    if (clip) {
+      if (agent.typingDelay) await runtime.pause?.(typingMs(spokenText));
+      const result = await runtime.send({ connection: sendConnection(connection), purpose: "text", recipientId: participant?.externalId, text: spokenText, audioUrl: clip.url });
+      if (result.status === "ACCEPTED" || result.status === "UNKNOWN") {
+        voiceSent = true;
+        await record(spokenText, result, clip);
+      }
+    }
+    if (!voiceSent) {
+      for (const bubble of bubbles) {
+        if (agent.typingDelay) await runtime.pause?.(typingMs(bubble));
+        const now = await db.conversation.findUnique({ where: { id: conversation.id }, select: { revision: true, owner: true } });
+        if (!now || now.revision !== expectedRevision || now.owner !== "AI") break;
+        const result = await runtime.send({ connection: sendConnection(connection), purpose: "text", recipientId: participant?.externalId, text: bubble });
+        await record(bubble, result);
+        if (result.status !== "ACCEPTED") break;
+      }
+    }
+  }
+  await db.aiRun.create({
+    data: {
+      workspaceId: workspace.id,
+      conversationId: conversation.id,
+      model: runtime.llm.model,
+      simulated: false,
+      latencyMs: Date.now() - started,
+      valid: Boolean(bubbles.length),
+      diagnostic: [
+        "Prompt mode",
+        checked && checked !== draft ? `The check rewrote the draft: ${draft.slice(0, 300)}` : review ? "The check kept the draft" : "The check failed, sent the draft",
+        ...problems.slice(0, 5),
+        rating ? `Rating ${rating}` : "",
+      ].filter(Boolean).join("; ").slice(0, 1000),
+    },
+  });
+  if (handoffWanted) {
+    await handoff(db, conversation.id, lead.id, typeof review?.handoff_reason === "string" && review.handoff_reason.trim() ? review.handoff_reason.slice(0, 200) : "The agent handed this chat to the team.");
+  } else if (delivered && agent.followUps) {
+    await scheduleFollowUp(db, runtime, conversation.id, Number(payload.followUp ?? 0));
+  }
+  await refreshMemory(db, runtime, conversation.contact, spoken);
+  return "done";
 }
 
 const MEMORY_WINDOW = 20;

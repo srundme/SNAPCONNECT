@@ -45,6 +45,16 @@ export type LlmProvider = {
   mode: "ollama" | "fixture" | "sarvam";
   model: string;
   generate(request: LlmRequest): Promise<LlmResponse>;
+  /** A plain chat completion: the system prompt and turns go in, the model's text comes out. */
+  complete?(input: {
+    system: string;
+    messages: Array<{ role: "user" | "assistant"; content: string }>;
+    temperature?: number;
+    maxTokens?: number;
+    timeoutMs?: number;
+    /** How hard the model reasons before answering; left out by default. */
+    thinking?: "low" | "medium" | "high" | null;
+  }): Promise<string>;
   summarize?(previous: string | null, transcript: string): Promise<string>;
   addressFor?(name: string): Promise<"sir" | "mam" | "bro">;
   readName?(question: string, reply: string): Promise<string | null>;
@@ -246,7 +256,7 @@ export function sarvamLlm(options: {
         const rule = question.kind === "name"
           ? "the customer's own person name, with surname or initial if given. Not a greeting, filler (arey, dei, bhai, acha), company or city."
           : question.kind === "phone"
-            ? "their mobile number exactly as typed."
+            ? "their mobile number exactly as typed. If they did not type one but agreed the team can call them on the number they are chatting from (like 'yes same number' or 'isi number pe call karo'), write \"SAME\"."
             : question.kind === "yesno"
               ? "\"yes\" or \"no\" only."
               : /e-?mail/i.test(question.label)
@@ -279,7 +289,7 @@ export function sarvamLlm(options: {
                 "You fill a sales lead form from a chat between a sales assistant and an Indian customer.",
                 "The chat can be English, Tamil, Hindi, Tanglish, Hinglish or mixed, with typos and stretched letters.",
                 "Read it the way a salesperson would. One message often answers several questions: put each fact in its own field, even when they said it before being asked and even when they did not use the question's words.",
-                "What they mean is the answer. 'Still in construction', 'under construction', 'being built' or 'not ready' means the home is not ready, so that answers the possession question. 'Living there', 'moved in' or 'already ready' means it is ready. A bare number straight after the BHK was asked is the BHK. '20 to 30l' is a budget. Record it in their words.",
+                "What they mean is the answer. 'Still in construction', 'under construction', 'being built' or 'not ready' means the home is not ready, so that answers the possession question. 'Living there', 'moved in' or 'already ready' means it is ready. A bare number straight after the BHK was asked is the BHK. '20 to 30l' is a budget. Record it in their words, but write a BHK with its unit and the home type when known, like '4 BHK Apartment'.",
                 "A line '(Sent a photo. It shows: ...)' or '(Sent a document ...)' is what they sent, not words they typed. A floor plan's BHK, home type and area are answers. Never take a person's name or a phone number from a photo or document.",
                 "Keep their words. Do not add a name, place, number or date they never said. Choosing which question a fact they did say belongs to is not guessing.",
                 "The Assistant's lines only tell you what was being asked. If the Customer corrected an answer, use the latest one. If a field was not answered, use null.",
@@ -454,6 +464,41 @@ export function sarvamLlm(options: {
       const json = content.slice(content.indexOf("{"), content.lastIndexOf("}") + 1);
       if (!json) throw new Error("Sarvam returned no voice direction.");
       return readVoiceDirection(JSON.parse(json) as unknown, sentences.length);
+    },
+    async complete({ system, messages: turns, temperature = 0.3, maxTokens = 2000, timeoutMs = 120_000, thinking = null }) {
+      const failures: string[] = [];
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {
+            method: "POST",
+            headers: { "content-type": "application/json", "api-subscription-key": options.apiKey },
+            body: JSON.stringify({
+              model,
+              temperature,
+              max_tokens: maxTokens,
+              ...(thinking ? { reasoning_effort: thinking } : {}),
+              messages: [
+                { role: "system", content: system.normalize("NFKC") },
+                ...turns.filter((turn) => turn.content.trim()).map((turn) => ({ role: turn.role, content: turn.content.normalize("NFKC") })),
+              ],
+            }),
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          if (!response.ok) {
+            const detail = (await response.text().catch(() => "")).slice(0, 200);
+            throw new SarvamError(`Sarvam returned HTTP ${response.status} ${detail}`.trim(), response.status === 429 || response.status >= 500);
+          }
+          const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+          const content = (body.choices?.[0]?.message?.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").replace(/^[\s\S]*<\/think>/, "").trim();
+          if (!content) throw new SarvamError("Sarvam returned an empty answer.", true);
+          return content;
+        } catch (error) {
+          failures.push(error instanceof Error ? error.message.slice(0, 120) : String(error));
+          if (error instanceof SarvamError && !error.temporary) break;
+          if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+        }
+      }
+      throw new Error(`Sarvam failed: ${failures.join(" | ")}`);
     },
     async generate(request): Promise<LlmResponse> {
       const started = Date.now();

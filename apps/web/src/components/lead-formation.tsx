@@ -99,6 +99,9 @@ export function AgentForm({
   tone,
   persona,
   systemPrompt,
+  agentPrompt,
+  defaultPrompt,
+  promptFacts,
   questions,
   externalKey,
   knowledgeBase,
@@ -112,6 +115,9 @@ export function AgentForm({
   tone: string;
   persona: string;
   systemPrompt: string;
+  agentPrompt: string;
+  defaultPrompt: string;
+  promptFacts: Array<[string, string]>;
   questions: Array<{ label: string; zohoField: string | null; required: boolean }>;
   externalKey: string;
   knowledgeBase: string;
@@ -121,6 +127,8 @@ export function AgentForm({
   const [rows, setRows] = useState<Row[]>(questions.length ? questions.map(toRow) : [{ label: "", zoho: "", custom: "", required: true }]);
   const [leadKey, setLeadKey] = useState(externalKey);
   const [knowledge, setKnowledge] = useState(knowledgeBase);
+  const [promptOn, setPromptOn] = useState(Boolean(agentPrompt.trim()));
+  const [prompt, setPrompt] = useState(agentPrompt.trim() || defaultPrompt);
   const filled = rows.filter((row) => row.label.trim());
 
   function update(index: number, patch: Partial<Row>) {
@@ -130,6 +138,29 @@ export function AgentForm({
   return (
     <form className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]" action={action}>
       <div className="grid gap-4">
+        <Section title="System prompt" detail="When this is on, the agent follows only this prompt. Code reads photos, voice and documents, fills the lead form, sends the lead to Zoho and sends the messages, and nothing else.">
+          <div className="grid gap-3 p-5">
+            <label className="flex cursor-pointer items-center gap-3 font-normal">
+              <input type="checkbox" name="agentPromptOn" checked={promptOn} onChange={(event) => setPromptOn(event.target.checked)} className="h-4 w-4 accent-[var(--color-accent)]" />
+              <span className="text-sm font-semibold">Use this system prompt</span>
+            </label>
+            <label>
+              Prompt
+              <textarea name="agentPrompt" rows={28} maxLength={60000} value={prompt} onChange={(event) => setPrompt(event.target.value)} spellCheck={false} className="font-mono text-[13px]" />
+            </label>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-[var(--color-muted)]">
+              <span>{prompt.length.toLocaleString("en-IN")} of 60,000 characters</span>
+              <button type="button" className="border-[var(--color-line)] text-[12px]" onClick={() => setPrompt(defaultPrompt)}>Reset to the starting prompt</button>
+            </div>
+            <div className="text-[12px] leading-5 text-[var(--color-muted)]">
+              <p className="font-semibold">Filled in for every reply. Write these where you want them; any you leave out are added at the end.</p>
+              <ul className="mt-1 grid gap-x-4 sm:grid-cols-2">
+                {promptFacts.map(([key, label]) => <li key={key}><code>{`{{${key}}}`}</code> {label}</li>)}
+              </ul>
+              {promptOn ? <p className="mt-2">Still used from below: the knowledge base, design knowledge, lead questions, Zoho settings, and the voice replies, photo reading, split messages, human timing and follow-up switches. The other fields only shape the starting prompt.</p> : null}
+            </div>
+          </div>
+        </Section>
         <Panel>
           <div className="border-b border-[var(--color-line)] px-5 py-4">
             <h2 className="text-[17px] font-semibold tracking-tight">1. Who replies</h2>
