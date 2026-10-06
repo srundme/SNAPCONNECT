@@ -167,6 +167,8 @@ describe("common sense checks", () => {
     expect(rate({ home: "2 BHK Apartment", scope: "Full home" })).toBe("JUNK");
     expect(rate({ home: "3 BHK Apartment", scope: "only kitchen and wardrobes" })).toBe("JUNK");
     expect(rate({ home: "3 BHK Apartment" })).toBe("UNRATED");
+    expect(rate({ budget: "50L+", scope: "only the kitchen and 2 bedrooms" })).toBe("JUNK");
+    expect(rate({ budget: "50L+", scope: "full home sir" })).toBe("HOT");
     expect(rateLead({ questions, answers: { budget: "50L" }, hotBudgetLakhs: 0 }).rating).toBe("UNRATED");
     expect(homeTypeName("He flat hai")).toBe("Apartment");
     expect(homeTypeName("it's a bungalow")).toBe("Villa");

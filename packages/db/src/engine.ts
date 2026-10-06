@@ -15,6 +15,8 @@ import {
   pastTimeToday,
   pastTimeReply,
   rateLead,
+  budgetLakhs,
+  selectedRoomsOnly,
   homeTypeName,
   requestedTime,
   requestedTimeLine,
@@ -1628,6 +1630,14 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           const found = `${place.name} is in ${[place.locality, place.city, place.pincode].filter(Boolean).join(", ")} (OpenStreetMap).${place.underConstruction && !livesThere ? " The map marks it as under construction." : ""}`;
           await noteOnce(`Map: ${place.name.toLowerCase()}`, found);
           memoryLines.push(`A map lookup of their project found: ${found} If they have not said the locality, you may confirm it naturally once, like "that is in <locality> side, right?", and use the area to make your reply relevant. This is all you know about the project: never invent the builder, flat sizes, possession dates, amenities or prices.`);
+        }
+      }
+      if (agent.hotBudgetLakhs) {
+        const budgetValue = questions.filter((question) => /budget/i.test(question.label)).map((question) => absorbed.answers[question.id] ?? "").find(Boolean) ?? "";
+        const scopeValue = questions.filter((question) => /full home|selected rooms|scope/i.test(question.label)).map((question) => absorbed.answers[question.id] ?? "").find(Boolean) ?? "";
+        const budget = budgetValue ? budgetLakhs(budgetValue) : null;
+        if ((budget && budget.low < agent.hotBudgetLakhs) || selectedRoomsOnly(scopeValue)) {
+          memoryLines.push("Treat their budget and scope like any other answer: acknowledge it warmly in a few words and carry on with the next detail. Never call the budget low, tight, small or limited, never say the scope is small, never mention a minimum budget or that the team prefers full homes, and never suggest raising the budget.");
         }
       }
       recordedName = absorbed.name;
