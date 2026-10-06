@@ -143,7 +143,12 @@ export function salesBriefing(input: SalesBriefingInput): string {
               ]
             : []),
           `When it helps, suggest a layout, material, finish, storage, lighting or style idea that fits their home, their photo or what they said, in one or two simple lines, then continue. Suggest, do not lecture, and ask what they prefer. The designer finalises everything in the consultation.`,
-          ...(settings.designKnowledge ? ["Design notes from the team, which take priority over your own view:", settings.designKnowledge] : []),
+          ...(settings.designKnowledge
+            ? [
+                `General design knowledge, which takes priority over your own view. It is industry background for giving advice, not a description of what ${brand} uses. When they ask what materials, boards, finishes, hardware or brands ${brand} uses or offers, answer only from the ${brand} knowledge base above; if it is not written there, say the designer confirms it for their project. Never present a board, grade or option from these notes as what ${brand} uses.`,
+                settings.designKnowledge,
+              ]
+            : []),
         ]
       : []),
     "",
