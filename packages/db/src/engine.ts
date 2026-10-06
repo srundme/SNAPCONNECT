@@ -4,6 +4,7 @@ import {
   deterministicIntent,
   requestsTeamSwitch,
   customerComplaint,
+  dropAnsweredQuestions,
   dropIndicSentences,
   hasIndicSentence,
   duplicateCheckFields,
@@ -831,7 +832,7 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
         workspaceId: connection.workspaceId,
         type: "INFERENCE",
         payload: { conversationId: conversation.id, expectedRevision: updated.revision, contactId },
-        availableAt: new Date(runtime.now().getTime() + (runtime.replySettleMs ?? 0) + (runtime.pause && agent.typingDelay ? readingMs(text) : 0)),
+        availableAt: new Date(runtime.now().getTime() + settleMs(runtime, conversation.lastUserMessageAt, sentAt) + (runtime.pause && agent.typingDelay ? readingMs(text) : 0)),
       },
     });
   }
@@ -1400,7 +1401,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           ...(nextDetail
             ? [
                 `Next detail to collect: ${nextDetail.label}${nextDetail.kind === "phone" ? " (ask them to type their mobile number; never ask for permission instead)" : ""}. End your reply with one natural question that asks for exactly this. Do not ask for anything already recorded or anything else.`,
-                `Talk like a good sales consultant. In one short sentence, react to what they just said and connect it to how ${workspace.brandName} can help them, using the details they already gave. Then ask the question.`,
+                `Talk like a premium interior sales consultant, not a form. In one short sentence, react to what they just said and add one useful, specific point from the knowledge base that fits their situation, such as the process, the timeline, the experience centre, materials, warranty or why ${workspace.brandName}. Use only facts from the knowledge base, and do not repeat a point you already made in this chat. Then ask the question.`,
+                "If they sent several messages, answer all of them together. If a later message corrects an earlier one, the latest message is what they mean.",
                 "If they asked something, answer it first in one sentence, then ask the question.",
               ]
             : []),
@@ -1670,7 +1672,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : validated.reply ?? fallback;
     const firstWhatsAppReply = conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI");
     const earlierReplies = conversation.messages.filter((message) => message.author === "AI").map((message) => message.body);
-    const inLanguage = composed && !languageSample ? dropIndicSentences(composed) || composed : composed;
+    const answered = screen ? questions.filter((question) => !screen.missing.includes(question.label) && !screen.optional.includes(question.label)).map((question) => question.id) : [];
+    const unasked = composed && answered.length
+      ? dropAnsweredQuestions(composed, questions, answered) || (pending ? scriptQuestionFor(pending, languageSample ? languageName(languageSample) : null) : null)
+      : composed;
+    const inLanguage = unasked && !languageSample ? dropIndicSentences(unasked) || unasked : unasked;
     const humanized = inLanguage ? applyReplySwitches(oneAddress(dropCannedLines(humanizeReply(inLanguage))), agent) || null : inLanguage;
     const written = humanized && firstWhatsAppReply
       ? withAutomationDisclosure(humanized, workspace.brandName, workspace.agentName)
@@ -1748,11 +1754,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       }
       if (!voiceSent) {
         for (const [index, bubble] of bubbles.entries()) {
-          if (index > 0) {
-            const current = await db.conversation.findUnique({ where: { id: conversation.id }, select: { revision: true, owner: true } });
-            if (!current || current.revision !== expectedRevision || current.owner !== "AI") break;
-          }
           if (agent.typingDelay) await runtime.pause?.(index === 0 ? Math.max(0, typingMs(bubble) - generated.latencyMs) : typingMs(bubble));
+          const current = await db.conversation.findUnique({ where: { id: conversation.id }, select: { revision: true, owner: true } });
+          if (!current || current.revision !== expectedRevision || current.owner !== "AI") break;
           const result = await runtime.send({
             connection: sendConnection(connection),
             purpose: "text",
@@ -2093,6 +2097,13 @@ async function readLeadForm(
 }
 
 /** The model has no clock of its own; every reply gets the real day, date and time in India. */
+/** People who send several quick messages are still typing, so Varun waits longer before answering all of them together. */
+function settleMs(runtime: Runtime, previousInbound: Date | null, sentAt: Date): number {
+  const base = runtime.replySettleMs ?? 0;
+  const burst = previousInbound && sentAt.getTime() - previousInbound.getTime() < 45_000;
+  return base && burst ? base + 5_000 : base;
+}
+
 export function clockLine(now: Date): string {
   const when = new Intl.DateTimeFormat("en-IN", {
     timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true,

@@ -185,6 +185,21 @@ function sentencesOf(text: string): string[] {
   return text.split(/(?<=[.!?।])\s+|\n+/).map((part) => part.trim()).filter(Boolean);
 }
 
+const FILLER = new Set(["sir", "mam", "madam", "bro", "ji", "please", "ok", "okay", "so", "the", "a", "an", "is", "it", "u", "you", "ur", "your", "just", "located"]);
+
+function wordSet(sentence: string): Set<string> {
+  return new Set(casualText(sentence).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word && !FILLER.has(word)));
+}
+
+/** A sentence that shares almost all its words with one Varun just sent reads as a copy, even with a word changed. */
+function nearlySame(words: Set<string>, recent: Set<string>[]): boolean {
+  if (words.size < 4) return false;
+  return recent.some((other) => {
+    const shared = [...words].filter((word) => other.has(word)).length;
+    return shared / Math.max(words.size, other.size) >= 0.75;
+  });
+}
+
 function casualKey(sentence: string): string {
   return sentenceKey(casualText(sentence));
 }
@@ -200,14 +215,12 @@ export function humanBubbles(
   options: { casual?: boolean; split?: boolean } = {},
 ): string[] {
   const casual = options.casual ?? true;
-  const said = new Set(
-    earlier
-      .flatMap((body) => body.split(/\.{2,}|(?<=[.!?।])\s+|\n+/))
-      .map(casualKey)
-      .filter((key) => key.length >= 12),
-  );
+  const earlierSentences = earlier.flatMap((body) => body.split(/\.{2,}|(?<=[.!?।])\s+|\n+/));
+  const said = new Set(earlierSentences.map(casualKey).filter((key) => key.length >= 12));
+  const recentWords = earlier.slice(-3).flatMap((body) => body.split(/\.{2,}|(?<=[.!?।])\s+|\n+/)).map(wordSet).filter((words) => words.size >= 5);
+  const repeat = (part: string) => said.has(casualKey(part)) || nearlySame(wordSet(part), recentWords);
   const split = replyBubbles(text).map(sentencesOf);
-  const fresh = split.map((parts) => parts.filter((part) => !said.has(casualKey(part))));
+  const fresh = split.map((parts) => parts.filter((part) => !repeat(part)));
   const chosen = fresh.some((parts) => parts.length) ? fresh : split;
   if (options.split === false || !casual) {
     const lines = chosen.filter((parts) => parts.length).map((parts) => parts.join(" "));

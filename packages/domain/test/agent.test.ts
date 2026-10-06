@@ -3,6 +3,7 @@ import {
   acceptExtractedAnswers,
   applyReplySwitches,
   customerComplaint,
+  dropAnsweredQuestions,
   dropIndicSentences,
   hasIndicSentence,
   humanBubbles,
@@ -23,6 +24,27 @@ describe("English chats stay English", () => {
     expect(dropIndicSentences("Sure sir, a 3 BHK in Madiwala is more than enough space for a modular kitchen.")).toContain("Madiwala");
     expect(hasIndicSentence("haan sir wardrobe la marble finish irukku. side la laundry basket irukku.")).toBe(true);
     expect(hasIndicSentence("Nice sir, that wardrobe has a marble look finish.")).toBe(false);
+  });
+});
+
+describe("no repeats and no re-asking", () => {
+  const questions = parseLeadQuestions([
+    { id: "scope", label: "Is it the full home or selected rooms?", field: "Description" },
+    { id: "area", label: "Where is the home, which area and which apartment or project?", field: "Description" },
+    { id: "phone", label: "Best number to reach you", field: "Phone", kind: "phone" },
+  ]);
+
+  it("drops a question about a detail they already gave, keeps the rest", () => {
+    const reply = "Pricing depends on the scope and materials, so the team confirms it in the free consultation. Is it the full home or selected rooms?";
+    expect(dropAnsweredQuestions(reply, questions, ["scope"])).toBe("Pricing depends on the scope and materials, so the team confirms it in the free consultation.");
+    expect(dropAnsweredQuestions("Is this the number the team should call?", questions, ["phone"])).toBe("Is this the number the team should call?");
+    expect(dropAnsweredQuestions("Noted. Which area and which apartment is it in?", [...questions, { id: "type", label: "What kind of home is it, apartment, villa or independent house?", field: "Description", kind: "text", required: true }], ["scope", "type"]))
+      .toBe("Noted. Which area and which apartment is it in?");
+  });
+
+  it("does not send a question it just asked in slightly different words", () => {
+    const bubbles = humanBubbles("noted sir. where is the home sir which area and project?", ["understood sir\nwhere is the home located which area and project?"]);
+    expect(bubbles.join(" ")).not.toMatch(/where is the home/);
   });
 });
 

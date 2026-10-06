@@ -701,6 +701,36 @@ const HINGLISH_QUESTIONS: Record<string, string> = {
   demo: "Demo dekhna chahoge?",
 };
 
+function askScore(question: LeadQuestion, sentence: string): number {
+  const ask = sentence.toLowerCase();
+  if (question.kind === "name" || question.kind === "phone" || question.kind === "yesno") return askedAbout(question, sentence) ? 2 : 0;
+  const keywords = [...new Set(question.label.toLowerCase().match(/[a-z]{4,}/g)?.filter((word) => !LABEL_FILLER.has(word)) ?? [])];
+  return keywords.filter((word) => ask.includes(word.slice(0, Math.max(4, word.length - 2)))).length;
+}
+
+/**
+ * Removes questions about details they already gave. A question counts as the one it matches best,
+ * so "which area and apartment" is the area question even though home type mentions apartments.
+ * The phone stays askable so Varun can confirm a number.
+ */
+export function dropAnsweredQuestions(reply: string, questions: LeadQuestion[], answeredIds: string[]): string {
+  const answered = new Set(answeredIds);
+  if (!answered.size) return reply;
+  const repeatsAnswer = (sentence: string) => {
+    if (!sentence.includes("?") && !ASKING.test(sentence)) return false;
+    const scored = questions.map((question) => ({ question, score: askScore(question, sentence) })).filter((item) => item.score > 0);
+    if (!scored.length) return false;
+    const best = Math.max(...scored.map((item) => item.score));
+    const top = scored.filter((item) => item.score === best);
+    return top.every((item) => answered.has(item.question.id) && item.question.kind !== "phone");
+  };
+  return reply
+    .split(/\n+/)
+    .map((line) => line.split(/(?<=[.!?])\s+/).filter((sentence) => !repeatsAnswer(sentence)).join(" ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 export function replyAsksFor(question: LeadQuestion, reply: string): boolean {
   return reply.includes(scriptQuestion(question)) || askedAbout(question, reply);
 }
