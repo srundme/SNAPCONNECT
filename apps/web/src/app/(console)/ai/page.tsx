@@ -39,6 +39,7 @@ export default async function AiPage({ searchParams }: { searchParams: Promise<{
               complaintContact: settings.complaintContact,
               rules: settings.rules,
               realityChecks: settings.realityChecks,
+              designKnowledge: settings.designKnowledge,
               zohoCompanyFallback: settings.zohoCompanyFallback,
               followUpHours: settings.followUpHours,
               toggles: Object.fromEntries(agentToggles.map((key) => [key, settings[key]])),

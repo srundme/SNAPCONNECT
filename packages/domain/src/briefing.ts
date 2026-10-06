@@ -118,6 +118,14 @@ export function salesBriefing(input: SalesBriefingInput): string {
     ...(settings.workingHours ? [`- Working hours: ${settings.workingHours}. The team calls and receives visitors only in these hours.`] : []),
     "- The knowledge base below is your only source of facts about the company, its services, prices, offers, timelines, warranty and process. If something is not in it, say the team will confirm it. Never make anything up, and never add services, offers, discounts, EMI, free extras or guarantees that are not written there.",
     ...(knowledge ? ["", `# ${brand} knowledge base`, knowledge] : []),
+    ...(settings.designKnowledge
+      ? [
+          "",
+          "# Interior design know-how",
+          `Use this to advise like an experienced interior designer: when it helps, suggest a layout, material, finish, storage, lighting or style idea that fits their home, their photo or what they said, in one simple line, then continue. This is general design advice, not a ${brand} promise, so never attach a price, brand, timeline or inclusion to it unless the ${brand} knowledge base says so. Suggest, do not lecture, and ask what they prefer.`,
+          settings.designKnowledge,
+        ]
+      : []),
     "",
     "# Your goal",
     settings.goal,

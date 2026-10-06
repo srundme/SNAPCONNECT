@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   acceptExtractedAnswers,
+  agreesToWhatsAppNumber,
   applyReplySwitches,
+  askSameNumber,
   customerComplaint,
   dropAnsweredQuestions,
   dropIndicSentences,
@@ -37,7 +39,7 @@ describe("no repeats and no re-asking", () => {
   it("drops a question about a detail they already gave, keeps the rest", () => {
     const reply = "Pricing depends on the scope and materials, so the team confirms it in the free consultation. Is it the full home or selected rooms?";
     expect(dropAnsweredQuestions(reply, questions, ["scope"])).toBe("Pricing depends on the scope and materials, so the team confirms it in the free consultation.");
-    expect(dropAnsweredQuestions("Is this the number the team should call?", questions, ["phone"])).toBe("Is this the number the team should call?");
+    expect(dropAnsweredQuestions("Noted. Which number should the team call you on?", questions, ["phone"])).toBe("Noted.");
     expect(dropAnsweredQuestions("Noted. Which area and which apartment is it in?", [...questions, { id: "type", label: "What kind of home is it, apartment, villa or independent house?", field: "Description", kind: "text", required: true }], ["scope", "type"]))
       .toBe("Noted. Which area and which apartment is it in?");
   });
@@ -45,6 +47,23 @@ describe("no repeats and no re-asking", () => {
   it("does not send a question it just asked in slightly different words", () => {
     const bubbles = humanBubbles("noted sir. where is the home sir which area and project?", ["understood sir\nwhere is the home located which area and project?"]);
     expect(bubbles.join(" ")).not.toMatch(/where is the home/);
+  });
+});
+
+describe("WhatsApp number", () => {
+  it("asks to use the same WhatsApp number instead of which number, once", () => {
+    expect(askSameNumber("ok sir already with u makes things easier. Which number should the team call u on?", "+916383653279"))
+      .toBe("ok sir already with u makes things easier. Shall the team call you on this same WhatsApp number, +916383653279?");
+    expect(askSameNumber("Can I call on this WhatsApp number? Which number should we use?", "+916383653279")).toBe("Can I call on this WhatsApp number?");
+  });
+
+  it("knows when they agreed to the same number", () => {
+    const asked = "Shall the team call you on this same WhatsApp number, +916383653279?";
+    expect(agreesToWhatsAppNumber("yes", asked)).toBe(true);
+    expect(agreesToWhatsAppNumber("ok call me", asked)).toBe(true);
+    expect(agreesToWhatsAppNumber("Same number", "anything")).toBe(true);
+    expect(agreesToWhatsAppNumber("no call 9876501234 instead", asked)).toBe(false);
+    expect(agreesToWhatsAppNumber("yes", "Is it the full home or selected rooms?")).toBe(false);
   });
 });
 
@@ -163,6 +182,15 @@ describe("must-have and nice-to-have questions", () => {
       languageLine: "This chat is in Kannada typed in English letters.", chatLanguage: "Kannada typed in English letters",
       activePost: null, otherPosts: null,
     });
+    expect(brief).not.toContain("Interior design know-how");
+    const designer = salesBriefing({
+      brandName: "The KariGhars", agentName: "Varun", services: "", faqs: [], teamNotes: null, questions, recorded: [],
+      nextDetail: questions[1]!, ready: false, cold: false, minutesSinceSent: null, memoryLines: [],
+      languageLine: "This chat is in English.", activePost: null, otherPosts: null,
+      settings: parseAgentSettings({ designKnowledge: "Parallel kitchens suit long narrow spaces." }),
+    });
+    expect(designer).toContain("# Interior design know-how");
+    expect(designer).toContain("Parallel kitchens suit long narrow spaces.");
     expect(kannada).toMatch(/Kanglish/);
     expect(kannada).not.toMatch(/Sollunga|pannuvanga|Batao/);
   });

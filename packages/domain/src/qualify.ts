@@ -701,6 +701,44 @@ const HINGLISH_QUESTIONS: Record<string, string> = {
   demo: "Demo dekhna chahoge?",
 };
 
+const SAME_NUMBER_ASKED = /\bsame\b[^.?!]*\b(number|whatsapp)\b|\bthis\s+(whatsapp\s+)?number\b|\bwhatsapp number\b/i;
+
+export function sameNumberQuestion(phoneE164: string): string {
+  return `Shall the team call you on this same WhatsApp number, ${phoneE164}?`;
+}
+
+/** True when they agree the team can call the WhatsApp number they are chatting from. */
+export function agreesToWhatsAppNumber(latest: string, lastAi: string): boolean {
+  const text = latest.trim();
+  if (!text) return false;
+  if (/\bsame\b|\bthis (one|number|no)\b|\bthis whatsapp\b/i.test(text) && !/\bnot\b/i.test(text)) return true;
+  if (!SAME_NUMBER_ASKED.test(lastAi)) return false;
+  if (text.replace(/\D/g, "").length >= 10) return false;
+  if (/\b(no|nope|nah|not|another|different|other|illa|venam|nahi)\b/i.test(text)) return false;
+  return YES_ANSWER.test(text) || /\b(ok|okay|k|sure|fine|yes|yeah|ya|yep|haan|ha|aama|seri|sari|correct|call)\b/i.test(text);
+}
+
+/** On WhatsApp the number is known, so a "which number" question becomes "this same number?", asked once. */
+export function askSameNumber(reply: string, phoneE164: string): string {
+  let asked = false;
+  return reply
+    .split(/\n+/)
+    .map((line) => line
+      .split(/(?<=[.!?])\s+/)
+      .map((sentence) => {
+        const asksNumber = (sentence.includes("?") || ASKING.test(sentence)) && /\b(number|phone|mobile|contact)\b/i.test(sentence) && !SAME_NUMBER_ASKED.test(sentence);
+        if (!asksNumber && !SAME_NUMBER_ASKED.test(sentence)) return sentence;
+        if (asked) return "";
+        asked = true;
+        return asksNumber ? sameNumberQuestion(phoneE164) : sentence;
+      })
+      .filter(Boolean)
+      .join(" ")
+      .trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 function askScore(question: LeadQuestion, sentence: string): number {
   const ask = sentence.toLowerCase();
   if (question.kind === "name" || question.kind === "phone" || question.kind === "yesno") return askedAbout(question, sentence) ? 2 : 0;
@@ -711,7 +749,6 @@ function askScore(question: LeadQuestion, sentence: string): number {
 /**
  * Removes questions about details they already gave. A question counts as the one it matches best,
  * so "which area and apartment" is the area question even though home type mentions apartments.
- * The phone stays askable so Varun can confirm a number.
  */
 export function dropAnsweredQuestions(reply: string, questions: LeadQuestion[], answeredIds: string[]): string {
   const answered = new Set(answeredIds);
@@ -722,7 +759,7 @@ export function dropAnsweredQuestions(reply: string, questions: LeadQuestion[], 
     if (!scored.length) return false;
     const best = Math.max(...scored.map((item) => item.score));
     const top = scored.filter((item) => item.score === best);
-    return top.every((item) => answered.has(item.question.id) && item.question.kind !== "phone");
+    return top.every((item) => answered.has(item.question.id));
   };
   return reply
     .split(/\n+/)

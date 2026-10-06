@@ -39,6 +39,7 @@ export type AgentFormSettings = {
   complaintContact: string;
   rules: string;
   realityChecks: string;
+  designKnowledge: string;
   zohoCompanyFallback: string;
   followUpHours: number[];
   toggles: Record<string, boolean>;
@@ -160,6 +161,11 @@ export function AgentForm({
                 </select>
               </label>
             </div>
+            <label>
+              Interior design knowledge
+              <textarea name="designKnowledge" rows={10} maxLength={20000} defaultValue={settings.designKnowledge} placeholder="General design know-how the agent can advise with: materials, kitchen layouts, wardrobes, ceilings, lighting, styles, vastu basics. No prices or company promises here." />
+            </label>
+            <p className="text-[12px] text-[var(--color-muted)]">Used for design suggestions only. Company facts, prices and promises come from the knowledge base above.</p>
           </div>
         </Section>
         <Section title="3. How it sells" detail="Goal, price answer, hours and the rules it must always follow. One rule per line.">

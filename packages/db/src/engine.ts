@@ -4,7 +4,11 @@ import {
   deterministicIntent,
   requestsTeamSwitch,
   customerComplaint,
+  agreesToWhatsAppNumber,
+  askSameNumber,
+  type LeadQuestion,
   dropAnsweredQuestions,
+  sameNumberQuestion,
   dropIndicSentences,
   hasIndicSentence,
   duplicateCheckFields,
@@ -1207,7 +1211,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI")
         ? `They messaged ${workspace.brandName} on WhatsApp. This is your first reply: greet them, say you are ${workspace.agentName ?? "the assistant"}, an automated assistant for ${workspace.brandName}, then continue.`
         : "",
-      conversation.channel === "WHATSAPP" && lead.phoneE164 ? "They are chatting from their WhatsApp number, so their phone number is already recorded. Never ask for their phone number." : "",
+      conversation.channel === "WHATSAPP" && lead.phoneE164
+        ? lead.sameNumberConfirmed || lead.phoneE164 !== lead.whatsappE164
+          ? `The team will call them on ${lead.phoneE164}, which they confirmed. Never ask for their number again.`
+          : `They are chatting from their WhatsApp number ${lead.phoneE164}, so you already have it. Never ask which number or ask them to type one. When the number comes up, ask once whether the team can call them on this same WhatsApp number.`
+        : "",
       photoLine(spoken),
       followUpLine(payload.followUp, agent.followUpHours.length, lastSpoken?.createdAt, runtime.now()),
       gapHours >= 12
@@ -1304,6 +1312,16 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         },
       });
     }
+    const waNumber = conversation.channel === "WHATSAPP" && lead.whatsappE164 && recordedPhone === lead.whatsappE164 ? recordedPhone : null;
+    let numberPending = Boolean(waNumber && !lead.sameNumberConfirmed);
+    if (numberPending) {
+      const latestText = [...spoken].reverse().find((message) => message.author === "PROSPECT")?.body ?? "";
+      const lastAiText = spoken.filter((message) => message.author === "AI").slice(-3).map((message) => message.body).join("\n");
+      if (agreesToWhatsAppNumber(latestText, lastAiText)) {
+        await db.lead.update({ where: { id: lead.id }, data: { sameNumberConfirmed: true } });
+        numberPending = false;
+      }
+    }
     const concern = nameConcern(recordedName, [conversation.contact.displayName, conversation.contact.username]);
     if (concern) {
       const marker = `Name check: "${concern.name}"`;
@@ -1369,9 +1387,14 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const languageLine = languageSample
       ? `This chat is in ${languageName(languageSample)}, like their message "${languageSample}". Keep every reply in exactly that language, script and casual style, never another Indian language, even when they answer with only ok, yes, a number or a short English word. Switch only if they write a full sentence in another language.`
       : "This chat is in English. Reply only in plain, simple English, with no Tamil, Hindi or other Indian-language words at all. Short replies do not change that. Switch only if they write a full sentence in another language.";
-    const scripted = questions.length
-      ? scriptedReply({ questions, answers: recordedAnswers, name: recordedName, phoneE164: recordedPhone, latestUser: latestProspect, about: workspace.services })
+    const screenPhone = numberPending ? null : recordedPhone;
+    const askQuestion = (question: LeadQuestion) => numberPending && waNumber && question.kind === "phone"
+      ? sameNumberQuestion(waNumber)
+      : scriptQuestionFor(question, languageSample ? languageName(languageSample) : null);
+    const scriptedText = questions.length
+      ? scriptedReply({ questions, answers: recordedAnswers, name: recordedName, phoneE164: screenPhone, latestUser: latestProspect, about: workspace.services })
       : "";
+    const scripted = numberPending && waNumber ? askSameNumber(scriptedText, waNumber) : scriptedText;
     const brief = questions.length
       ? questionBrief(questions)
       : collectionBrief(parseLeadFields(workspace.requiredLeadFields), parseZohoSendWhen(workspace.zohoSendWhen));
@@ -1380,7 +1403,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : recordedFacts(toSnapshot(lead));
     const recordedLine = `Already recorded: ${recorded.length > 0 ? recorded.join("; ") : "nothing yet"}.`;
     const complete = questions.length
-      ? screenLead({ questions, answers: recordedAnswers, name: recordedName, phoneE164: recordedPhone })
+      ? screenLead({ questions, answers: recordedAnswers, name: recordedName, phoneE164: screenPhone })
       : null;
     const nextDetail = complete && !complete.ready && !complete.cold
       ? questions.find((question) => complete.missing.includes(question.label))
@@ -1400,7 +1423,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
             : ["Some must-have details are still missing. Do not say their details are shared, passed on, with the team, or that the team will call, unless they ask what happens next."]),
           ...(nextDetail
             ? [
-                `Next detail to collect: ${nextDetail.label}${nextDetail.kind === "phone" ? " (ask them to type their mobile number; never ask for permission instead)" : ""}. End your reply with one natural question that asks for exactly this. Do not ask for anything already recorded or anything else.`,
+                `Next detail to collect: ${nextDetail.label}${nextDetail.kind === "phone" ? numberPending && waNumber ? ` (ask once whether the team can call them on this same WhatsApp number, ${waNumber}; never ask them to type a number)` : " (ask them to type their mobile number; never ask for permission instead)" : ""}. End your reply with one natural question that asks for exactly this. Do not ask for anything already recorded or anything else.`,
                 `Talk like a premium interior sales consultant, not a form. In one short sentence, react to what they just said and add one useful, specific point from the knowledge base that fits their situation, such as the process, the timeline, the experience centre, materials, warranty or why ${workspace.brandName}. Use only facts from the knowledge base, and do not repeat a point you already made in this chat. Then ask the question.`,
                 "If they sent several messages, answer all of them together. If a later message corrects an earlier one, the latest message is what they mean.",
                 "If they asked something, answer it first in one sentence, then ask the question.",
@@ -1628,7 +1651,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const updatedLead = await db.lead.findUniqueOrThrow({ where: { id: lead.id }, include: { contact: true } });
     const rule = leadRule(workspace);
     const screen = questions.length
-      ? screenLead({ questions, answers: answerRecord(updatedLead.answers), name: updatedLead.contact.chosenName, phoneE164: updatedLead.phoneE164 })
+      ? screenLead({ questions, answers: answerRecord(updatedLead.answers), name: updatedLead.contact.chosenName, phoneE164: numberPending && updatedLead.phoneE164 === waNumber ? null : updatedLead.phoneE164 })
       : null;
     const qualification = screen
       ? screen.cold
@@ -1668,15 +1691,16 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : pending && validated.reply
       ? replyAsksFor(pending, validated.reply) || asksSomething(validated.reply) || validated.reply.length >= 60 || raisesConcern(latestUser) || customerComplaint(latestUser)
         ? validated.reply
-        : [statement, scriptQuestionFor(pending, languageSample ? languageName(languageSample) : null)].filter(Boolean).join(" ")
+        : [statement, askQuestion(pending)].filter(Boolean).join(" ")
       : validated.reply ?? fallback;
     const firstWhatsAppReply = conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI");
     const earlierReplies = conversation.messages.filter((message) => message.author === "AI").map((message) => message.body);
     const answered = screen ? questions.filter((question) => !screen.missing.includes(question.label) && !screen.optional.includes(question.label)).map((question) => question.id) : [];
     const unasked = composed && answered.length
-      ? dropAnsweredQuestions(composed, questions, answered) || (pending ? scriptQuestionFor(pending, languageSample ? languageName(languageSample) : null) : null)
+      ? dropAnsweredQuestions(composed, questions, answered) || (pending ? askQuestion(pending) : null)
       : composed;
-    const inLanguage = unasked && !languageSample ? dropIndicSentences(unasked) || unasked : unasked;
+    const numbered = unasked && numberPending && waNumber ? askSameNumber(unasked, waNumber) : unasked;
+    const inLanguage = numbered && !languageSample ? dropIndicSentences(numbered) || numbered : numbered;
     const humanized = inLanguage ? applyReplySwitches(oneAddress(dropCannedLines(humanizeReply(inLanguage))), agent) || null : inLanguage;
     const written = humanized && firstWhatsAppReply
       ? withAutomationDisclosure(humanized, workspace.brandName, workspace.agentName)
@@ -1833,7 +1857,8 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
   const rule = leadRule(lead.workspace);
   const questions = parseLeadQuestions(lead.workspace.leadQuestions);
   if (questions.length) {
-    const screen = screenLead({ questions, answers: answerRecord(lead.answers), name: lead.contact.chosenName, phoneE164: lead.phoneE164 });
+    const unconfirmedWhatsApp = lead.channel === "WHATSAPP" && lead.phoneE164 === lead.whatsappE164 && !lead.sameNumberConfirmed;
+    const screen = screenLead({ questions, answers: answerRecord(lead.answers), name: lead.contact.chosenName, phoneE164: unconfirmedWhatsApp ? null : lead.phoneE164 });
     if (!screen.ready) return "done";
   } else {
     const qualification = evaluateQualification(toSnapshot(lead), rule.settings);

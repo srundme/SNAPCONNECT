@@ -6,6 +6,7 @@ export type AgentSettings = {
   complaintContact: string;
   rules: string;
   realityChecks: string;
+  designKnowledge: string;
   voiceReplies: boolean;
   photoReading: boolean;
   laughter: boolean;
@@ -26,6 +27,7 @@ export const defaultAgentSettings: AgentSettings = {
   complaintContact: "",
   rules: "",
   realityChecks: "",
+  designKnowledge: "",
   voiceReplies: true,
   photoReading: true,
   laughter: true,
@@ -61,6 +63,7 @@ const TEXTS = {
   complaintContact: 300,
   rules: 6000,
   realityChecks: 3000,
+  designKnowledge: 20000,
   zohoCompanyFallback: 80,
 } as const satisfies Partial<Record<keyof AgentSettings, number>>;
 
