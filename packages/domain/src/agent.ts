@@ -21,6 +21,8 @@ export type AgentSettings = {
   followUps: boolean;
   followUpHours: number[];
   zohoCompanyFallback: string;
+  hotBudgetLakhs: number;
+  zohoRatingField: string;
 };
 
 export const defaultAgentSettings: AgentSettings = {
@@ -45,6 +47,8 @@ export const defaultAgentSettings: AgentSettings = {
   followUps: false,
   followUpHours: [3, 20],
   zohoCompanyFallback: "",
+  hotBudgetLakhs: 0,
+  zohoRatingField: "",
 };
 
 const TOGGLES = [
@@ -74,6 +78,7 @@ const TEXTS = {
   realityChecks: 3000,
   designKnowledge: 20000,
   zohoCompanyFallback: 80,
+  zohoRatingField: 80,
 } as const satisfies Partial<Record<keyof AgentSettings, number>>;
 
 type AgentText = keyof typeof TEXTS;
@@ -99,6 +104,8 @@ export function parseAgentSettings(value: unknown): AgentSettings {
     const hours = parseFollowUpHours(record.followUpHours);
     if (hours.length) settings.followUpHours = hours;
   }
+  const line = Number(record.hotBudgetLakhs);
+  if (Number.isFinite(line) && line >= 0 && line <= 10_000) settings.hotBudgetLakhs = Math.round(line * 10) / 10;
   return settings;
 }
 

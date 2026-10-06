@@ -47,6 +47,7 @@ export type LlmProvider = {
   summarize?(previous: string | null, transcript: string): Promise<string>;
   addressFor?(name: string): Promise<"sir" | "mam" | "bro">;
   readName?(question: string, reply: string): Promise<string | null>;
+  localizeQuestions?(language: string, labels: string[]): Promise<string[]>;
   extractAnswers?(input: {
     questions: Array<{ id: string; label: string; kind: string; numeric: boolean }>;
     transcript: Array<{ author: string; body: string }>;
@@ -292,6 +293,37 @@ export function sarvamLlm(options: {
       const parsed = JSON.parse(json) as unknown;
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Sarvam lead form was not an object.");
       return parsed as Record<string, unknown>;
+    },
+    async localizeQuestions(language, labels) {
+      const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", "api-subscription-key": options.apiKey },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          max_tokens: 900,
+          messages: [
+            {
+              role: "system",
+              content: [
+                `Rewrite each numbered question the way an Indian sales consultant would ask it on WhatsApp in ${language}.`,
+                "Casual, spoken, everyday words, never formal or bookish. Keep the English words people really use: BHK, flat, villa, budget, sq ft, email, number, call, team, full home, rooms, possession, style, lakh.",
+                "Keep every option and number in the question, like budget ranges. One short question each.",
+                `Return only one JSON object: {"questions": [...]} with exactly ${labels.length} strings in the same order.`,
+              ].join("\n"),
+            },
+            { role: "user", content: labels.map((label, index) => `${index + 1}. ${label}`).join("\n") },
+          ],
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`Sarvam returned HTTP ${response.status}`);
+      const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const content = (body.choices?.[0]?.message?.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "");
+      const parsed = JSON.parse(content.slice(content.indexOf("{"), content.lastIndexOf("}") + 1)) as { questions?: unknown };
+      const out = Array.isArray(parsed.questions) ? parsed.questions.map((item) => String(item ?? "").trim()) : [];
+      if (out.length !== labels.length || out.some((item) => !item || item.length > 220)) throw new Error("Sarvam returned the wrong number of questions.");
+      return out;
     },
     async readName(question, reply) {
       const response = await fetchImpl("https://api.sarvam.ai/v1/chat/completions", {

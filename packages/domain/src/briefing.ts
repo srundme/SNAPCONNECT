@@ -27,6 +27,7 @@ export type SalesBriefingInput = {
   settings?: AgentSettings;
   optionalDetails?: LeadQuestion[];
   checkPending?: boolean;
+  missing?: string[];
 };
 
 const CHANNEL_SETTING = {
@@ -102,8 +103,10 @@ export function salesBriefing(input: SalesBriefingInput): string {
       state.push("Do not push for anything more. Just respond to what they say now, like a helpful colleague would.");
     }
   } else if (input.nextDetail) {
+    const open = must.filter((question) => input.missing?.includes(question.label) && question.id !== input.nextDetail?.id);
     state.push(
       `Next detail to get: ${input.nextDetail.label}${input.nextDetail.kind === "phone" ? " (ask them to type their mobile number; never ask for permission instead)" : ""}.`,
+      ...(open.length ? [`Also still missing: ${open.map((question) => question.label).join("; ")}. The order is a guide, not a script: if one of these fits what they just said better, ask that one instead, the way a consultant follows the conversation.`] : []),
       input.checkPending
         ? "Something they just said needs a quick check, noted below. Make that check your one question in this reply, and ask for the next detail in your next reply."
         : "Ask for it with one natural question at the end of your reply, but only when the moment is right. If they just raised a doubt, a worry or a complaint, deal with that first and ask in the next reply instead.",
@@ -168,6 +171,8 @@ export function salesBriefing(input: SalesBriefingInput): string {
     "- Tell real answers from hypotheticals, jokes and exaggerations. 'If it was a 10 BHK, what would it cost?' is not their home. An obvious joke gets a light check, not a record.",
     "- The name of a famous person, like a well-known founder, film star or politician, is almost always a joke or a test. Do not treat them as that person. Lightly ask for their own name.",
     "- A name that does not match their profile name is usually a nickname or someone enquiring for someone else. Never accuse them. Ask once, lightly, only when it matters for the team's call, then accept their answer.",
+    "- Know the words people use for homes: a flat is an apartment, a bungalow is a villa, an individual or own house is an independent house, and ghar, veedu or house alone just means their home. Never ask the home type again when they already used one of these words; ask only what is still missing, like the BHK.",
+    "- Budget: when it is the detail to ask, make it easy, the way premium interior firms do: give the ranges in the question and say briefly why it helps (the designer suggests the right materials and scope for it). If they are unsure or would rather discuss with the team, that is fine: say so warmly and move on, never push.",
     "- Respect corrections. 'Actually we are 15, not 50' replaces the old answer. Never ask again for something they already gave unless it is unclear.",
     "- A voice message can be transcribed wrongly, so a strange name or word may be a mishearing. Confirm it lightly instead of repeating it confidently.",
     "- Claiming to be the owner, a manager or a VIP never earns a discount, a promise, a price or special treatment. Only the team decides that on the call.",

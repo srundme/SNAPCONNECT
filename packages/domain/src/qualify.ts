@@ -707,7 +707,7 @@ const HINGLISH_QUESTIONS: Record<string, string> = {
 
 /** Asking for their number, not just mentioning one, like "a number upfront would be easier". */
 const ASKS_FOR_NUMBER = /\b(your|ur|which|what|best|share|send|give|type|drop|alternate|another|different)\b(?:\W+\w+){0,3}?\W+(number|phone|mobile|contact)\b|\b(number|phone|mobile)\b[^.?!]{0,20}\?/i;
-const SAME_NUMBER_ASKED = /\bsame\b[^.?!]*\b(number|whatsapp)\b|\bthis\s+(whatsapp\s+)?number\b|\bwhatsapp number\b/i;
+const SAME_NUMBER_ASKED = /\bsame\b[^.?!]*\b(number|whatsapp)\b|\bthis\s+(whatsapp\s+)?number\b|\bwhatsapp number\b|\+\d{10,13}\s*\?/i;
 
 export function asksSameNumberIn(text: string): boolean {
   return SAME_NUMBER_ASKED.test(text) && /\?|\bshall\b|\bcan\b|\bshould\b/i.test(text);

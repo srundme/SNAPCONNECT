@@ -14,6 +14,8 @@ import {
   abroadSituation,
   pastTimeToday,
   pastTimeReply,
+  rateLead,
+  homeTypeName,
   requestedTime,
   requestedTimeLine,
   requestedTimeReply,
@@ -1338,13 +1340,25 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       for (const [id, value] of Object.entries(labelledAnswers(questions, freshText))) {
         if (!absorbed.answers[id]) absorbed.answers[id] = value;
       }
+      const lastAsk = [...spoken].reverse().find((message) => message.author === "AI")?.body ?? "";
+      const unsureOf = NOT_SURE.test(freshText) && freshText.length <= 80
+        ? questions.find((question) => question.kind === "text" && !absorbed.answers[question.id] && !recordedAnswers[question.id]
+          && (questionAsked(question, lastAsk) || (question.label.toLowerCase().match(/\b(budget|possession|carpet|style|start)\b/g) ?? []).some((topic) => freshText.toLowerCase().includes(topic))))
+        : undefined;
+      if (unsureOf) absorbed.answers[unsureOf.id] = "Not sure yet";
       const bhkQuestion = questions.find((question) => /\bbhk\b/i.test(question.label));
       if (bhkQuestion && !/\d\s*-?\s*(bhk|rk)\b|\bstudio\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
-        homeKind = prospectBodies.join("\n").match(/\b(apartment|flat|villa|independent house|individual house|row house|duplex|penthouse)\b/i)?.[1]?.toLowerCase() ?? null;
+        homeKind = prospectBodies.join("\n").match(/\b(apartment|appartment|flat|villa|bungalow|independent house|individual house|row house|duplex|penthouse)\b/i)?.[1]?.toLowerCase() ?? null;
         if (homeKind) {
           delete absorbed.answers[bhkQuestion.id];
-          memoryLines.push(`They already said it is ${/^[aeiou]/.test(homeKind) ? "an" : "a"} ${homeKind}. Never ask the home type again; when the BHK is your next detail, ask only how many BHK.`);
+          const type = homeTypeName(homeKind);
+          memoryLines.push(`They already said it is ${/^[aeiou]/.test(homeKind) ? "an" : "a"} ${homeKind}${type && type.toLowerCase() !== homeKind ? ` (${type.toLowerCase()})` : ""}. Never ask the home type again; when the BHK is your next detail, ask only how many BHK.`);
         }
+      } else if (bhkQuestion) {
+        const value = absorbed.answers[bhkQuestion.id]!;
+        const type = homeTypeName(value) ?? homeTypeName(prospectBodies.join("\n"));
+        const size = value.match(/\d+\s*-?\s*(?:bhk|rk)\b/i)?.[0]?.replace(/\s*-?\s*(bhk|rk)/i, (_, unit: string) => ` ${unit.toUpperCase()}`);
+        if (type && size) absorbed.answers[bhkQuestion.id] = `${size} ${type}`;
       }
       for (const [id, value] of Object.entries(absorbed.answers)) {
         const question = questions.find((item) => item.id === id);
@@ -1359,6 +1373,13 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         else if (NOT_SURE.test(value) && value.length <= 80) absorbed.answers[id] = "Not sure yet";
       }
       const photo = [...prospectBodies].reverse().map((body) => body.match(/\(Sent a photo\. It shows: ([^)]+)\)/)?.[1]).find(Boolean);
+      const REFERENCE_WORDS = /\b(like|same as) (this|that|these|those)\b|^this one$|\b(aisa|aise|aisi|waisa|ithu maari|indha maari|ipdi|idhe tara|haage)\b/i;
+      const styleQuestion = questions.find((question) => question.kind === "text" && /\b(style|reference|must-haves?)\b/i.test(question.label));
+      const recentPhoto = prospectBodies.slice(-3).some((body) => /\(Sent a photo\. It shows:/.test(body));
+      if (styleQuestion && photo && recentPhoto && freshText.length <= 40 && REFERENCE_WORDS.test(freshText)
+        && (!absorbed.answers[styleQuestion.id] || /^\(Sent a photo/.test(absorbed.answers[styleQuestion.id]!)) && !/their photo:/.test(recordedAnswers[styleQuestion.id] ?? "")) {
+        absorbed.answers[styleQuestion.id] = freshText.trim();
+      }
       for (const question of questions) {
         const value = absorbed.answers[question.id] ?? "";
         if (/\b(book|schedule|fix|arrange)\b.*\b(consultation|meeting|appointment|visit)\b/i.test(value)) {
@@ -1366,7 +1387,17 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           else delete absorbed.answers[question.id];
           continue;
         }
-        if (photo && value.length <= 40 && /\b(like|same as) (this|that|these|those)\b|^this one$/i.test(value)) {
+        if (question.kind === "text" && /\b(same|this|isi|yehi|indha|ade) (whatsapp )?(number|no\.?)\b/i.test(value) && value.length <= 40 && !/\d/.test(value)) {
+          delete absorbed.answers[question.id];
+          continue;
+        }
+        if (photo && recentPhoto && styleQuestion && question.id !== styleQuestion.id && value.length <= 40 && REFERENCE_WORDS.test(value)) {
+          if (!/their photo:/.test(recordedAnswers[styleQuestion.id] ?? "")) absorbed.answers[styleQuestion.id] = `${value} (their photo: ${photo})`.slice(0, 220);
+          if (recordedAnswers[question.id]) absorbed.answers[question.id] = recordedAnswers[question.id]!;
+          else delete absorbed.answers[question.id];
+          continue;
+        }
+        if (photo && value.length <= 40 && REFERENCE_WORDS.test(value)) {
           absorbed.answers[question.id] = `${value} (their photo: ${photo})`.slice(0, 220);
         }
       }
@@ -1505,11 +1536,13 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? `This chat is in ${languageName(languageSample)}, like their message "${languageSample}". Keep every reply in exactly that language, script and casual style, never another Indian language, even when they answer with only ok, yes, a number or a short English word. Switch only if they write a full sentence in another language.`
       : "This chat is in English. Reply only in plain, simple English, with no Tamil, Hindi or other Indian-language words at all. Short replies do not change that. Switch only if they write a full sentence in another language.";
     const screenPhone = numberPending ? null : recordedPhone;
+    const chatLanguageName = languageSample ? languageName(languageSample) : null;
+    const local = chatLanguageName ? await localQuestions(runtime, chatLanguageName, questions) : null;
     const askQuestion = (question: LeadQuestion) => numberPending && waNumber && question.kind === "phone"
-      ? sameNumberQuestion(waNumber)
-      : homeKind && !languageSample && /\bbhk\b/i.test(question.label)
-        ? `How many BHK is the ${homeKind}?`
-        : scriptQuestionFor(question, languageSample ? languageName(languageSample) : null);
+      ? local?.get(SAME_NUMBER_TEMPLATE)?.replace(/\s*\?*\s*$/, ` ${waNumber}?`) ?? sameNumberQuestion(waNumber)
+      : homeKind && /\bbhk\b/i.test(question.label)
+        ? local ? local.get(BHK_ONLY_TEMPLATE) ?? scriptQuestionFor(question, chatLanguageName) : `How many BHK is the ${homeKind}?`
+        : local?.get(question.label) ?? scriptQuestionFor(question, chatLanguageName);
     const scriptedText = questions.length
       ? scriptedReply({ questions, answers: recordedAnswers, name: recordedName, phoneE164: screenPhone, latestUser: latestProspect, about: workspace.services })
       : "";
@@ -1528,6 +1561,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const ignored = (question: LeadQuestion) => lastTwoAi.length === 2 && lastTwoAi.every((body) => replyAsksFor(question, body));
     const missingNow = complete && !complete.ready && !complete.cold ? questions.filter((question) => complete.missing.includes(question.label)) : [];
     const plainText = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const echoesScript = (question: LeadQuestion, body: string) => {
+      const words = plainText(askQuestion(question)).split(/\s+/).filter(Boolean);
+      const said = ` ${plainText(body)} `;
+      return words.some((_, index) => index + 4 <= words.length && said.includes(` ${words.slice(index, index + 4).join(" ")} `));
+    };
     const askedIn = (question: LeadQuestion, body: string) => questionAsked(question, body) || plainText(body).includes(plainText(askQuestion(question)));
     const timesAsked = (question: LeadQuestion) => spoken.filter((message) => message.author === "AI" && askedIn(question, message.body)).length;
     const justAnsweredPart = (question: LeadQuestion) => Boolean(homeKind && /\bbhk\b/i.test(question.label) && freshText.toLowerCase().includes(homeKind));
@@ -1611,6 +1649,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
             ? questions.filter((question) => complete.optional.includes(question.label) && !spoken.some((message) => message.author === "AI" && questionAsked(question, message.body)))
             : [],
           checkPending: checkedIds.length > 0,
+          missing: missingNow.filter((question) => !ignored(question) && !justAsked(question)).map((question) => question.label),
         })
       : null;
     const request = {
@@ -1802,6 +1841,12 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     await applyUpdates(db, lead.id, conversation.contactId, readsName || formRead ? validated.updates.filter((update) => update.field !== "chosenName") : validated.updates);
     if (!formRead) await applyCustomAnswers(db, lead.id, validated.customAnswers);
     const updatedLead = await db.lead.findUniqueOrThrow({ where: { id: lead.id }, include: { contact: true } });
+    if (questions.length && agent.hotBudgetLakhs) {
+      const rated = rateLead({ questions, answers: answerRecord(updatedLead.answers), hotBudgetLakhs: agent.hotBudgetLakhs });
+      if (rated.rating !== updatedLead.rating || rated.reason !== updatedLead.ratingReason) {
+        await db.lead.update({ where: { id: lead.id }, data: { rating: rated.rating, ratingReason: rated.reason } });
+      }
+    }
     const rule = leadRule(workspace);
     const screen = questions.length
       ? screenLead({ questions, answers: answerRecord(updatedLead.answers), name: updatedLead.contact.chosenName, phoneE164: updatedLead.phoneE164 })
@@ -1854,7 +1899,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : wrongNumber && phoneQuestion && (!validated.reply || echoesWrongNumber || !replyAsksFor(phoneQuestion, validated.reply))
       ? `Hmm, ${phoneProblem(wrongNumber)}. ${scriptQuestionFor(phoneQuestion, languageSample ? languageName(languageSample) : null)}`
       : target && validated.reply
-      ? questionAsked(target, validated.reply) || asksSomething(validated.reply) || validated.reply.split(/(?<=[.!?])\s+|\n+|(?<=\.\.)(?=[^\s.])/).some(isQuestionSentence) || (askedByThem && validated.reply.length >= 60) || raisesConcern(latestUser) || customerComplaint(latestUser) || Boolean(situationHandoff)
+      ? questionAsked(target, validated.reply) || echoesScript(target, validated.reply) || asksSomething(validated.reply)
+        || /\b(which room|what do (?:u|you) like|do (?:u|you) have (?:any )?more|what (?:u|you) like most|kaunsa room|kya pasand)\b/i.test(validated.reply) || validated.reply.split(/(?<=[.!?])\s+|\n+|(?<=\.\.)(?=[^\s.])/).some(isQuestionSentence) || (askedByThem && validated.reply.length >= 60) || raisesConcern(latestUser) || customerComplaint(latestUser) || Boolean(situationHandoff)
         ? validated.reply
         : [statement.replace(/[^.!?\s]$/, "$&."), askQuestion(target)].filter(Boolean).join(" ")
       : validated.reply ?? fallback;
@@ -1864,10 +1910,20 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? questions.filter((question) => !screen.missing.includes(question.label) && !screen.optional.includes(question.label) && !checkedIds.includes(question.id) && !(numberPending && question.kind === "phone")).map((question) => question.id)
       : [];
     const nextQuestion = questions.find((question) => question.id === checkedIds[0]) ?? nextDetail ?? pending;
-    const kept = composed && answered.length ? dropAnsweredQuestions(composed, questions, answered) : composed;
-    const unasked = composed && !situationHandoff && kept !== composed && asksSomething(composed) && !asksSomething(kept ?? "") && nextQuestion
+    const optionalOnly = screen ? questions.filter((question) => screen.optional.includes(question.label)) : [];
+    const mustMissing = screen ? questions.filter((question) => screen.missing.includes(question.label)) : [];
+    const splitSentences = (text: string) => text.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/));
+    const asksOptionalInstead = Boolean(pending && composed && !situationHandoff && !checkedIds.length
+      && splitSentences(composed).flat().some((part) => isQuestionSentence(part) && optionalOnly.some((question) => questionAsked(question, part)))
+      && !mustMissing.some((question) => askedIn(question, composed)));
+    const focused = asksOptionalInstead && composed
+      ? [splitSentences(composed).map((parts) => parts.filter((part) => !(isQuestionSentence(part) && optionalOnly.some((question) => questionAsked(question, part)))).join(" ").trim()).filter(Boolean).join("\n"), askQuestion(pending!)]
+        .filter(Boolean).join("\n")
+      : composed;
+    const kept = focused && answered.length ? dropAnsweredQuestions(focused, questions, answered) : focused;
+    const unasked = focused && !situationHandoff && kept !== focused && asksSomething(focused) && !asksSomething(kept ?? "") && nextQuestion
       ? [kept?.replace(/[^.!?\s]$/, "$&."), askQuestion(nextQuestion)].filter(Boolean).join(" ")
-      : kept || composed;
+      : kept || focused;
     const recentlyAsked = questions.filter((question) => question.id !== target?.id && question.id !== checkedIds[0] && justAsked(question));
     const nagging = (sentence: string) => isQuestionSentence(sentence) && recentlyAsked.some((question) => questionAsked(question, sentence)
       || plainText(sentence).includes(plainText(askQuestion(question)))
@@ -2020,7 +2076,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
 }
 
 const MEMORY_WINDOW = 20;
-const NOT_SURE = /\b(d(?:o)?n'?t know|dnt know|dont know|not sure|no idea|can (?:u|you) suggest|you suggest|u suggest|will (?:tell|explain|discuss)|i'?ll (?:tell|explain|discuss)|explain (?:this|it|that) to (?:the )?team|tell (?:the )?team|decide later|not decided)\b/i;
+const NOT_SURE = /\b(d(?:o)?n'?t know|dnt know|dont know|not sure|no idea|can (?:u|you) suggest|you suggest|u suggest|will (?:tell|explain|discuss)|i'?ll (?:tell|explain|discuss)|explain (?:this|it|that) to (?:the )?team|tell (?:the )?team|decide later|not decided|pata nahi|nahi pata|maloom nahi|malum nahi|abhi decide nahi|theriyala|theriyadhu|gottilla|gotilla)\b/i;
 
 const CLOSING_ACK = /^(ok+|okay|k+|ok ok|ok bro|ok sir|ok thanks?|ok thank you|thanks?|thank you|thank u|thx|tq|ty|seri|sari|super|nice|great|cool|done|fine|theek hai|thik hai|achha|accha|haan ok|\p{Extended_Pictographic}+)[\s.!🙏👍]*$/iu;
 
@@ -2105,10 +2161,12 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
       phoneE164: lead.phoneE164,
     });
     Object.assign(record, placed.fields);
-    const companyFallback = parseAgentSettings(lead.workspace.agentSettings).zohoCompanyFallback;
-    if (!record.Company && companyFallback) record.Company = companyFallback;
+    const leadAgent = parseAgentSettings(lead.workspace.agentSettings);
+    if (!record.Company && leadAgent.zohoCompanyFallback) record.Company = leadAgent.zohoCompanyFallback;
+    if (lead.rating && lead.rating !== "UNRATED" && leadAgent.zohoRatingField) record[leadAgent.zohoRatingField] = lead.rating;
     const concern = nameConcern(lead.contact.chosenName, [lead.contact.displayName, lead.contact.username]);
     const lines = [
+      ...(lead.rating ? [`Lead rating: ${lead.rating}${lead.ratingReason ? ` (${lead.ratingReason})` : ""}`] : []),
       ...placed.lines,
       ...(lead.timeframeRaw ? [`Preferred call time: ${lead.timeframeRaw}`] : []),
       ...(concern
@@ -2335,6 +2393,32 @@ export function clockLine(now: Date): string {
   return `Right now it is ${when} in India (IST). Use this for today, tomorrow, weekdays, greetings and whether a time is realistic. Never guess the date. When you note a preferred time, say the day with it.${lateNight}`;
 }
 
+const SAME_NUMBER_TEMPLATE = "Shall the team call you on this same WhatsApp number?";
+const BHK_ONLY_TEMPLATE = "How many BHK is it?";
+const localQuestionCache = new Map<string, string>();
+
+/** The lead questions in the chat's language, so a question added in code never switches the chat to English. */
+async function localQuestions(runtime: Runtime, language: string, questions: LeadQuestion[]): Promise<Map<string, string> | null> {
+  if (!runtime.llm.localizeQuestions) return null;
+  const labels = [...questions.filter((question) => question.kind !== "name").map((question) => question.label), SAME_NUMBER_TEMPLATE, BHK_ONLY_TEMPLATE];
+  const missing = labels.filter((label) => !localQuestionCache.has(`${language}|${label}`));
+  if (missing.length) {
+    const rewritten = await runtime.llm.localizeQuestions(language, missing).catch(() => null);
+    if (rewritten) {
+      missing.forEach((label, index) => {
+        const text = rewritten[index]!;
+        localQuestionCache.set(`${language}|${label}`, text);
+      });
+    }
+  }
+  const found = new Map<string, string>();
+  for (const label of labels) {
+    const text = localQuestionCache.get(`${language}|${label}`);
+    if (text) found.set(label, text);
+  }
+  return found.size ? found : null;
+}
+
 const PHOTO_SEEN = /\(Sent a photo\. It shows: ([^]*?)\)\s*$/;
 
 /** A photo description is what is in the picture, never the customer's own name, company or number. */
@@ -2347,10 +2431,22 @@ function photoLine(messages: { author: string; body: string }[]): string {
   const latest = prospect.at(-1)?.body ?? "";
   const seen = latest.match(PHOTO_SEEN)?.[1];
   if (seen) {
-    return `Their latest message is a photo. You can see it through this description: ${seen.trim()} Start your reply by reacting to what the photo actually shows, like a person who just looked at it, and answer anything they asked about it. Names, companies or numbers written in a photo are what the picture shows, not their own details, unless they say so. Never say you cannot see photos.`;
+    const around = prospect.slice(-3).map((message) => message.body.replace(PHOTO_SEEN, "")).join(" ");
+    const reference = /\b(like this|like that|this type|this kind|same as|similar|reference|inspiration|want this|this design|this style|aisa|aise|ithu maari|ipdi|indha maari)\b/i.test(around)
+      || !/\b(my|mera|meri|en|enga|current|existing|now|present|old|site)\b/i.test(around);
+    const what = `You can see it through this description: ${seen.trim()}`;
+    const shared = "Names, companies or numbers written in a photo are what the picture shows, not their own details, unless they say so. Never say you cannot see photos.";
+    return reference
+      ? `Their latest message is a photo, most likely a design reference they like. ${what} React the way an experienced interior designer would when a client shows a reference: never describe the photo back to them item by item. Name the look in a few words (for example 'a warm modern look with a deep green accent wall'), point out the one or two things that make it work, and say the designer will use it as a reference for their home. Then ask one designer question that moves things forward, such as which room this is for, what they like most in it (the colour, the layout, the storage or the lighting), or whether they have more references. If a must-have detail is still missing, you may ask that instead. ${shared}`
+      : `Their latest message is a photo, most likely of their own home or site as it is now. ${what} React like a designer who just looked at their space: one quick, useful observation (light, space, layout, what could change), and say the team will see it properly on the site visit. Never describe the photo back item by item. ${shared}`;
   }
-  if (prospect.some((message) => PHOTO_SEEN.test(message.body))) {
-    return "They sent photos earlier in this chat. You saw them through the bracket descriptions, so if they ask about a photo, answer from its description. Never say you cannot see photos.";
+  const earlier = [...prospect].reverse().map((message) => message.body.match(PHOTO_SEEN)?.[1]).find(Boolean);
+  if (earlier) {
+    const recent = prospect.slice(-3).some((message) => PHOTO_SEEN.test(message.body));
+    const pointsAtIt = recent && /\b(like this|like that|this one|this type|this kind|same as|similar|this design|this style|aisa|aise|aisi|waisa|ithu maari|indha maari|ipdi)\b/i.test(latest);
+    return pointsAtIt
+      ? `Their latest message is about the photo they just sent, which shows: ${earlier.trim()}. They want something like it. Take it as their style answer: confirm in a few words that the designer will plan that look for the room they named, without describing the photo again, then move to the next detail. Never say you cannot see photos.`
+      : `They sent photos earlier in this chat. The latest one showed: ${earlier.trim()}. If they talk about a photo, answer from this. Never say you cannot see photos.`;
   }
   return "";
 }

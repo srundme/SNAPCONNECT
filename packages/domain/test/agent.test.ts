@@ -22,6 +22,9 @@ import {
   messageSituations,
   pastTimeToday,
   pastTimeReply,
+  budgetLakhs,
+  rateLead,
+  homeTypeName,
   requestedTime,
   requestedTimeLine,
   requestedTimeReply,
@@ -136,6 +139,38 @@ describe("common sense checks", () => {
     expect(pastTimeToday("Tomorrow 10 am", lateMorning)).toBeNull();
     expect(pastTimeReply("Today 10 am", lateMorning)).toBe("10 AM today has already passed, it's 11:40 AM now. Would a later time today or another day work for u?");
     expect(pastTimeReply("Tomorrow 10 am", lateMorning)).toBeNull();
+  });
+
+  it("rates leads HOT at the budget line, JUNK below it, and by project size without a budget", () => {
+    expect(budgetLakhs("30-50L")).toEqual({ low: 30, high: 50 });
+    expect(budgetLakhs("20 to 30 lakhs")).toEqual({ low: 20, high: 30 });
+    expect(budgetLakhs("50L+")).toEqual({ low: 50, high: null });
+    expect(budgetLakhs("under 20L")).toEqual({ low: 0, high: 20 });
+    expect(budgetLakhs("1.2 cr")).toEqual({ low: 120, high: 120 });
+    expect(budgetLakhs("35,00,000")).toEqual({ low: 35, high: 35 });
+    expect(budgetLakhs("Not sure yet")).toBeNull();
+    const q = (id: string, label: string) => ({ id, label, kind: "text" as const, zohoField: null, required: true });
+    const questions = [
+      q("home", "What kind of home is it: apartment, villa or independent house, and how many BHK?"),
+      q("scope", "Is it the full home or selected rooms?"),
+      q("budget", "Roughly what interior budget do you have in mind?"),
+      q("area", "Approximate carpet area in sq ft?"),
+    ];
+    const rate = (answers: Record<string, string>) => rateLead({ questions, answers, hotBudgetLakhs: 30 }).rating;
+    expect(rate({ budget: "30-50L" })).toBe("HOT");
+    expect(rate({ budget: "20-30L", home: "4 BHK Villa", scope: "Full home" })).toBe("JUNK");
+    expect(rate({ budget: "Not sure yet", home: "3 BHK Apartment", scope: "Poora Ghar ku karni hai" })).toBe("HOT");
+    expect(rate({ home: "Villa", scope: "full home" })).toBe("HOT");
+    expect(rate({ home: "3 BHK Apartment", scope: "Pura ghar" })).toBe("HOT");
+    expect(rate({ home: "3 BHK Apartment", scope: "sirf kitchen" })).toBe("JUNK");
+    expect(rate({ home: "2 BHK Apartment", scope: "Full home" })).toBe("JUNK");
+    expect(rate({ home: "3 BHK Apartment", scope: "only kitchen and wardrobes" })).toBe("JUNK");
+    expect(rate({ home: "3 BHK Apartment" })).toBe("UNRATED");
+    expect(rateLead({ questions, answers: { budget: "50L" }, hotBudgetLakhs: 0 }).rating).toBe("UNRATED");
+    expect(homeTypeName("He flat hai")).toBe("Apartment");
+    expect(homeTypeName("it's a bungalow")).toBe("Villa");
+    expect(homeTypeName("individual house")).toBe("Independent house");
+    expect(homeTypeName("mera ghar")).toBeNull();
   });
 
   it("works out the asked time and checks it against working hours in code", () => {

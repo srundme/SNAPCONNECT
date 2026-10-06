@@ -15,6 +15,14 @@ function authorLabel(author: string) {
   return "System";
 }
 
+function RatingChip({ rating }: { rating: string }) {
+  return (
+    <span className={clsx("rounded-full px-2 py-0.5 text-[11px] font-bold tracking-[0.04em]", rating === "HOT" ? "bg-[#fde8e1] text-[#a2381b]" : "bg-[var(--color-paper)] text-[var(--color-muted)]")}>
+      {rating}
+    </span>
+  );
+}
+
 function contactLabel(
   channel: string,
   contact: { username: string | null; displayName: string | null; chosenName: string | null },
@@ -39,6 +47,11 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     orderBy: { updatedAt: "desc" },
     take: 50,
   });
+  const rated = await getPrisma().lead.findMany({
+    where: { workspaceId: workspace.id, archivedAt: null, contactId: { in: conversations.map((item) => item.contactId) }, rating: { in: ["HOT", "JUNK"] } },
+    select: { contactId: true, rating: true },
+  });
+  const ratings = new Map(rated.map((item) => [item.contactId, item.rating]));
   const selected = conversations.find((item) => item.id === params.id) ?? conversations[0];
   const lead = selected ? await getPrisma().lead.findFirst({ where: { contactId: selected.contactId, archivedAt: null }, include: { crm: true } }) : null;
   const connection = selected ? await getPrisma().channelConnection.findUnique({ where: { id: selected.connectionId } }) : null;
@@ -86,7 +99,10 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
                     <Link className={clsx("block border-b border-[var(--color-line)] px-4 py-3", item.id === selected?.id && "bg-[#f4fbfa]")} href={`/inbox?id=${item.id}${channel ? `&channel=${channel}` : ""}`}>
                       <div className="flex items-center justify-between gap-2">
                         <p className="truncate text-sm font-semibold">{label}</p>
-                        <ChannelMark channel={item.channel} />
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          {ratings.get(item.contactId) ? <RatingChip rating={ratings.get(item.contactId)!} /> : null}
+                          <ChannelMark channel={item.channel} />
+                        </span>
                       </div>
                       <p className="mt-1 truncate text-[13px] text-[var(--color-muted)]">{last?.body ?? "No message yet"}</p>
                     </Link>
@@ -139,7 +155,11 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
           <aside className="min-h-0 overflow-y-auto p-4 text-sm">
             {selected && lead ? (
               <>
-                <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--color-muted)]">Lead</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--color-muted)]">Lead</p>
+                  {lead.rating === "HOT" || lead.rating === "JUNK" ? <RatingChip rating={lead.rating} /> : null}
+                </div>
+                {lead.ratingReason && lead.rating !== "UNRATED" ? <p className="mt-1 text-[12px] leading-5 text-[var(--color-muted)]">{lead.ratingReason}</p> : null}
                 <dl className="mt-3 grid gap-3">
                   {[
                     ["City", lead.city ?? "Not yet"],

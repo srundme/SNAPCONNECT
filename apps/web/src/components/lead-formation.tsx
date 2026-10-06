@@ -43,6 +43,8 @@ export type AgentFormSettings = {
   realityChecks: string;
   designKnowledge: string;
   zohoCompanyFallback: string;
+  hotBudgetLakhs: number;
+  zohoRatingField: string;
   followUpHours: number[];
   toggles: Record<string, boolean>;
 };
@@ -304,6 +306,16 @@ export function AgentForm({
               <input name="zohoCompanyFallback" maxLength={80} defaultValue={settings.zohoCompanyFallback} placeholder="Residential" />
             </label>
             <p className="text-[12px] leading-5 text-[var(--color-muted)]">Zoho needs a Company on every lead. This fills it when no question maps to Company.</p>
+            <label>
+              Hot lead budget (lakhs)
+              <input name="hotBudgetLakhs" type="number" min={0} step="0.5" defaultValue={settings.hotBudgetLakhs || ""} placeholder="30" />
+            </label>
+            <p className="text-[12px] leading-5 text-[var(--color-muted)]">At or above this budget a lead is HOT, below it JUNK. Without a budget the project size decides. Empty turns rating off.</p>
+            <label>
+              Zoho field for the rating
+              <input name="zohoRatingField" maxLength={80} defaultValue={settings.zohoRatingField} spellCheck={false} placeholder="Lead_Rating" />
+            </label>
+            <p className="text-[12px] leading-5 text-[var(--color-muted)]">Optional API name of a text or picklist field with HOT and JUNK. The rating always goes in the Description too.</p>
           </div>
         </Panel>
         <button className="border-transparent bg-[var(--color-accent)] text-white hover:bg-[#0a655f]" type="submit">Save agent</button>

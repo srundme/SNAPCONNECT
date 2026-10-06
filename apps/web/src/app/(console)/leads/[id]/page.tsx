@@ -20,6 +20,7 @@ export default async function LeadDetail({ params }: { params: Promise<{ id: str
     <section>
       <PageTitle title={lead.contact.chosenName ?? lead.contact.username ?? "Prospect"} detail="A valid-looking number is not ownership verification." />
       <div className="flex gap-2 text-sm">
+        {lead.rating ? <StatusLabel tone={lead.rating === "HOT" ? "ok" : lead.rating === "JUNK" ? "stop" : "neutral"}>{lead.rating}</StatusLabel> : null}
         <StatusLabel tone="neutral">{lead.qualification}</StatusLabel>
         <StatusLabel tone="neutral">{lead.salesStage}</StatusLabel>
         <StatusLabel tone={lead.crmState === "SYNCED" ? "ok" : "wait"}>{lead.crm?.simulated ? "Simulated CRM" : lead.crmState}</StatusLabel>
@@ -35,6 +36,7 @@ export default async function LeadDetail({ params }: { params: Promise<{ id: str
         <div>WhatsApp: {lead.whatsappE164 ?? "Unknown"} {lead.sameNumberConfirmed ? "(confirmed same number)" : ""}</div>
         <div>Source: {lead.sourceType} · {lead.sourceMediaId ?? "unattributed"}</div>
         <div>Reasons: {lead.qualificationReasons.join("; ") || "None yet"}</div>
+        {lead.ratingReason ? <div>Rating: {lead.rating} · {lead.ratingReason}</div> : null}
       </dl>
       <h2 className="mt-8 font-semibold">Permission evidence</h2>
       <ul className="mt-2 text-sm">{lead.consents.map((item) => <li key={item.id}>{item.channel}: {item.disclosure}</li>)}</ul>

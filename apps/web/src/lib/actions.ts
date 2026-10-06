@@ -338,6 +338,7 @@ export async function saveAiSettings(formData: FormData) {
   for (const key of agentToggles) settings[key] = formData.get(`toggle:${key}`) === "on";
   for (const [key, limit] of Object.entries(agentTextLimits)) settings[key] = String(formData.get(key) ?? "").trim().slice(0, limit);
   settings.followUpHours = parseFollowUpHours(formData.get("followUpHours"));
+  settings.hotBudgetLakhs = String(formData.get("hotBudgetLakhs") ?? "").trim() || 0;
   await getPrisma().workspace.update({
     where: { id: workspace.id },
     data: {

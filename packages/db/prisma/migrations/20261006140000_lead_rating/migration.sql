@@ -1,0 +1,2 @@
+ALTER TABLE "Lead" ADD COLUMN "rating" TEXT;
+ALTER TABLE "Lead" ADD COLUMN "ratingReason" TEXT;

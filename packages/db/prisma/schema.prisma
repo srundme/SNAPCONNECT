@@ -469,6 +469,8 @@ model Lead {
   whatsappPermission  Boolean       @default(false)
   email               String?
   answers             Json          @default("{}")
+  rating              String?
+  ratingReason        String?
   sourceType          String
   sourceMediaId       String?
   sourceCommentId     String?
