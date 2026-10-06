@@ -273,11 +273,13 @@ export function sarvamLlm(options: {
             {
               role: "system",
               content: [
-                "You fill a sales lead form from an Instagram chat between a sales assistant and an Indian customer.",
+                "You fill a sales lead form from a chat between a sales assistant and an Indian customer.",
                 "The chat can be English, Tamil, Hindi, Tanglish, Hinglish or mixed, with typos and stretched letters.",
-                "Use only what the Customer typed. The Assistant's lines only tell you what was being asked.",
-                "An answer counts even when the Assistant asked without a question mark, or when the Customer gave it before being asked.",
-                "If the Customer corrected an answer, use the latest one. If a field was not answered, use null. Never guess.",
+                "Read it the way a salesperson would. One message often answers several questions: put each fact in its own field, even when they said it before being asked and even when they did not use the question's words.",
+                "What they mean is the answer. 'Still in construction', 'under construction', 'being built' or 'not ready' means the home is not ready, so that answers the possession question. 'Living there', 'moved in' or 'already ready' means it is ready. A bare number straight after the BHK was asked is the BHK. '20 to 30l' is a budget. Record it in their words.",
+                "A line '(Sent a photo. It shows: ...)' or '(Sent a document ...)' is what they sent, not words they typed. A floor plan's BHK, home type and area are answers. Never take a person's name or a phone number from a photo or document.",
+                "Keep their words. Do not add a name, place, number or date they never said. Choosing which question a fact they did say belongs to is not guessing.",
+                "The Assistant's lines only tell you what was being asked. If the Customer corrected an answer, use the latest one. If a field was not answered, use null.",
                 "A question, a refusal, or a language request is not an answer.",
                 "Return only one JSON object with exactly these keys:",
                 ...fields,

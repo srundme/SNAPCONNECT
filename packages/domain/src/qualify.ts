@@ -552,6 +552,23 @@ function wordsWereTyped(value: string, said: string, share: number): boolean {
   return words.filter((word) => typed.includes(squeeze(word))).length / words.length >= share;
 }
 
+/** What the customer typed, without the description of a photo or document they sent. */
+function spokenByThem(text: string): string {
+  return text.replace(/\(Sent a photo\. It shows: [\s\S]*?\)/g, " ").replace(/\(Sent a document[\s\S]*?\)/g, " ");
+}
+
+/**
+ * An answer is theirs when it uses their words. A short rewording is kept when every long word
+ * is still one they used, so "under construction" can stand for "still in construction".
+ * A new name or place they never said is dropped.
+ */
+function answerIsTheirs(value: string, said: string): boolean {
+  if (wordsWereTyped(value, said, 1)) return true;
+  if (!wordsWereTyped(value, said, 0.5)) return false;
+  const typed = squeeze(said.normalize("NFKC"));
+  return value.normalize("NFKC").split(/[^\p{L}\p{N}]+/u).filter((word) => word.length >= 6).every((word) => typed.includes(squeeze(word)));
+}
+
 export function acceptExtractedAnswers(input: {
   questions: LeadQuestion[];
   raw: Record<string, unknown>;
@@ -569,12 +586,13 @@ export function acceptExtractedAnswers(input: {
     const value = input.raw[question.id];
     const text = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
     if (!text || /^(null|none|unknown|n\/a|not provided)$/i.test(text)) continue;
+    const spoken = spokenByThem(input.prospectText);
     if (question.kind === "name") {
-      name = cleanName(text, input.prospectText);
+      name = cleanName(text, spoken);
     } else if (question.kind === "phone") {
       const phone = parsePhone(text, input.phoneRegion ?? "IN");
       const digits = text.replace(/\D/g, "").slice(-10);
-      if (phone.kind === "valid" && input.prospectText.replace(/\D/g, "").includes(digits)) phoneE164 = phone.e164;
+      if (phone.kind === "valid" && spoken.replace(/\D/g, "").includes(digits)) phoneE164 = phone.e164;
     } else if (question.kind === "yesno") {
       if (/^(yes|y|true)$/i.test(text)) answers[question.id] = "yes";
       else if (/^(no|n|false)$/i.test(text)) answers[question.id] = "no";
@@ -583,7 +601,7 @@ export function acceptExtractedAnswers(input: {
       const unit = Number.isFinite(amount) ? new RegExp(`\\b${Math.round(amount)}\\s*-?\\s*(bhk|rk)\\b`, "i").exec(input.prospectText) : null;
       if (unit) answers[question.id] = `${Math.round(amount)} ${unit[1]!.toUpperCase()}`;
       else if (Number.isFinite(amount) && amount > 0 && saidNumber(amount, input.prospectText)) answers[question.id] = String(Math.round(amount));
-    } else if (wordsWereTyped(text, input.prospectText, /issue|why|problem/i.test(question.label) ? 0.5 : 1)) {
+    } else if (answerIsTheirs(text, input.prospectText) || (/issue|why|problem/i.test(question.label) && wordsWereTyped(text, input.prospectText, 0.5))) {
       answers[question.id] = text.slice(0, 180);
     }
   }

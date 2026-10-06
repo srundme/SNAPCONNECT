@@ -1004,6 +1004,22 @@ describe("lead form read by the model", () => {
     expect(got).toEqual({ name: null, phoneE164: null, answers: {}, callbackTime: null });
   });
 
+  it("keeps what they meant, and drops a place or a name they never said", () => {
+    const questions = [
+      { id: "possession", label: "When do you get possession, or is the home already ready?", kind: "text" as const, zohoField: null },
+      { id: "place", label: "Where is the home?", kind: "text" as const, zohoField: null },
+      { id: "person-name", label: "Person name", kind: "name" as const, zohoField: null },
+    ];
+    const meant = acceptExtractedAnswers({
+      questions,
+      raw: { possession: "under construction", place: "Whitefield", "person-name": "Rahul" },
+      prospectText: "it is still in construction\n(Sent a photo. It shows: owner Rahul Sharma)",
+    });
+    expect(meant.answers.possession).toBe("under construction");
+    expect(meant.answers.place).toBeUndefined();
+    expect(meant.name).toBeNull();
+  });
+
   it("keeps the preferred call time only when they typed it", () => {
     const typed = acceptExtractedAnswers({ questions, raw: { "preferred-call-time": "Tom 2 pm" }, prospectText: "Tom 2 pm" });
     expect(typed.callbackTime).toBe("Tom 2 pm");

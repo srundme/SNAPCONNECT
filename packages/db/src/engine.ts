@@ -2601,7 +2601,7 @@ async function readLeadForm(
   phoneRegion = runtime.phoneRegion,
 ): Promise<ReturnType<typeof acceptExtractedAnswers> | null> {
   if (!runtime.llm.extractAnswers) return null;
-  const transcript = messages.map((message) => ({ author: message.author, body: withoutPhotoText(message.body) }));
+  const transcript = messages.map((message) => ({ author: message.author, body: message.body }));
   const prospectText = transcript.filter((message) => message.author === "PROSPECT").map((message) => message.body).join("\n");
   if (!prospectText.trim()) return null;
   try {
