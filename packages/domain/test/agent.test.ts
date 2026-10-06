@@ -22,6 +22,9 @@ import {
   messageSituations,
   pastTimeToday,
   pastTimeReply,
+  requestedTime,
+  requestedTimeLine,
+  requestedTimeReply,
   labelledAnswers,
   repeatsEarlier,
   pricePush,
@@ -133,6 +136,23 @@ describe("common sense checks", () => {
     expect(pastTimeToday("Tomorrow 10 am", lateMorning)).toBeNull();
     expect(pastTimeReply("Today 10 am", lateMorning)).toBe("10 AM today has already passed, it's 11:40 AM now. Would a later time today or another day work for u?");
     expect(pastTimeReply("Tomorrow 10 am", lateMorning)).toBeNull();
+  });
+
+  it("works out the asked time and checks it against working hours in code", () => {
+    const hours = "Tuesday to Sunday, 10 AM to 7 PM";
+    const tuesdayAfternoon = new Date("2026-10-06T07:36:00Z");
+    const nextHour = requestedTime("May be in next 1 hr", tuesdayAfternoon, hours);
+    expect(nextHour).toEqual({ clock: "2:06 PM", day: "today", inside: true, why: "" });
+    expect(requestedTimeLine(nextHour!)).toMatch(/INSIDE working hours/);
+    expect(requestedTimeReply(nextHour!, "sorry sir 1 PM is already past working hours")).toBe("2:06 PM today works, I've noted it here for the team to confirm.");
+    expect(requestedTimeReply(nextHour!, "sure sir noted for 2 PM")).toBeNull();
+    expect(requestedTime("I said 2 pm", tuesdayAfternoon, hours)).toMatchObject({ clock: "2 PM", inside: true });
+    const late = requestedTime("call me at 8 pm", tuesdayAfternoon, hours);
+    expect(late).toMatchObject({ clock: "8 PM", inside: false });
+    expect(requestedTimeReply(late!, "sure sir noted")).toMatch(/won't work since it is outside working hours \(10 AM to 7 PM\)/);
+    expect(requestedTime("tomorrow 11 am", new Date("2026-10-04T07:36:00Z"), hours)).toMatchObject({ day: "tomorrow", inside: false });
+    expect(requestedTime("Today 10 am", tuesdayAfternoon, hours)).toBeNull();
+    expect(requestedTime("maybe in next few months", tuesdayAfternoon, hours)).toBeNull();
   });
 
   it("does not resend a reply that only repeats earlier ones", () => {

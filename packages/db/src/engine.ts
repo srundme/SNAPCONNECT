@@ -14,6 +14,9 @@ import {
   abroadSituation,
   pastTimeToday,
   pastTimeReply,
+  requestedTime,
+  requestedTimeLine,
+  requestedTimeReply,
   dayOffLine,
   askSameNumber,
   asksSameNumberIn,
@@ -1272,6 +1275,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       await noteOnce(`Situation: ${abroad.key}`, abroad.note);
       memoryLines.push(abroad.line);
     }
+    const askedTime = !pastTime && !abroad ? requestedTime(freshText, runtime.now(), agent.workingHours) : null;
+    if (askedTime) memoryLines.push(requestedTimeLine(askedTime));
     const phoneRegion = abroad?.country && abroad.country !== runtime.phoneRegion ? `${runtime.phoneRegion},${abroad.country}` : runtime.phoneRegion;
     const push = pricePush(prospectBodies);
     if (push) {
@@ -1841,8 +1846,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : "";
     const echoesWrongNumber = Boolean(wrongNumber && validated.reply && validated.reply.replace(/\D/g, "").includes(wrongNumber.replace(/\D/g, "")));
     const passedReply = pastTime && !languageSample ? pastTimeReply(freshText, runtime.now()) : null;
+    const hoursReply = askedTime && !languageSample && validated.reply ? requestedTimeReply(askedTime, validated.reply) : null;
     const composed = passedReply && !/\b(passed|already|over|gone|later|another)\b/i.test(validated.reply ?? "")
       ? passedReply
+      : hoursReply
+      ? hoursReply
       : wrongNumber && phoneQuestion && (!validated.reply || echoesWrongNumber || !replyAsksFor(phoneQuestion, validated.reply))
       ? `Hmm, ${phoneProblem(wrongNumber)}. ${scriptQuestionFor(phoneQuestion, languageSample ? languageName(languageSample) : null)}`
       : target && validated.reply

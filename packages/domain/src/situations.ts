@@ -301,6 +301,75 @@ export function openDays(workingHours: string): Set<string> | null {
   return days;
 }
 
+const NUMBER_WORDS: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
+
+function clockLabel(minutes: number): string {
+  const hour = Math.floor(minutes / 60) % 24;
+  const minute = minutes % 60;
+  return `${hour % 12 || 12}${minute ? `:${String(minute).padStart(2, "0")}` : ""} ${hour >= 12 ? "PM" : "AM"}`;
+}
+
+/** Opening and closing minutes read from working hours like "Tuesday to Sunday, 10 AM to 7 PM". */
+export function openHours(workingHours: string): { open: number; close: number } | null {
+  const match = workingHours.match(/(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\s*(?:to|-|–|till|until)\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)/i);
+  if (!match) return null;
+  const at = (hour: string, minute: string | undefined, half: string) => ((Number(hour) % 12) + (half.toLowerCase() === "pm" ? 12 : 0)) * 60 + Number(minute ?? 0);
+  return { open: at(match[1]!, match[2], match[3]!), close: at(match[4]!, match[5], match[6]!) };
+}
+
+type RequestedTime = { clock: string; day: string; inside: boolean; why: string };
+
+/** The time they asked for, worked out in code: the model gets "in next 1 hr" and working-hour checks wrong. */
+export function requestedTime(text: string, now: Date, workingHours: string): RequestedTime | null {
+  const hours = openHours(workingHours);
+  if (!hours) return null;
+  const india = new Date(now.getTime() + 330 * 60_000);
+  const nowMinutes = india.getUTCHours() * 60 + india.getUTCMinutes();
+  let minutes: number;
+  let addDays = 0;
+  const relative = text.match(/\b(?:in|within|after|next)\s+(?:the\s+)?(?:next\s+)?(\d+|an?|one|two|three|four|five|six|half an?)\s*(hours?|hrs?|minutes?|mins?)\b/i);
+  const absolute = text.match(/\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b/i);
+  if (relative) {
+    const word = relative[1]!.toLowerCase();
+    const amount = word.startsWith("half") ? 0.5 : NUMBER_WORDS[word] ?? Number(word);
+    const delta = /^h/i.test(relative[2]!) ? amount * 60 : amount;
+    const target = nowMinutes + Math.round(delta);
+    addDays = Math.floor(target / 1440);
+    minutes = target % 1440;
+  } else if (absolute) {
+    minutes = ((Number(absolute[1]) % 12) + (absolute[3]!.toLowerCase() === "pm" ? 12 : 0)) * 60 + Number(absolute[2] ?? 0);
+    if (/\btomorrow\b|\bkal\b|\bnaalai\b|\bnaale\b/i.test(text)) addDays = 1;
+    else if (minutes <= nowMinutes) return null;
+  } else {
+    return null;
+  }
+  const day = istDate(now, addDays).weekday;
+  const dayWord = addDays === 0 ? "today" : addDays === 1 ? "tomorrow" : day;
+  const open = openDays(workingHours);
+  const clock = clockLabel(minutes);
+  if (open && !open.has(day)) return { clock, day: dayWord, inside: false, why: `${day} is the team's weekly off` };
+  if (minutes < hours.open || minutes >= hours.close) return { clock, day: dayWord, inside: false, why: `it is outside working hours (${clockLabel(hours.open)} to ${clockLabel(hours.close)})` };
+  return { clock, day: dayWord, inside: true, why: "" };
+}
+
+export function requestedTimeLine(time: RequestedTime): string {
+  return time.inside
+    ? `They want ${time.clock} ${time.day}. That is INSIDE working hours, so it is fine: say you have noted ${time.clock} ${time.day} here for the team to confirm. Never say it is outside or past working hours.`
+    : `They want ${time.clock} ${time.day}, but ${time.why}. Say so kindly and ask for a time within working hours.`;
+}
+
+const HOURS_CLAIM = /\b(past|outside|after|beyond|not (?:in|within))\b[^.?!\n]{0,25}\b(working|office|business) hours\b|\b(working|office) hours (?:are |is )?(?:over|closed|done)\b|\bteam is closed\b/i;
+const ACCEPTS = /\b(fine|noted|works?|ok(?:ay)?|sure|done|perfect)\b/i;
+
+/** The reply to send instead when the model contradicts the working-hours check. */
+export function requestedTimeReply(time: RequestedTime, reply: string): string | null {
+  if (time.inside && HOURS_CLAIM.test(reply)) return `${time.clock} ${time.day} works, I've noted it here for the team to confirm.`;
+  if (!time.inside && ACCEPTS.test(reply) && !/\b(working hours|weekly off|closed|another time|other time)\b/i.test(reply)) {
+    return `${time.clock} ${time.day} won't work since ${time.why}. Which other time suits u?`;
+  }
+  return null;
+}
+
 /** Festivals, holidays and weekly off days: the team is off, and a warm wish fits. */
 export function dayOffLine(now: Date, holidays: string, workingHours: string): string {
   const today = istDate(now);
