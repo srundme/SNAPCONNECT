@@ -2190,7 +2190,22 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const unnagged = unasked && recentlyAsked.length
       ? unasked.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !nagging(part)).join(" ").trim()).filter(Boolean).join("\n") || unasked
       : unasked;
-    const numbered = unnagged && numberPending && waNumber ? askSameNumber(unnagged, waNumber) : unnagged;
+    const askedNumber = unnagged && numberPending && waNumber ? askSameNumber(unnagged, waNumber) : unnagged;
+    const numbered = askedNumber
+      ? await rewordCanned(runtime, {
+          text: askedNumber,
+          canned: [
+            ...questions.map(askQuestion),
+            ...questions.map((question) => question.label),
+            ...(planText ? [planText] : []),
+            ...(waNumber ? [sameNumberQuestion(waNumber)] : []),
+          ],
+          chat: spoken.slice(-8).map((message) => `${message.author === "PROSPECT" ? "Customer" : "You"}: ${message.body}`).join("\n"),
+          languageLine,
+          earlier: earlierReplies,
+          mustAsk: target ?? nextQuestion ?? null,
+        })
+      : askedNumber;
     const inLanguage = numbered && !languageSample ? dropIndicSentences(numbered) || numbered : numbered;
     const greetedOnce = inLanguage && earlierReplies.length ? dropRepeatGreeting(inLanguage) : inLanguage;
     const newName = recordedName && recordedName !== conversation.contact.chosenName ? recordedName : null;
@@ -2343,6 +2358,76 @@ type PromptedInput = {
   lead: Prisma.LeadGetPayload<object>;
 };
 
+const plainWords = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/** True when the sentence reuses four words in a row from a fixed question, so every chat would read the same. */
+function soundsCanned(sentence: string, canned: string[]): boolean {
+  const said = ` ${plainWords(sentence)} `;
+  return canned.some((text) => {
+    const words = plainWords(text).split(/\s+/).filter(Boolean);
+    if (words.length < 4) return false;
+    for (let index = 0; index + 4 <= words.length; index++) {
+      if (said.includes(` ${words.slice(index, index + 4).join(" ")} `)) return true;
+    }
+    return false;
+  });
+}
+
+/**
+ * The code decides what the reply asks; this only has the model reword the fixed sentences in it
+ * for this customer. Anything that loses the question, a number or the language keeps the original.
+ */
+async function rewordCanned(
+  runtime: Runtime,
+  input: { text: string; canned: string[]; chat: string; languageLine: string; earlier: string[]; mustAsk: LeadQuestion | null },
+): Promise<string> {
+  if (!runtime.llm.complete) return input.text;
+  const sentences = input.text.split(/\n+/).flatMap((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/)).map((part) => part.trim()).filter(Boolean);
+  const stiff = sentences.filter((sentence) => soundsCanned(sentence, input.canned));
+  if (!stiff.length) return input.text;
+  try {
+    const raw = await runtime.llm.complete({
+      system: [
+        "You polish one chat message from a premium interior design consultant before it is sent on Instagram, Facebook or WhatsApp.",
+        input.languageLine,
+        "Rewrite only the sentences listed below, in fresh words that fit this customer and what they said (their home, area, BHK, stage). Keep every other sentence exactly as it is.",
+        "Keep the meaning exactly: the same question, every option or range it lists, and every number, phone number and name unchanged. A question stays a question.",
+        "Sound like a person texting: short, warm, not salesy. Do not start with Great, Perfect, Absolutely, Certainly, Wonderful, Awesome or Noted. Add no new questions, facts or promises.",
+        "Return only the full message to send, with the same line breaks. No labels, no quotes, no notes.",
+      ].join("\n"),
+      messages: [{
+        role: "user",
+        content: [
+          "Recent chat:",
+          input.chat || "(empty)",
+          "",
+          "Your earlier messages, which must not be repeated word for word:",
+          input.earlier.slice(-6).join("\n") || "(none)",
+          "",
+          "Message to send:",
+          input.text,
+          "",
+          "Sentences to reword:",
+          ...stiff.map((sentence) => `- ${sentence}`),
+        ].join("\n"),
+      }],
+      temperature: 0.8,
+      maxTokens: 600,
+      timeoutMs: 45_000,
+    });
+    const next = raw.replace(/^(?:message|reply)\s*:\s*/i, "").replace(/^["'“]+|["'”]+$/g, "").trim();
+    const digits = (text: string) => (text.match(/\d{6,}/g) ?? []).join(",");
+    const stillAsks = !input.mustAsk || !questionAsked(input.mustAsk, input.text) || questionAsked(input.mustAsk, next) || next.includes("?");
+    if (!next || next.length > input.text.length * 2 + 120 || digits(next.replace(/[\s-]/g, "")) !== digits(input.text.replace(/[\s-]/g, "")) || !stillAsks) {
+      return input.text;
+    }
+    return next;
+  } catch (error) {
+    console.warn(`Rewording failed: ${error instanceof Error ? error.message : String(error)}`);
+    return input.text;
+  }
+}
+
 const CHANNEL_NAME = { WHATSAPP: "WhatsApp", INSTAGRAM: "Instagram", FACEBOOK: "Facebook Messenger" } as const;
 const EMPTY_VALUE = /^(null|none|unknown|n\/a|not provided|not given|-)?$/i;
 
@@ -2432,6 +2517,24 @@ async function promptedReply(db: Db, runtime: Runtime, input: PromptedInput): Pr
     });
   }
 
+  const editedTo = typeof payload.editedTo === "string" ? payload.editedTo : null;
+  if (editedTo && spoken[spoken.length - 1]?.author === "AI") {
+    const detailsChanged = payload.phoneChanged === true
+      || name !== conversation.contact.chosenName
+      || phoneE164 !== lead.phoneE164
+      || JSON.stringify(answers) !== JSON.stringify(answerRecord(lead.answers))
+      || Boolean(callbackTime && callbackTime !== lead.timeframeRaw);
+    if (!detailsChanged && !wrongPhoneIn(editedTo, runtime.phoneRegion)) {
+      await db.aiRun.create({
+        data: { workspaceId: workspace.id, conversationId: conversation.id, model: runtime.llm.model, simulated: runtime.llm.mode === "fixture", latencyMs: 0, valid: true, diagnostic: "Prompt mode; no reply needed: the edited message changed no lead details." },
+      });
+      return "done";
+    }
+  }
+  const editNote = editedTo
+    ? `They just edited an earlier message from "${String(payload.editedFrom ?? "")}" to "${editedTo}". Use the edited version. Thank them for the correction in a few words, confirm the corrected detail, and continue.`
+    : "";
+
   const callNumber = phoneAgreed ? phoneE164 : null;
   const screen = questions.length ? screenLead({ questions, answers, name, phoneE164: callNumber }) : null;
   const valueOf = (question: LeadQuestion) => question.kind === "name" ? name : question.kind === "phone" ? callNumber : answers[question.id];
@@ -2476,6 +2579,7 @@ async function promptedReply(db: Db, runtime: Runtime, input: PromptedInput): Pr
       spoken.some((message) => message.author === "AI") ? "" : "You have not replied in this chat yet.",
       gapMs >= 12 * 3_600_000 ? `They are writing again after ${since(gapMs)}.` : "",
       followUp && lastAiAt ? `They have not replied for ${since(runtime.now().getTime() - lastAiAt.getTime())} since your last message. This is follow up ${Number(payload.followUp) + 1}.` : "",
+      editNote,
     ].filter(Boolean).join("\n"),
     lead_status: lead.crmState === "SYNCED"
       ? `Already sent to the team${firstSync ? ` ${since(runtime.now().getTime() - firstSync.updatedAt.getTime())} ago` : ""}.`
