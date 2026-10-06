@@ -1362,7 +1362,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     const spoken = conversation.messages.filter((message) => (message.author === "PROSPECT" || message.author === "AI") && message.body.trim());
     const lastSpoken = spoken[spoken.length - 1];
-    if (lead.crmState === "SYNCED" && lastSpoken?.author === "PROSPECT" && spoken[spoken.length - 2]?.author === "AI" && CLOSING_ACK.test(lastSpoken.body.trim())) {
+    if ((lead.crmState === "SYNCED" || lead.crmState === "NEEDS_ATTENTION" || lead.qualification === "QUALIFIED") && lastSpoken?.author === "PROSPECT" && spoken[spoken.length - 2]?.author === "AI" && CLOSING_ACK.test(lastSpoken.body.trim())) {
       await db.aiRun.create({
         data: {
           workspaceId: workspace.id,
@@ -1432,6 +1432,12 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     const askedTime = !pastTime && !abroad ? requestedTime(freshText, runtime.now(), agent.workingHours) : null;
     if (askedTime) memoryLines.push(requestedTimeLine(askedTime));
+    const zone = workspace.timezone || "Asia/Kolkata";
+    const localHour = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hourCycle: "h23", timeZone: zone }).format(runtime.now()));
+    if (localHour < 5 && /\b(tomorrow|tmrw|tmr|tommorow|tomorow|kal|naalai|nalaiku|naliku|naaliku)\b/i.test(freshText)) {
+      const today = new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "short", timeZone: zone }).format(runtime.now());
+      memoryLines.push(`It is just after midnight now, so when they say "tomorrow" they most likely mean later today, ${today}, after they sleep. Do not decide it for them: confirm once by naming the day and date, like "today, ${today}, at that time, right?", in the chat's language.`);
+    }
     const phoneRegion = abroad?.country && abroad.country !== runtime.phoneRegion ? `${runtime.phoneRegion},${abroad.country}` : runtime.phoneRegion;
     const push = pricePush(prospectBodies);
     if (push) {
@@ -1562,6 +1568,15 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         if (recordedAnswers[question.id]) absorbed.answers[question.id] = recordedAnswers[question.id]!;
         else delete absorbed.answers[question.id];
       }
+      for (const question of questions) {
+        const value = (absorbed.answers[question.id] ?? "").trim();
+        if (!value) continue;
+        const wrongShape = (/\b(where is the home|which area|location)\b/i.test(question.label) && HOME_TYPE_ONLY.test(value))
+          || ((/\bemail\b/i.test(question.label) || question.zohoField === "Email") && !VALID_EMAIL.test(value) && !NOT_SURE.test(value))
+          || (question.kind !== "phone" && (/\b(phone|mobile|which number)\b/i.test(question.label) || question.zohoField === "Phone" || question.zohoField === "Mobile")
+            && value.replace(/\D/g, "").length < 10 && !/^same$/i.test(value));
+        if (wrongShape) delete absorbed.answers[question.id];
+      }
       const scopeQuestion = questions.find((question) => /\b(full home|selected rooms)\b/i.test(question.label));
       if (!formRead && scopeQuestion && !absorbed.answers[scopeQuestion.id] && SCOPE_ONLY.test(freshText.trim())) absorbed.answers[scopeQuestion.id] = freshText.trim();
       for (const [id, value] of Object.entries(absorbed.answers)) {
@@ -1668,7 +1683,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         const scopeValue = questions.filter((question) => /full home|selected rooms|scope/i.test(question.label)).map((question) => absorbed.answers[question.id] ?? "").find(Boolean) ?? "";
         const budget = budgetValue ? budgetLakhs(budgetValue) : null;
         if ((budget && budget.low < agent.hotBudgetLakhs) || selectedRoomsOnly(scopeValue)) {
-          memoryLines.push("Treat their budget and scope like any other answer: acknowledge it warmly in a few words and carry on with the next detail. Never call the budget low, tight, small or limited, never say the scope is small, never mention a minimum budget or that the team prefers full homes, and never suggest raising the budget.");
+          memoryLines.push("Treat their budget and scope like any other answer: acknowledge it warmly in a few words and carry on with the next detail. Never call the budget low, tight, small or limited, never say the scope is small, never mention a minimum budget or that the team prefers full homes, and never suggest raising the budget. Equally, never say the budget is workable, enough, good or that premium work is possible within it: if they ask, say the designer will suggest what fits best within it on the call.");
         }
       }
       recordedName = absorbed.name;
@@ -2881,7 +2896,8 @@ async function promptedReply(db: Db, runtime: Runtime, input: PromptedInput): Pr
 const MEMORY_WINDOW = 20;
 const NOT_SURE = /\b(d(?:o)?n'?t know|dnt know|dont know|not sure|no idea|can (?:u|you) suggest|you suggest|u suggest|will (?:tell|explain|discuss)|i'?ll (?:tell|explain|discuss)|explain (?:this|it|that) to (?:the )?team|tell (?:the )?team|decide later|not decided|pata nahi|nahi pata|maloom nahi|malum nahi|abhi decide nahi|theriyala|theriyadhu|gottilla|gotilla)\b/i;
 
-const CLOSING_ACK = /^(ok+|okay|k+|ok ok|ok bro|ok sir|ok thanks?|ok thank you|thanks?|thank you|thank u|thx|tq|ty|seri|sari|super|nice|great|cool|done|fine|theek hai|thik hai|achha|accha|haan ok|\p{Extended_Pictographic}+)[\s.!🙏👍]*$/iu;
+const CLOSING_ACK = /^(ok+|okay|k+|ok ok|ok thanks?|ok thank you|okay thanks?|okay thank you|thanks?|thank you|thank u|thx|tq|ty|seri|sari|super|nice|great|cool|done|fine|sure|alright|noted|theek hai|thik hai|achha|accha|haan ok|\p{Extended_Pictographic}+)(?:[\s,]+(sir|mam|madam|bro|da|ji|anna|akka|boss))?[\s.!🙏👍]*$/iu;
+const VALID_EMAIL = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
 
 async function refreshMemory(
   db: Db,
@@ -2964,6 +2980,10 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
       phoneE164: lead.phoneE164,
     });
     Object.assign(record, placed.fields);
+    if (record.Email && !VALID_EMAIL.test(record.Email)) delete record.Email;
+    for (const field of ["Phone", "Mobile"]) {
+      if (record[field] && record[field]!.replace(/\D/g, "").length < 10) delete record[field];
+    }
     const leadAgent = parseAgentSettings(lead.workspace.agentSettings);
     if (!record.Company && leadAgent.zohoCompanyFallback) record.Company = leadAgent.zohoCompanyFallback;
     if (lead.rating && lead.rating !== "UNRATED" && leadAgent.zohoRatingField) record[leadAgent.zohoRatingField] = lead.rating;
