@@ -437,14 +437,14 @@ describe("must-have and nice-to-have questions", () => {
       activePost: null, otherPosts: null,
     });
     expect(brief).toContain("# Your expertise");
-    expect(brief).not.toContain("Design notes from the team");
+    expect(brief).not.toContain("General design knowledge");
     const designer = salesBriefing({
       brandName: "The KariGhars", agentName: "Varun", services: "", faqs: [], teamNotes: null, questions, recorded: [],
       nextDetail: questions[1]!, ready: false, cold: false, minutesSinceSent: null, memoryLines: [],
       languageLine: "This chat is in English.", activePost: null, otherPosts: null,
       settings: parseAgentSettings({ designKnowledge: "Parallel kitchens suit long narrow spaces." }),
     });
-    expect(designer).toContain("Design notes from the team");
+    expect(designer).toContain("General design knowledge");
     expect(designer).toContain("Parallel kitchens suit long narrow spaces.");
     expect(kannada).toMatch(/Kanglish/);
     expect(kannada).not.toMatch(/Sollunga|pannuvanga|Batao/);
