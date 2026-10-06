@@ -776,6 +776,11 @@ describe("ai validation", () => {
     const budgetQuestion = { id: "budget", label: "Roughly what interior budget do you have in mind?", kind: "text" as const, zohoField: null };
     expect(questionAsked(budgetQuestion, "im Varun here...how can i help u with ur home interiors today?")).toBe(false);
     expect(questionAsked(budgetQuestion, "Got it sir. What budget do u have in mind for this?")).toBe(true);
+    const homeQuestion = { id: "type", label: "What kind of home is it: apartment, villa or independent house, and how many BHK?", kind: "text" as const, zohoField: null };
+    const scopeQuestion = { id: "scope", label: "Is it the full home or selected rooms?", kind: "text" as const, zohoField: null };
+    expect(questionAsked(homeQuestion, "can u tell me the BHK count of ur villa?")).toBe(true);
+    expect(questionAsked(scopeQuestion, "are we looking at the whole house or just certain rooms?")).toBe(true);
+    expect(questionAsked(scopeQuestion, "when do u get possession of the flat?")).toBe(false);
     expect(refusesNumber("i dont want to share my number")).toBe(true);
     expect(refusesNumber("I won’t give my phone number")).toBe(true);
     expect(refusesNumber("why do you need my number? will u spam me?")).toBe(false);

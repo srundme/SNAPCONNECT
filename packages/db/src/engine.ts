@@ -2552,7 +2552,12 @@ async function rewordCanned(
     const next = raw.replace(/^(?:message|reply)\s*:\s*/i, "").replace(/^["'“]+|["'”]+$/g, "").trim();
     const digits = (text: string) => (text.match(/\d{6,}/g) ?? []).join(",");
     const stillAsks = !input.mustAsk || !questionAsked(input.mustAsk, input.text) || questionAsked(input.mustAsk, next) || next.includes("?");
-    if (!next || next.length > input.text.length * 2 + 120 || digits(next.replace(/[\s-]/g, "")) !== digits(input.text.replace(/[\s-]/g, "")) || !stillAsks) {
+    const nextWords = new Set(plainWords(next).split(/\s+/));
+    const keepsTheRest = sentences.filter((sentence) => !stiff.includes(sentence)).every((sentence) => {
+      const words = plainWords(sentence).split(/\s+/).filter((word) => word.length >= 4);
+      return words.length < 3 || words.filter((word) => nextWords.has(word)).length >= words.length * 0.6;
+    });
+    if (!next || next.length > input.text.length * 2 + 120 || digits(next.replace(/[\s-]/g, "")) !== digits(input.text.replace(/[\s-]/g, "")) || !stillAsks || !keepsTheRest) {
       return input.text;
     }
     return next;

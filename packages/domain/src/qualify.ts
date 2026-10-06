@@ -780,9 +780,21 @@ export function askSameNumber(reply: string, phoneE164: string): string {
 function askScore(question: LeadQuestion, sentence: string): number {
   const ask = sentence.toLowerCase();
   if (question.kind === "name" || question.kind === "phone" || question.kind === "yesno") return askedAbout(question, sentence) ? 2 : 0;
-  const keywords = [...new Set(question.label.toLowerCase().match(/[a-z]{4,}/g)?.filter((word) => !LABEL_FILLER.has(word)) ?? [])];
-  return keywords.filter((word) => ask.includes(word.slice(0, Math.max(4, word.length - 2)))).length;
+  const keywords = [...new Set(question.label.toLowerCase().match(/\bbhk\b|[a-z]{4,}/g)?.filter((word) => !LABEL_FILLER.has(word)) ?? [])];
+  return keywords.reduce((score, word) => {
+    if (word === "bhk") return score + (/\bbhk\b/.test(ask) ? 2 : 0);
+    const forms = [word.slice(0, Math.max(4, word.length - 2)), ...(ASK_SYNONYMS[word] ?? [])];
+    return score + (forms.some((form) => ask.includes(form)) ? 1 : 0);
+  }, 0);
 }
+
+/** Everyday words people use for a label's topic word, so a reworded question still counts as asked. */
+const ASK_SYNONYMS: Record<string, string[]> = {
+  full: ["whole", "entire", "complete", "poora", "full"],
+  selected: ["certain", "specific", "particular", "some rooms", "few rooms"],
+  possession: ["handover", "hand over", "keys", "taking over", "take over", "move in"],
+  budget: ["spend", "investment"],
+};
 
 /** A sentence that asks something, even when the model left out the question mark. */
 export function isQuestionSentence(sentence: string): boolean {

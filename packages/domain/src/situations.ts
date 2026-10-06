@@ -187,7 +187,7 @@ export function messageSituations(text: string, brandName: string): Situation[] 
     found.push({
       key: `competitor:${rival ?? "quote"}`,
       note: `Comparing with ${rival ? rival.replace(/\b\w/g, (letter) => letter.toUpperCase()) : "another quote"}: "${said}"`,
-      line: `They mentioned ${rival ? "another company" : "another quote"} ("${said}"). Never criticise the other company, never match or beat a price, and never promise a discount. Say in one line that the team will walk them through exactly what is included, the materials and the warranty, so they can compare properly.`,
+      line: `They mentioned ${rival ? "another company" : "another quote"} ("${said}"). Never criticise the other company, never match or beat a price, and never promise a discount. Give one or two concrete strengths from the knowledge base that matter for their home, like the materials, the pricing promise or the warranty, said plainly and confidently, then say the team will walk them through exactly what is included so they can compare properly.`,
     });
   }
   if (RUSH.test(text)) {
@@ -237,7 +237,7 @@ export function pricePush(prospectTexts: string[]): Situation | null {
   return {
     key: "price-push",
     note: `Asked about price ${asked.length} times.`,
-    line: "They are asking about the price again. Do not repeat your earlier explanation or its words. Acknowledge plainly that they want a number, give one fresh honest reason it varies so much (for example the same 3 BHK can differ a lot by materials and how much storage and custom work they want), and offer the quickest way to a real estimate: a short call with the team or a visit to the experience centre. Still never quote a number.",
+    line: "They are asking about the price again. Do not repeat your earlier explanation or its words. Acknowledge plainly that they want a number, give one fresh honest reason it varies so much (for example the same 3 BHK can differ a lot by materials and how much storage and custom work they want), and offer the quickest way to a real estimate: a short call with the team or a visit to the experience centre. Never make up a number or estimate their home: only a starting price written in the knowledge base may be shared, said as a starting price.",
     always: true,
   };
 }
