@@ -32,7 +32,6 @@ import {
   duplicateCheckFields,
   evaluateQualification,
   nextReplyPrompt,
-  openingForPost,
   absorbTranscript,
   acceptExtractedAnswers,
   numericQuestion,
@@ -576,6 +575,11 @@ async function handleComment(db: Db, connectionId: string, body: Record<string, 
     return skip(db, connection, commentId, eligibility.allowed ? decision.reason : eligibility.reason);
   }
   const rule = connection.rules.find((item) => item.id === winner.id);
+  const openingText = await writeOpening(runtime, connection.workspace, {
+    comment: String(body.text ?? ""),
+    post: connection.media.find((item) => item.externalId === mediaId) ?? null,
+    name: [contact.displayName, contact.username].filter(Boolean).join(" / "),
+  }) ?? rule?.openingTemplate ?? "";
   try {
     await db.$transaction(async (tx) => {
       const found = await tx.conversation.findFirst({ where: { contactId: contact.id, connectionId } });
@@ -649,10 +653,7 @@ async function handleComment(db: Db, connectionId: string, body: Record<string, 
           payload: {
             outboundAttemptId: attempt.id,
             contactId: contact.id,
-            text: openingForPost(
-              rule?.openingTemplate ?? "",
-              connection.media.find((item) => item.externalId === String(body.mediaId ?? ""))?.openingMessage,
-            ),
+            text: openingText,
           },
         },
       });
@@ -1447,7 +1448,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       posts: posts.map((post) => ({
         id: post.externalId,
         caption: post.caption ?? "",
-        prompt: post.assistantPrompt ?? "",
+        prompt: "",
         seen: post.seenSummary,
         link: post.permalink,
         where: post.channel === "FACEBOOK" ? "Facebook" : "Instagram",
@@ -2358,6 +2359,68 @@ type PromptedInput = {
   lead: Prisma.LeadGetPayload<object>;
 };
 
+/**
+ * The first private message after a comment, written from the Agent page settings, the post and the
+ * comment. The code fixes what it does: greet, answer the comment if it asks something, ask the first
+ * lead question. Null when the model cannot write it, so the account's default message goes instead.
+ */
+async function writeOpening(
+  runtime: Runtime,
+  workspace: { brandName: string; agentName: string | null; agentPersona: string | null; services: string; knowledgeBase: string | null; agentSettings: unknown; leadQuestions: unknown },
+  input: { comment: string; post: { caption: string | null; seenSummary: string | null } | null; name: string },
+): Promise<string | null> {
+  if (!runtime.llm.complete) return null;
+  const agent = parseAgentSettings(workspace.agentSettings);
+  const questions = parseLeadQuestions(workspace.leadQuestions);
+  const first = questions.find((question) => question.required !== false && question.kind !== "phone") ?? questions[0];
+  const sample = chatLanguageSample([input.comment]);
+  const address = agent.addressSirMam && input.name && runtime.llm.addressFor ? await runtime.llm.addressFor(input.name).catch(() => null) : null;
+  try {
+    const raw = await runtime.llm.complete({
+      system: [
+        `You are ${workspace.agentName ?? "the assistant"}, the AI assistant for ${workspace.brandName}. ${workspace.agentPersona ?? ""}`.trim(),
+        `What ${workspace.brandName} does: ${workspace.services}`,
+        workspace.knowledgeBase ? `Knowledge base (the only facts you may use):\n${workspace.knowledgeBase.slice(0, 12000)}` : "",
+        agent.rules ? `Team rules:\n${agent.rules}` : "",
+        `Pricing: ${agent.pricingAnswer}`,
+        sample
+          ? `They commented in ${languageName(sample)}, like "${sample}". Write the whole message, the question too, in exactly that language and style.`
+          : "Write the whole message, the question too, in the language and style of their comment: plain English for an English comment; Tamil, Hindi or another Indian language typed in English letters (Tanglish, Hinglish) when they wrote that way.",
+        address ? `Address them only as ${address}.` : "",
+        "You do not know their real name yet. Never use their profile name or username.",
+        "Someone just commented on a post. You are sending them their first private message about it.",
+        "This is only an enquiry: do not sound like they have already chosen you, and do not oversell.",
+      ].filter(Boolean).join("\n\n"),
+      messages: [{
+        role: "user",
+        content: [
+          `Post: ${[input.post?.caption?.trim(), input.post?.seenSummary ? `(it shows: ${input.post.seenSummary})` : ""].filter(Boolean).join(" ") || "no caption"}`,
+          `Their comment: "${input.comment.slice(0, 500)}"`,
+          "",
+          "Write the first message:",
+          `1. Say hi and that you are ${workspace.agentName ?? "the"} AI assistant for ${workspace.brandName}, in a few words.`,
+          "2. If the comment asks something (in any language), answer exactly that in one short sentence using only the knowledge base, never quoting a price (follow the pricing rule). If it only praises the post or says they are interested, thank them in a few words tied to what the post shows. This sentence asks nothing.",
+          first
+            ? `3. End with one natural question, in the same language as the rest, asking for: ${first.label} That is only the topic: do not copy its words.`
+            : "3. End by asking how you can help, in the same language as the rest.",
+          "If the comment is in Tanglish (Tamil in English letters, like \"evlo aagum\") or Hinglish (like \"kitna hoga\"), every sentence must be in that same style, not English.",
+          "Two or three short sentences in total. No emojis, no hashtags, no links. Do not start with Great, Perfect, Absolutely, Certainly or Wonderful.",
+          "Return only the message.",
+        ].join("\n"),
+      }],
+      temperature: 0.7,
+      maxTokens: 400,
+      timeoutMs: 45_000,
+    });
+    const text = raw.replace(/^(?:message|reply)\s*:\s*/i, "").replace(/^["'“]+|["'”]+$/g, "").trim();
+    if (!text || text.length > 700 || !text.includes("?")) return null;
+    return humanizeReply(text);
+  } catch (error) {
+    console.warn(`Opening message failed: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
 const plainWords = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
 /** True when the sentence reuses four words in a row from a fixed question, so every chat would read the same. */
@@ -2556,7 +2619,7 @@ async function promptedReply(db: Db, runtime: Runtime, input: PromptedInput): Pr
     posts: posts.map((post) => ({
       id: post.externalId,
       caption: post.caption ?? "",
-      prompt: post.assistantPrompt ?? "",
+      prompt: "",
       seen: post.seenSummary,
       link: post.permalink,
       where: post.channel === "FACEBOOK" ? "Facebook" : "Instagram",

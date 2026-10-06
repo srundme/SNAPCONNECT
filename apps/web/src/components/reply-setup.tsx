@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { ExternalLink, RefreshCw } from "lucide-react";
 import { clsx } from "clsx";
 import { savePostSelection } from "@/lib/actions";
@@ -14,11 +15,7 @@ export type ReplyPost = {
   permalink: string | null;
   supported: boolean;
   enabled: boolean;
-  opening: string;
-  prompt: string;
 };
-
-const fieldClass = "min-h-0 w-full";
 
 export function ReplySetup({
   connectionId,
@@ -33,8 +30,6 @@ export function ReplySetup({
 }) {
   const [selected, setSelected] = useState<string | null>(posts[0]?.externalId ?? null);
   const [enabled, setEnabled] = useState<Record<string, boolean>>(() => Object.fromEntries(posts.map((post) => [post.externalId, post.enabled])));
-  const [openings, setOpenings] = useState<Record<string, string>>(() => Object.fromEntries(posts.map((post) => [post.externalId, post.opening])));
-  const [prompts, setPrompts] = useState<Record<string, string>>(() => Object.fromEntries(posts.map((post) => [post.externalId, post.prompt])));
   const current = posts.find((post) => post.externalId === selected) ?? null;
   const onCount = posts.filter((post) => post.supported && enabled[post.externalId]).length;
 
@@ -45,8 +40,6 @@ export function ReplySetup({
         {posts.map((post) => (
           <span key={post.externalId}>
             {enabled[post.externalId] ? <input type="hidden" name="mediaId" value={post.externalId} /> : null}
-            <input type="hidden" name={`opening:${post.externalId}`} value={openings[post.externalId] ?? ""} />
-            <input type="hidden" name={`prompt:${post.externalId}`} value={prompts[post.externalId] ?? ""} />
           </span>
         ))}
       </div>
@@ -122,27 +115,10 @@ export function ReplySetup({
         {current ? (
           <div className="grid gap-4">
             <p className="text-sm font-semibold leading-5">{current.caption || current.kind}</p>
-            <p className="text-sm text-[var(--color-muted)]">This post only for the first message. The system prompt here is added to the account prompt, so the assistant can also answer about other posts.</p>
-            <label>
-              First message
-              <textarea
-                rows={4}
-                className={fieldClass}
-                value={openings[current.externalId] ?? ""}
-                placeholder="Private message sent after a comment on this post"
-                onChange={(event) => setOpenings((currentOpenings) => ({ ...currentOpenings, [current.externalId]: event.target.value }))}
-              />
-            </label>
-            <label>
-              System prompt
-              <textarea
-                rows={10}
-                className={fieldClass}
-                value={prompts[current.externalId] ?? ""}
-                placeholder={"You are the assistant for this post. The person just commented.\nQualify the enquiry. Ask one thing at a time, in one or two short sentences.\nDo not quote a price or confirm a booking."}
-                onChange={(event) => setPrompts((currentPrompts) => ({ ...currentPrompts, [current.externalId]: event.target.value }))}
-              />
-            </label>
+            {current.previewUrl ? <img src={current.previewUrl} alt="" className="max-h-80 w-auto rounded-xl object-contain" /> : null}
+            <p className="text-sm text-[var(--color-muted)]">
+              When someone comments here, the assistant writes the first message itself from the comment, this post and the <Link href="/ai" className="font-semibold text-[var(--color-ink)] underline">Agent page</Link>, then carries on the chat with the same settings. Turn the post on or off in the list.
+            </p>
           </div>
         ) : (
           <p className="text-sm text-[var(--color-muted)]">Select a post.</p>

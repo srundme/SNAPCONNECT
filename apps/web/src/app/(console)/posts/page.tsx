@@ -69,8 +69,6 @@ export default async function PostsPage({ searchParams }: { searchParams: Promis
               permalink: post.permalink,
               supported: post.supportStatus === "SUPPORTED",
               enabled: rule?.coverage === "SELECTED_POSTS" ? selected.has(post.externalId) : post.supportStatus === "SUPPORTED",
-              opening: post.openingMessage ?? "",
-              prompt: post.assistantPrompt ?? "",
             }))}
           />
         </>
