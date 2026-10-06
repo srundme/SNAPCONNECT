@@ -25,8 +25,11 @@ export function rupeesIn(text: string): number | null {
   const match = text.replace(/,/g, "").match(/(\d+(?:\.\d+)?)\s*([a-z]+)?/i);
   if (!match) return null;
   const amount = Number(match[1]);
+  const rest = text.replace(/,/g, "").slice((match.index ?? 0) + match[0].length);
+  const rangeUnit = rest.match(/^\s*(?:-|–|to|se|muthal)?\s*\d+(?:\.\d+)?\s*([a-z]+)/i)?.[1] ?? "";
   const unit = AMOUNT_UNITS.find(([pattern]) => pattern.test(match[2] ?? ""))
-    ?? AMOUNT_UNITS.find(([pattern]) => pattern.test(text.slice((match.index ?? 0) + match[0].length)));
+    ?? AMOUNT_UNITS.find(([pattern]) => pattern.test(rangeUnit))
+    ?? AMOUNT_UNITS.find(([pattern]) => pattern.test(rest));
   return Number.isFinite(amount) ? amount * (unit ? unit[1] : 1) : null;
 }
 

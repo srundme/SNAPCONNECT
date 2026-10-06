@@ -380,6 +380,8 @@ describe("interiors common sense", () => {
     const questions = [{ id: "budget", label: "Approximate interior budget" }, { id: "area", label: "Approximate area in sq ft" }];
     expect(unrealisticAnswers(questions, { budget: "500", area: "1450" }).map((doubt) => doubt.id)).toEqual(["budget"]);
     expect(unrealisticAnswers(questions, { budget: "5 lakh", area: "2000" })).toEqual([]);
+    expect(unrealisticAnswers(questions, { budget: "20 to 30l" })).toEqual([]);
+    expect(unrealisticAnswers(questions, { budget: "20-30L" })).toEqual([]);
     expect(unrealisticAnswers(questions, { budget: "1000 crore", area: "500000" }).map((doubt) => doubt.id)).toEqual(["budget", "area"]);
   });
 });

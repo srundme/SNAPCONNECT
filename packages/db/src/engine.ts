@@ -1487,6 +1487,23 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         : undefined;
       if (unsureOf) absorbed.answers[unsureOf.id] = "Not sure yet";
       const bhkQuestion = questions.find((question) => /\bbhk\b/i.test(question.label));
+      if (bhkQuestion && /\d\s*-?\s*(bhk|rk)\b|\bstudio\b/i.test(recordedAnswers[bhkQuestion.id] ?? "")
+        && !/\d\s*-?\s*(bhk|rk)\b|\bstudio\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
+        absorbed.answers[bhkQuestion.id] = recordedAnswers[bhkQuestion.id]!;
+      }
+      const bareBhk = freshText.trim().toLowerCase().match(/^(?:it(?:'s| is) )?(?:a )?([1-9]|one|two|three|four|five|six|seven|eight)(?: (?:bed ?rooms?|bedrooms|rooms))?(?: sir| ji| bro)?\.?$/)?.[1];
+      if (bhkQuestion && bareBhk && /\bbhk\b|\bbed ?rooms?\b/i.test(lastAsk) && !/\d\s*-?\s*(bhk|rk)\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
+        const words = ["one", "two", "three", "four", "five", "six", "seven", "eight"];
+        const count = /\d/.test(bareBhk) ? bareBhk : String(words.indexOf(bareBhk) + 1);
+        const kind = homeTypeName(prospectBodies.join("\n"));
+        absorbed.answers[bhkQuestion.id] = `${count} BHK${kind ? ` ${kind}` : ""}`;
+      }
+      const planBhk = sinceReply.map((body) => body.match(PHOTO_SEEN)?.[1] ?? body.match(DOCUMENT_SEEN)?.[2] ?? "")
+        .filter((seen) => FLOOR_PLAN.test(seen)).map((seen) => seen.match(/\b([1-9])\s*-?\s*BHK\b/i)?.[1]).find(Boolean);
+      if (bhkQuestion && planBhk && !/\d\s*-?\s*(bhk|rk)\b/i.test(recordedAnswers[bhkQuestion.id] ?? "") && !/\d\s*-?\s*(bhk|rk)\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
+        const kind = homeTypeName(prospectBodies.join("\n"));
+        absorbed.answers[bhkQuestion.id] = `${planBhk} BHK${kind ? ` ${kind}` : ""} (from the floor plan)`;
+      }
       if (bhkQuestion && !/\d\s*-?\s*(bhk|rk)\b|\bstudio\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
         homeKind = prospectBodies.join("\n").match(/\b(apartment|appartment|flat|villa|bungalow|independent house|individual house|row house|duplex|penthouse)\b/i)?.[1]?.toLowerCase() ?? null;
         if (homeKind) {
@@ -1500,10 +1517,24 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         const size = value.match(/\d+\s*-?\s*(?:bhk|rk)\b/i)?.[0]?.replace(/\s*-?\s*(bhk|rk)/i, (_, unit: string) => ` ${unit.toUpperCase()}`);
         if (type && size) absorbed.answers[bhkQuestion.id] = `${size} ${type}`;
       }
+      const HOME_TYPE_ONLY = /^(?:it(?:'s| is) )?(?:an? )?(apartment|appartment|flat|villa|bungalow|independent house|individual house|row house|duplex|penthouse)(?: sir| ji)?\.?$/i;
+      const SCOPE_ONLY = /^(?:(?:it(?:'s| is) )?(?:the )?(?:full|whole|entire|complete) (?:home|house|flat)|selected rooms|only (?:some|few) rooms)(?: sir| ji)?\.?$/i;
+      for (const question of questions) {
+        const value = (absorbed.answers[question.id] ?? "").trim();
+        if (!value || value === recordedAnswers[question.id]) continue;
+        const misfiled = (/\b(full home|selected rooms|scope)\b/i.test(question.label) && HOME_TYPE_ONLY.test(value))
+          || (!/\b(full home|selected rooms|scope)\b/i.test(question.label) && SCOPE_ONLY.test(value));
+        if (!misfiled) continue;
+        if (recordedAnswers[question.id]) absorbed.answers[question.id] = recordedAnswers[question.id]!;
+        else delete absorbed.answers[question.id];
+      }
+      const scopeQuestion = questions.find((question) => /\b(full home|selected rooms)\b/i.test(question.label));
+      if (scopeQuestion && !absorbed.answers[scopeQuestion.id] && SCOPE_ONLY.test(freshText.trim())) absorbed.answers[scopeQuestion.id] = freshText.trim();
       for (const [id, value] of Object.entries(absorbed.answers)) {
         const question = questions.find((item) => item.id === id);
         const needsNumber = Boolean(question && /budget|sq\.? ?ft|carpet|area in/i.test(question.label));
-        if (question?.kind === "text" && (CLOSING_ACK.test(value.trim()) || /^(yes|ya|yeah|no|hmm+|ok(ay)? sir)$/i.test(value.trim()))) delete absorbed.answers[id];
+        if (question?.kind === "text" && (CLOSING_ACK.test(value.trim()) || /^(yes|ya|yeah|no|hmm+|ok(ay)? sir)$/i.test(value.trim())
+          || /^(ok(ay)?|sure|fine|alright|right)[,.]?\s+(we|i|let'?s)\s+(can|will|shall)?\s*(plan|see|talk|discuss|decide|check)\b.{0,15}$/i.test(value.trim()))) delete absorbed.answers[id];
         else if (needsNumber && !/\d/.test(value) && !NOT_SURE.test(value) && !/\b(lakh|lac|crore|thousand|hundred)\b/i.test(value)) delete absorbed.answers[id];
         else if (question && /\b(start|finish|timeline)\b/i.test(question.label) && /\b\d{1,2}(?:[:.]\d{2})?\s*(am|pm)\b/i.test(value)
           && !/\b(week|month|year|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|diwali|festival)\w*\b/i.test(value)) {
