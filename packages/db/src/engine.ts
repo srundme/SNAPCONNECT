@@ -55,6 +55,7 @@ import {
   isQuestionSentence,
   chatLanguageSample,
   commentLeadSignal,
+  RENOVATING,
   languageName,
   salesBriefing,
   humanizeReply,
@@ -1780,13 +1781,24 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const planShared = prospectBodies.some((body) => FLOOR_PLAN.test(seenIn(body)?.seen ?? "") || /\(Sent a document/.test(body));
     const planAsked = spoken.some((message) => message.author === "AI" && /\b(floor ?plan|layout plan|unit plan)\b/i.test(message.body));
     const mustHavesIn = questions.filter((question) => question.required && question.kind === "text").every((question) => recordedAnswers[question.id]);
-    const planAsk = possession && mustHavesIn && !numberPending && (recordedPhone || !questions.some((question) => question.kind === "phone")) && !planShared && !planAsked && !freshText.includes("?")
-      ? /\b(ready|living|moved|staying|already|got (?:the )?(?:keys|possession)|mil gaya|mil gayi|ready hai|vandhachu)\b/i.test(possession) && !/\bnot ready\b|\bnahi\b|\billa\b/i.test(possession)
-        ? PLAN_READY_TEMPLATE
-        : PLAN_BUILDER_TEMPLATE
+    const renovating = lead.workType === "renovation" || /\brenovat/i.test(possession) || prospectBodies.some((body) => RENOVATING.test(body));
+    const roomPhotosShared = prospectBodies.some((body) => PHOTO_SEEN.test(body.trim()));
+    const roomPhotosAsked = spoken.some((message) => message.author === "AI" && /\b(photos?|pictures?|pics?)\b/i.test(message.body) && /\b(rooms?|space|change|current|now)\b/i.test(message.body));
+    const planAsk = possession && mustHavesIn && !numberPending && (recordedPhone || !questions.some((question) => question.kind === "phone")) && !freshText.includes("?")
+      && (renovating ? !roomPhotosShared && !roomPhotosAsked : !planShared && !planAsked)
+      ? renovating
+        ? PLAN_RENOVATION_TEMPLATE
+        : /\b(ready|living|moved|staying|already|got (?:the )?(?:keys|possession)|mil gaya|mil gayi|ready hai|vandhachu)\b/i.test(possession) && !/\bnot ready\b|\bnahi\b|\billa\b/i.test(possession)
+          ? PLAN_READY_TEMPLATE
+          : PLAN_BUILDER_TEMPLATE
       : null;
+    if (renovating) {
+      memoryLines.push("This is a renovation of a home they already have. Never ask for a floor plan or a layout plan: the team sees the home at the site visit. Never remark that the home is ready or that work can start sooner because of it; talk about what they want to change, the old work coming out, or doing it room by room.");
+    }
     if (planAsk) {
-      memoryLines.push(planAsk === PLAN_READY_TEMPLATE
+      memoryLines.push(planAsk === PLAN_RENOVATION_TEMPLATE
+        ? "In this reply, instead of any optional question, ask once for a few photos of the rooms they want to change (phone pictures are fine), so the designer can see what is there now, and what they most want to change in them. Never ask again."
+        : planAsk === PLAN_READY_TEMPLATE
         ? "Their home is ready. In this reply, instead of any optional question, ask once whether they can share the floor plan or a few photos of the space, so the designer can start planning. Never ask again."
         : "Their home is not ready yet (under construction or possession later). In this reply, instead of any optional question, ask once whether they have the floor plan from the builder (a photo or PDF is fine), so the designer can start planning the layout before possession. Never ask again.");
     }
@@ -2193,7 +2205,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       .filter(Boolean).join("\n");
     const planText = planAsk ? local?.get(planAsk) ?? planAsk : null;
     const addsPlan = Boolean(planText && composed && !pending && !asksSomething(composed) && !checkedIds.length && !situationHandoff && !askedByThem && !passedReply && !hoursReply
-      && !/\b(floor ?plan|layout plan|unit plan|photos? of (?:the|ur|your) (?:space|home|flat|house))\b/i.test(composed));
+      && !/\b(floor ?plan|layout plan|unit plan|photos? of (?:the|ur|your) (?:space|home|flat|house|rooms?))\b/i.test(composed));
     const focused = asksOptionalInstead && composed
       ? [withoutOptional(composed), askQuestion(pending!)].filter(Boolean).join("\n")
       : addsPlan && composed
@@ -3220,12 +3232,13 @@ const SAME_NUMBER_TEMPLATE = "Shall the team call you on this same WhatsApp numb
 const BHK_ONLY_TEMPLATE = "How many BHK is it?";
 const PLAN_BUILDER_TEMPLATE = "Do you have the floor plan from the builder? A photo or PDF is fine, the designer can start planning the layout before possession.";
 const PLAN_READY_TEMPLATE = "Can you share the floor plan of your home? Even a phone picture of it works, the designer can start planning from it.";
+const PLAN_RENOVATION_TEMPLATE = "Could you share a few photos of the rooms you want to change? Phone pictures are fine, the designer can see what is there now.";
 const localQuestionCache = new Map<string, string>();
 
 /** The lead questions in the chat's language, so a question added in code never switches the chat to English. */
 async function localQuestions(runtime: Runtime, language: string, questions: LeadQuestion[]): Promise<Map<string, string> | null> {
   if (!runtime.llm.localizeQuestions) return null;
-  const labels = [...questions.filter((question) => question.kind !== "name").map((question) => question.label), SAME_NUMBER_TEMPLATE, BHK_ONLY_TEMPLATE, PLAN_BUILDER_TEMPLATE, PLAN_READY_TEMPLATE];
+  const labels = [...questions.filter((question) => question.kind !== "name").map((question) => question.label), SAME_NUMBER_TEMPLATE, BHK_ONLY_TEMPLATE, PLAN_BUILDER_TEMPLATE, PLAN_READY_TEMPLATE, PLAN_RENOVATION_TEMPLATE];
   const missing = labels.filter((label) => !localQuestionCache.has(`${language}|${label}`));
   if (missing.length) {
     const rewritten = await runtime.llm.localizeQuestions(language, missing).catch(() => null);
