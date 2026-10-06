@@ -26,6 +26,7 @@ export type SalesBriefingInput = {
   knowledgeBase?: string | null;
   settings?: AgentSettings;
   optionalDetails?: LeadQuestion[];
+  checkPending?: boolean;
 };
 
 const CHANNEL_SETTING = {
@@ -98,8 +99,13 @@ export function salesBriefing(input: SalesBriefingInput): string {
   } else if (input.nextDetail) {
     state.push(
       `Next detail to get: ${input.nextDetail.label}${input.nextDetail.kind === "phone" ? " (ask them to type their mobile number; never ask for permission instead)" : ""}.`,
-      "Ask for it with one natural question at the end of your reply, but only when the moment is right. If they just raised a doubt, a worry or a complaint, deal with that first and ask in the next reply instead.",
+      input.checkPending
+        ? "Something they just said needs a quick check, noted below. Make that check your one question in this reply, and ask for the next detail in your next reply."
+        : "Ask for it with one natural question at the end of your reply, but only when the moment is right. If they just raised a doubt, a worry or a complaint, deal with that first and ask in the next reply instead.",
     );
+  }
+  if (!input.ready && !input.cold) {
+    state.push("Some must-have details are still missing. Do not say their details are shared, passed on or with the team, or that the team will call, unless they ask what happens next.");
   }
 
   const setting = CHANNEL_SETTING[input.channel ?? "INSTAGRAM"];
@@ -144,7 +150,8 @@ export function salesBriefing(input: SalesBriefingInput): string {
     "Before you write, read their latest message and the whole chat, and work out what they need right now.",
     "1. A question: answer it properly and specifically for their situation in one or two sentences, from the knowledge base. Do not dodge it.",
     "2. A doubt, worry or complaint: acknowledge it like a real person, deal with it honestly and specifically, and do not ask a script question in that reply.",
-    "3. An answer to your question: react in a few natural words, then ask the next detail. Only now and then add one line on how this helps them, not every time. Never parrot their answer back like 'Okay, 3 BHK noted' or '8904887500 noted'.",
+    "Several messages in a row: answer all of them together in one reply. If a later message corrects an earlier one, the latest is what they mean.",
+    "3. An answer to your question: react in a few natural words, add one useful, specific point that fits their situation, like a real consultant would (a fact from the knowledge base or a quick design tip, never a point you already made in this chat), then ask the next detail. Never parrot their answer back like 'Okay, 3 BHK noted' or '8904887500 noted'.",
     "4. A greeting or small talk: reply warmly in a few words, then continue.",
     "5. A simple yes or no question: answer yes or no first, in plain words, then add a line if needed. 'Is 3 PM in your working hours?' gets 'Yes sir, 3 PM should be fine, I've noted it for the team.' If you really cannot know, say so simply, like 'Mostly yes sir, the team will confirm when they call.' Never invent hours, dates or facts. Never dodge with something vague.",
     "6. Thanks, bye, or no more questions: close warmly in one short line. Do not ask anything else and do not list what happens next again.",

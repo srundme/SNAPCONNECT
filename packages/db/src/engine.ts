@@ -5,6 +5,7 @@ import {
   requestsTeamSwitch,
   customerComplaint,
   agreesToWhatsAppNumber,
+  contextChecks,
   askSameNumber,
   asksSameNumberIn,
   type LeadQuestion,
@@ -46,6 +47,7 @@ import {
   agentIdentity,
   platformSystemRules,
   withAutomationDisclosure,
+  dropRepeatGreeting,
   parsePhone,
   projectTypeFromText,
   replyEligibility,
@@ -1251,6 +1253,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     let recordedAnswers = answerRecord(lead.answers);
     const readsName = Boolean(runtime.llm.readName) && questions.some((question) => question.kind === "name");
     let formRead = false;
+    const checkedIds: string[] = [];
     let form: Awaited<ReturnType<typeof readLeadForm>> = null;
     if (questions.length) {
       let absorbed = absorbTranscript({
@@ -1297,6 +1300,23 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           },
         });
         memoryLines.push(`They said their ${doubt.label.toLowerCase()} is ${doubt.value.toLocaleString("en-IN")}, which is not realistic for this enquiry. It is almost surely a joke or a slip. Do not record it, never say noted and never repeat it back as fact. React like a person who got the joke: ${agent.laughter ? "start your reply with a short haha, then" : "with a light touch,"} ask for the real number.`);
+      }
+      for (const check of contextChecks({ questions, answers: absorbed.answers, now: runtime.now(), serviceArea: agent.serviceArea })) {
+        const marker = `Check: ${check.key}`;
+        const noted = await db.message.findFirst({ where: { conversationId, author: "SYSTEM", body: { startsWith: marker } }, select: { id: true } });
+        if (noted) continue;
+        await db.message.create({
+          data: {
+            workspaceId: workspace.id,
+            connectionId: conversation.connectionId,
+            conversationId,
+            author: "SYSTEM",
+            body: `${marker} | ${check.note}`,
+            createdAt: runtime.now(),
+          },
+        });
+        memoryLines.push(check.line);
+        if (check.questionId) checkedIds.push(check.questionId);
       }
       recordedName = absorbed.name;
       recordedPhone = absorbed.phoneE164;
@@ -1426,7 +1446,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
             : ["Some must-have details are still missing. Do not say their details are shared, passed on, with the team, or that the team will call, unless they ask what happens next."]),
           ...(nextDetail
             ? [
-                `Next detail to collect: ${nextDetail.label}${nextDetail.kind === "phone" ? numberPending && waNumber ? ` (ask once whether the team can call them on this same WhatsApp number, ${waNumber}; never ask them to type a number)` : " (ask them to type their mobile number; never ask for permission instead)" : ""}. End your reply with one natural question that asks for exactly this. Do not ask for anything already recorded or anything else.`,
+                checkedIds.length
+                  ? "This reply has a quick check to make above. Make that check your one question in this reply, and leave the next detail for your next message."
+                  : "",
+                `Next detail to collect${checkedIds.length ? " after that check" : ""}: ${nextDetail.label}${nextDetail.kind === "phone" ? numberPending && waNumber ? ` (ask once whether the team can call them on this same WhatsApp number, ${waNumber}; never ask them to type a number)` : " (ask them to type their mobile number; never ask for permission instead)" : ""}. ${checkedIds.length ? "Do not ask it in this reply." : "End your reply with one natural question that asks for exactly this."} Do not ask for anything already recorded or anything else.`,
                 `Talk like a premium interior sales consultant, not a form. In one short sentence, react to what they just said and add one useful, specific point from the knowledge base that fits their situation, such as the process, the timeline, the experience centre, materials, warranty or why ${workspace.brandName}. Use only facts from the knowledge base, and do not repeat a point you already made in this chat. Then ask the question.`,
                 "If they sent several messages, answer all of them together. If a later message corrects an earlier one, the latest message is what they mean.",
                 "If they asked something, answer it first in one sentence, then ask the question.",
@@ -1480,6 +1503,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           knowledgeBase: workspace.knowledgeBase,
           settings: agent,
           optionalDetails: complete && !complete.cold ? questions.filter((question) => complete.optional.includes(question.label)) : [],
+          checkPending: checkedIds.length > 0,
         })
       : null;
     const request = {
@@ -1698,13 +1722,18 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : validated.reply ?? fallback;
     const firstWhatsAppReply = conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI");
     const earlierReplies = conversation.messages.filter((message) => message.author === "AI").map((message) => message.body);
-    const answered = screen ? questions.filter((question) => !screen.missing.includes(question.label) && !screen.optional.includes(question.label)).map((question) => question.id) : [];
-    const unasked = composed && answered.length
-      ? dropAnsweredQuestions(composed, questions, answered) || (pending ? askQuestion(pending) : null)
-      : composed;
+    const answered = screen
+      ? questions.filter((question) => !screen.missing.includes(question.label) && !screen.optional.includes(question.label) && !checkedIds.includes(question.id) && !(numberPending && question.kind === "phone")).map((question) => question.id)
+      : [];
+    const nextQuestion = questions.find((question) => question.id === checkedIds[0]) ?? nextDetail ?? pending;
+    const kept = composed && answered.length ? dropAnsweredQuestions(composed, questions, answered) : composed;
+    const unasked = composed && kept !== composed && asksSomething(composed) && !asksSomething(kept ?? "") && nextQuestion
+      ? [kept, askQuestion(nextQuestion)].filter(Boolean).join(" ")
+      : kept || composed;
     const numbered = unasked && numberPending && waNumber ? askSameNumber(unasked, waNumber) : unasked;
     const inLanguage = numbered && !languageSample ? dropIndicSentences(numbered) || numbered : numbered;
-    const humanized = inLanguage ? applyReplySwitches(oneAddress(dropCannedLines(humanizeReply(inLanguage))), agent) || null : inLanguage;
+    const greeted = inLanguage && earlierReplies.length ? dropRepeatGreeting(inLanguage) : inLanguage;
+    const humanized = greeted ? applyReplySwitches(oneAddress(dropCannedLines(humanizeReply(greeted))), agent) || null : greeted;
     const written = humanized && firstWhatsAppReply
       ? withAutomationDisclosure(humanized, workspace.brandName, workspace.agentName)
       : humanized;

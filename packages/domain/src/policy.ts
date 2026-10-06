@@ -91,6 +91,15 @@ export function withAutomationDisclosure(text: string, brandName: string, agentN
   return body ? `${line}\n\n${body}`.slice(0, 1000) : line;
 }
 
+export function dropRepeatGreeting(text: string): string {
+  const body = text
+    .replace(/^\s*(?:hi+|hello|hey+|hai)\b(?:[ \t]+[a-z']+){0,2}[ \t]*[,!.]*[ \t]*(?:\n|$)/i, "")
+    .replace(/^\s*(?:hi+|hello|hey+|hai)\b(?:[ \t]+[a-z']+)?[ \t]+(?:sir|mam|ma'am|madam|bro)\b[ \t]*[,!.]*[ \t]*/i, "")
+    .replace(/^\s*(?:hi+|hello|hey+|hai)\b(?:[ \t]+[a-z']+){0,2}?[ \t]*[,!.][ \t]*/i, "")
+    .trim();
+  return body || text;
+}
+
 export function platformReplyBlock(reply: string): string | null {
   return PLATFORM_REPLY.test(reply) ? "Reply asserts an unsupported claim." : null;
 }

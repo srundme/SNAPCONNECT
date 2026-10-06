@@ -36,6 +36,7 @@ export default async function AiPage({ searchParams }: { searchParams: Promise<{
               goal: settings.goal,
               pricingAnswer: settings.pricingAnswer,
               workingHours: settings.workingHours,
+              serviceArea: settings.serviceArea,
               complaintContact: settings.complaintContact,
               rules: settings.rules,
               realityChecks: settings.realityChecks,

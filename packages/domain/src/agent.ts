@@ -3,6 +3,7 @@ export type AgentSettings = {
   goal: string;
   pricingAnswer: string;
   workingHours: string;
+  serviceArea: string;
   complaintContact: string;
   rules: string;
   realityChecks: string;
@@ -25,6 +26,7 @@ export const defaultAgentSettings: AgentSettings = {
   goal: "Understand what they need, answer their questions, and collect what the team needs to call them back.",
   pricingAnswer: "Pricing depends on their exact requirement. The team shares exact pricing on the call. Never quote a number.",
   workingHours: "Monday to Saturday, 10 AM to 7 PM",
+  serviceArea: "",
   complaintContact: "",
   rules: "",
   realityChecks: "",
@@ -63,6 +65,7 @@ const TEXTS = {
   goal: 600,
   pricingAnswer: 600,
   workingHours: 200,
+  serviceArea: 300,
   complaintContact: 300,
   rules: 6000,
   realityChecks: 3000,

@@ -36,6 +36,7 @@ export type AgentFormSettings = {
   goal: string;
   pricingAnswer: string;
   workingHours: string;
+  serviceArea: string;
   complaintContact: string;
   rules: string;
   realityChecks: string;
@@ -181,6 +182,7 @@ export function AgentForm({
             </label>
             <label>Working hours<input name="workingHours" maxLength={200} defaultValue={settings.workingHours} placeholder="Tuesday to Sunday, 10 AM to 7 PM" /></label>
             <label>Complaints go to<input name="complaintContact" maxLength={300} defaultValue={settings.complaintContact} placeholder="+91 70227 25656 or support@company.com" /></label>
+            <label className="sm:col-span-2">Service area<input name="serviceArea" maxLength={300} defaultValue={settings.serviceArea} placeholder="Bengaluru, Bangalore" /><span className="text-[12px] text-[var(--color-muted)]">City names, comma separated. A home in another city is flagged for the team instead of promised.</span></label>
             <label className="sm:col-span-2">
               Rules
               <textarea name="rules" rows={8} maxLength={6000} defaultValue={settings.rules} placeholder={"Never promise a discount or EMI.\nNever confirm a visit slot."} />

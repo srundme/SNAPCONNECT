@@ -4,12 +4,14 @@ import {
   agreesToWhatsAppNumber,
   applyReplySwitches,
   askSameNumber,
+  contextChecks,
   customerComplaint,
   dropAnsweredQuestions,
   dropIndicSentences,
   hasIndicSentence,
   humanBubbles,
   withAutomationDisclosure,
+  dropRepeatGreeting,
   parseAgentSettings,
   parseFollowUpHours,
   parseLeadQuestions,
@@ -47,6 +49,43 @@ describe("no repeats and no re-asking", () => {
   it("does not send a question it just asked in slightly different words", () => {
     const bubbles = humanBubbles("noted sir. where is the home sir which area and project?", ["understood sir\nwhere is the home located which area and project?"]);
     expect(bubbles.join(" ")).not.toMatch(/where is the home/);
+  });
+});
+
+describe("common sense checks", () => {
+  const questions = [
+    { id: "place", label: "Where is the home: which area and which apartment or project?" },
+    { id: "type", label: "What kind of home is it: apartment, villa or independent house, and how many BHK?" },
+    { id: "scope", label: "Is it the full home or selected rooms?" },
+    { id: "when", label: "When do you get possession, or is the home already ready?" },
+    { id: "budget", label: "Roughly what interior budget do you have in mind?" },
+    { id: "size", label: "Approximate carpet area in sq ft?" },
+  ];
+  const now = new Date("2026-10-06T04:00:00Z");
+  const keys = (answers: Record<string, string>) => contextChecks({ questions, answers, now, serviceArea: "Bengaluru, Bangalore" }).map((check) => check.key.split(":")[0]);
+
+  it("flags a budget that cannot cover a full home, but not a fair one or a few rooms", () => {
+    expect(keys({ type: "3 BHK", scope: "Full home", budget: "2 lakh" })).toEqual(["budget-scope"]);
+    expect(keys({ type: "3 BHK", scope: "Full home", budget: "12 lakh" })).toEqual([]);
+    expect(keys({ type: "3 BHK", scope: "only kitchen", budget: "2 lakh" })).toEqual([]);
+  });
+
+  it("flags a size that does not fit the BHK", () => {
+    expect(keys({ type: "4 BHK apartment", size: "800" })).toEqual(["area-bhk"]);
+    expect(keys({ type: "2 BHK", size: "1,100 sq ft" })).toEqual([]);
+  });
+
+  it("flags a possession date already gone, not a coming one or a ready home", () => {
+    expect(keys({ when: "January 2024" })).toEqual(["past-date"]);
+    expect(keys({ when: "March 2026" })).toEqual(["past-date"]);
+    expect(keys({ when: "December 2026" })).toEqual([]);
+    expect(keys({ when: "got keys in 2025, already ready" })).toEqual([]);
+  });
+
+  it("flags a home in another city, not a Bengaluru locality", () => {
+    expect(keys({ place: "Anna Nagar, Chennai" })).toEqual(["outside-area"]);
+    expect(keys({ place: "HSR Layout" })).toEqual([]);
+    expect(keys({ place: "Whitefield, Bangalore" })).toEqual([]);
   });
 });
 
@@ -88,6 +127,15 @@ describe("complaints and disclosure", () => {
     expect(withAutomationDisclosure("hi sir glad u liked the kitchen", "The KariGhars", "Varun"))
       .toBe("Hi, this is Varun, an automated assistant for The KariGhars.\n\nglad u liked the kitchen");
     expect(withAutomationDisclosure("hi sir", "The KariGhars", "Varun")).toBe("Hi, this is Varun, an automated assistant for The KariGhars.");
+  });
+
+  it("does not greet again later in the chat", () => {
+    expect(dropRepeatGreeting("hi Ravi sir\n4 BHK in Whitefield, nice")).toBe("4 BHK in Whitefield, nice");
+    expect(dropRepeatGreeting("Hi Meena, which area is the flat in?")).toBe("which area is the flat in?");
+    expect(dropRepeatGreeting("hi Meena mam thanks for that")).toBe("thanks for that");
+    expect(dropRepeatGreeting("Hi Ravi sir. Noted the area")).toBe("Noted the area");
+    expect(dropRepeatGreeting("hi sir")).toBe("hi sir");
+    expect(dropRepeatGreeting("Highly recommend laminate for kids rooms")).toBe("Highly recommend laminate for kids rooms");
   });
 });
 
