@@ -703,6 +703,10 @@ const HINGLISH_QUESTIONS: Record<string, string> = {
 
 const SAME_NUMBER_ASKED = /\bsame\b[^.?!]*\b(number|whatsapp)\b|\bthis\s+(whatsapp\s+)?number\b|\bwhatsapp number\b/i;
 
+export function asksSameNumberIn(text: string): boolean {
+  return SAME_NUMBER_ASKED.test(text) && /\?|\bshall\b|\bcan\b|\bshould\b/i.test(text);
+}
+
 export function sameNumberQuestion(phoneE164: string): string {
   return `Shall the team call you on this same WhatsApp number, ${phoneE164}?`;
 }

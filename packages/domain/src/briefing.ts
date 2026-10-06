@@ -118,12 +118,18 @@ export function salesBriefing(input: SalesBriefingInput): string {
     ...(settings.workingHours ? [`- Working hours: ${settings.workingHours}. The team calls and receives visitors only in these hours.`] : []),
     "- The knowledge base below is your only source of facts about the company, its services, prices, offers, timelines, warranty and process. If something is not in it, say the team will confirm it. Never make anything up, and never add services, offers, discounts, EMI, free extras or guarantees that are not written there.",
     ...(knowledge ? ["", `# ${brand} knowledge base`, knowledge] : []),
-    ...(settings.designKnowledge
+    ...(settings.expertAdvice || settings.designKnowledge
       ? [
           "",
-          "# Interior design know-how",
-          `Use this to advise like an experienced interior designer: when it helps, suggest a layout, material, finish, storage, lighting or style idea that fits their home, their photo or what they said, in one simple line, then continue. This is general design advice, not a ${brand} promise, so never attach a price, brand, timeline or inclusion to it unless the ${brand} knowledge base says so. Suggest, do not lecture, and ask what they prefer.`,
-          settings.designKnowledge,
+          "# Your expertise",
+          ...(settings.expertAdvice
+            ? [
+                `You also know this field inside out, like a senior designer and consultant with years of experience in ${input.services?.trim() || `what ${brand} does`}. Use your own full knowledge freely for general advice: materials and their grades, hardware, finishes, layouts, measurements and ergonomics, colours, lighting, styles, storage tricks, vastu, maintenance, common mistakes and current trends, especially for Indian homes. Answer design questions confidently and specifically, the way an expert who has done hundreds of homes would.`,
+                `The line you never cross: anything about ${brand} itself, such as its prices, package contents, timelines, warranty, offers, brands it uses or what it can deliver, comes only from the ${brand} knowledge base. General design advice is yours; company promises are not. Describe materials and hardware by type and grade, never by product brand name.`,
+              ]
+            : []),
+          `When it helps, suggest a layout, material, finish, storage, lighting or style idea that fits their home, their photo or what they said, in one or two simple lines, then continue. Suggest, do not lecture, and ask what they prefer. The designer finalises everything in the consultation.`,
+          ...(settings.designKnowledge ? ["Design notes from the team, which take priority over your own view:", settings.designKnowledge] : []),
         ]
       : []),
     "",

@@ -3,11 +3,14 @@ MATERIALS FOR FURNITURE AND CABINETS
 - MDF and HDHMR boards are smooth and good for shutters, routed designs and painted finishes. HDHMR handles moisture better than MDF. Particle board is the budget option and is best kept away from water.
 - Finishes on shutters: laminate is tough, easy to clean and comes in many colours and textures, including wood and stone looks. Acrylic gives a high gloss mirror-like look and suits modern kitchens. PU paint gives a seamless matte or gloss finish in any colour. Veneer is real wood and gives a warm, premium look but needs more care. Membrane (PVC foil) suits curved or routed shutters.
 - Edge banding on every exposed edge stops moisture getting into the board.
+- Termites: use plywood with anti-termite (borer and termite) treatment, get the walls and floor treated against termites before installing furniture, keep a small gap or legs between units and damp walls or floors, and fix any seepage first.
 - Hardware matters as much as the board: soft-close hinges, telescopic or tandem drawer channels, lift-up systems for upper kitchen cabinets and good handles or handle-less profiles decide how it feels every day.
 
 MODULAR KITCHEN
 - Layouts: L-shape suits most apartment kitchens and keeps the work triangle tight. Parallel (galley) suits long narrow kitchens. U-shape gives the most counter and storage for bigger kitchens. Straight (single wall) suits small or open kitchens. An island or breakfast counter needs open space around it.
 - Work triangle: keep the sink, hob and fridge close but not cramped so cooking is easy.
+- Counter height: the standard is about 34 to 36 inches, but the right height is about 3 to 4 inches below the main cook's elbow. For someone around 5 feet 3 inches that is usually about 33 to 34 inches; taller cooks go to 36 inches or more. The hob counter can sit slightly lower than the prep counter.
+- Upper cabinets usually start about 2 feet above the counter, and the depth of base cabinets is about 2 feet.
 - Storage ideas: tall unit or pantry pull-out, corner carousel or magic corner, tandem drawers for vessels, bottle pull-out near the hob, cutlery and thali organisers, a separate unit for the mixer and appliances, dustbin pull-out under the sink.
 - Countertops: granite is tough and heat resistant and very common. Quartz is non-porous, uniform and stain resistant. Marble looks beautiful but stains and etches easily in Indian cooking.
 - A chimney above the hob and enough plug points at the counter make a big daily difference. Backsplash tiles or a quartz backsplash keep cleaning easy.

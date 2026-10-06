@@ -15,6 +15,7 @@ export type AgentSettings = {
   splitMessages: boolean;
   typingDelay: boolean;
   addressSirMam: boolean;
+  expertAdvice: boolean;
   followUps: boolean;
   followUpHours: number[];
   zohoCompanyFallback: string;
@@ -36,6 +37,7 @@ export const defaultAgentSettings: AgentSettings = {
   splitMessages: true,
   typingDelay: true,
   addressSirMam: true,
+  expertAdvice: true,
   followUps: false,
   followUpHours: [3, 20],
   zohoCompanyFallback: "",
@@ -50,6 +52,7 @@ const TOGGLES = [
   "splitMessages",
   "typingDelay",
   "addressSirMam",
+  "expertAdvice",
   "followUps",
 ] as const satisfies ReadonlyArray<keyof AgentSettings>;
 

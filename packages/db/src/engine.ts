@@ -6,6 +6,7 @@ import {
   customerComplaint,
   agreesToWhatsAppNumber,
   askSameNumber,
+  asksSameNumberIn,
   type LeadQuestion,
   dropAnsweredQuestions,
   sameNumberQuestion,
@@ -1212,8 +1213,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         ? `They messaged ${workspace.brandName} on WhatsApp. This is your first reply: greet them, say you are ${workspace.agentName ?? "the assistant"}, an automated assistant for ${workspace.brandName}, then continue.`
         : "",
       conversation.channel === "WHATSAPP" && lead.phoneE164
-        ? lead.sameNumberConfirmed || lead.phoneE164 !== lead.whatsappE164
-          ? `The team will call them on ${lead.phoneE164}, which they confirmed. Never ask for their number again.`
+        ? lead.sameNumberConfirmed || lead.phoneE164 !== lead.whatsappE164 || spoken.some((message) => message.author === "AI" && asksSameNumberIn(message.body))
+          ? `The team will call them on ${lead.phoneE164}. Never ask for their number again.`
           : `They are chatting from their WhatsApp number ${lead.phoneE164}, so you already have it. Never ask which number or ask them to type one. When the number comes up, ask once whether the team can call them on this same WhatsApp number.`
         : "",
       photoLine(spoken),
@@ -1319,6 +1320,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       const lastAiText = spoken.filter((message) => message.author === "AI").slice(-3).map((message) => message.body).join("\n");
       if (agreesToWhatsAppNumber(latestText, lastAiText)) {
         await db.lead.update({ where: { id: lead.id }, data: { sameNumberConfirmed: true } });
+        numberPending = false;
+      } else if (spoken.some((message) => message.author === "AI" && asksSameNumberIn(message.body))) {
         numberPending = false;
       }
     }
@@ -1651,7 +1654,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const updatedLead = await db.lead.findUniqueOrThrow({ where: { id: lead.id }, include: { contact: true } });
     const rule = leadRule(workspace);
     const screen = questions.length
-      ? screenLead({ questions, answers: answerRecord(updatedLead.answers), name: updatedLead.contact.chosenName, phoneE164: numberPending && updatedLead.phoneE164 === waNumber ? null : updatedLead.phoneE164 })
+      ? screenLead({ questions, answers: answerRecord(updatedLead.answers), name: updatedLead.contact.chosenName, phoneE164: updatedLead.phoneE164 })
       : null;
     const qualification = screen
       ? screen.cold
@@ -1857,8 +1860,7 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
   const rule = leadRule(lead.workspace);
   const questions = parseLeadQuestions(lead.workspace.leadQuestions);
   if (questions.length) {
-    const unconfirmedWhatsApp = lead.channel === "WHATSAPP" && lead.phoneE164 === lead.whatsappE164 && !lead.sameNumberConfirmed;
-    const screen = screenLead({ questions, answers: answerRecord(lead.answers), name: lead.contact.chosenName, phoneE164: unconfirmedWhatsApp ? null : lead.phoneE164 });
+    const screen = screenLead({ questions, answers: answerRecord(lead.answers), name: lead.contact.chosenName, phoneE164: lead.phoneE164 });
     if (!screen.ready) return "done";
   } else {
     const qualification = evaluateQualification(toSnapshot(lead), rule.settings);

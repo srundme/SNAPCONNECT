@@ -54,6 +54,7 @@ const BEHAVIOUR: Array<[string, string, string]> = [
   ["splitMessages", "Split into messages", "Sends two short messages instead of one block."],
   ["typingDelay", "Human timing", "Waits to read and type like a person before replying."],
   ["addressSirMam", "Sir or mam", "Calls the customer sir or mam once in a while. Off uses their name."],
+  ["expertAdvice", "Expert advice", "Advises like an experienced designer from the AI's own knowledge plus the design notes. Company facts, prices and promises still come only from the knowledge base."],
 ];
 
 function Section({ title, detail, children }: { title: string; detail: string; children: React.ReactNode }) {
