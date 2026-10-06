@@ -249,6 +249,8 @@ export function sarvamLlm(options: {
             ? "their mobile number exactly as typed."
             : question.kind === "yesno"
               ? "\"yes\" or \"no\" only."
+              : /e-?mail/i.test(question.label)
+                ? "their email address exactly as typed. Null if they did not type one."
               : question.numeric
                 ? "a plain number in digits. Convert words and short forms: 40k = 40000, 2 lakh = 200000, dho hazar = 2000, rendu aayiram = 2000. For people counts, Tamil 'per' or 'peru' and Hindi 'log' after a number mean people: '20 per iruken' = 20, '8 log' = 8."
                 : /company/i.test(question.label)
@@ -257,6 +259,7 @@ export function sarvamLlm(options: {
         return `- "${question.id}" (${question.label}): ${rule}`;
       });
       fields.push(`- "${CALLBACK_TIME_KEY}" (Preferred call time): when they want the team to call them, exactly as they typed, like "Tom 2 pm" or "naalaiku evening". Null if they did not say.`);
+      fields.push(`- "_next": the id of the one question still unanswered that a good salesperson would ask next, given what the Customer just said. Prefer the one that follows naturally from their last message; otherwise the first unanswered one in the list above. Null if nothing is left to ask.`);
       const chat = transcript
         .filter((message) => message.author === "AI" || message.author === "PROSPECT")
         .slice(-30)
@@ -280,7 +283,8 @@ export function sarvamLlm(options: {
                 "A line '(Sent a photo. It shows: ...)' or '(Sent a document ...)' is what they sent, not words they typed. A floor plan's BHK, home type and area are answers. Never take a person's name or a phone number from a photo or document.",
                 "Keep their words. Do not add a name, place, number or date they never said. Choosing which question a fact they did say belongs to is not guessing.",
                 "The Assistant's lines only tell you what was being asked. If the Customer corrected an answer, use the latest one. If a field was not answered, use null.",
-                "A question, a refusal, or a language request is not an answer.",
+                "A question, a refusal, or a language request is not an answer. 'Ok', 'yes', 'sure', 'we can plan' or 'let's see' is not an answer to a text question.",
+                "When they say they do not know or have not decided something that was asked, like 'no idea', 'not decided', 'dnt know' or 'builder has not told', record exactly \"Not sure yet\" for it. If they give a real answer later, that replaces \"Not sure yet\".",
                 "Return only one JSON object with exactly these keys:",
                 ...fields,
               ].join("\n"),

@@ -1471,10 +1471,16 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       form = await readLeadForm(runtime, questions, conversation.messages, phoneRegion);
       if (form) {
         formRead = true;
+        const merged: Record<string, string> = { ...recordedAnswers, ...form.answers };
+        for (const [id, before] of Object.entries(recordedAnswers)) {
+          const now = merged[id] ?? "";
+          const weaker = /^not sure yet$/i.test(now) ? !/^not sure yet$/i.test(before) : now.length < before.length && before.toLowerCase().includes(now.toLowerCase());
+          if (weaker) merged[id] = before;
+        }
         absorbed = {
           name: form.name ?? conversation.contact.chosenName ?? null,
           phoneE164: form.phoneE164 ?? absorbed.phoneE164,
-          answers: { ...recordedAnswers, ...form.answers },
+          answers: merged,
         };
       } else if (readsName) {
         absorbed.name = await latestName(runtime, conversation.messages, absorbed.name);
@@ -1483,7 +1489,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         if (!absorbed.answers[id]) absorbed.answers[id] = value;
       }
       const lastAsk = [...spoken].reverse().find((message) => message.author === "AI")?.body ?? "";
-      const unsureOf = NOT_SURE.test(freshText) && freshText.length <= 80
+      const unsureOf = !formRead && NOT_SURE.test(freshText) && freshText.length <= 80
         ? questions.find((question) => question.kind === "text" && !absorbed.answers[question.id] && !recordedAnswers[question.id]
           && (questionAsked(question, lastAsk) || (question.label.toLowerCase().match(/\b(budget|possession|carpet|style|start)\b/g) ?? []).some((topic) => freshText.toLowerCase().includes(topic))))
         : undefined;
@@ -1493,7 +1499,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         && !/\d\s*-?\s*(bhk|rk)\b|\bstudio\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
         absorbed.answers[bhkQuestion.id] = recordedAnswers[bhkQuestion.id]!;
       }
-      const bareBhk = freshText.trim().toLowerCase().match(/^(?:it(?:'s| is) )?(?:a )?([1-9]|one|two|three|four|five|six|seven|eight)(?: (?:bed ?rooms?|bedrooms|rooms))?(?: sir| ji| bro)?\.?$/)?.[1];
+      const bareBhk = formRead ? undefined : freshText.trim().toLowerCase().match(/^(?:it(?:'s| is) )?(?:a )?([1-9]|one|two|three|four|five|six|seven|eight)(?: (?:bed ?rooms?|bedrooms|rooms))?(?: sir| ji| bro)?\.?$/)?.[1];
       if (bhkQuestion && bareBhk && /\bbhk\b|\bbed ?rooms?\b/i.test(lastAsk) && !/\d\s*-?\s*(bhk|rk)\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
         const words = ["one", "two", "three", "four", "five", "six", "seven", "eight"];
         const count = /\d/.test(bareBhk) ? bareBhk : String(words.indexOf(bareBhk) + 1);
@@ -1507,7 +1513,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       const typedFresh = sinceReply.map((body) => body.replace(PHOTO_SEEN, "").replace(DOCUMENT_SEEN, "")).join(" ");
       const BUILDING = /\b((?:still |yet )?(?:under|in) construction|construction (?:is )?(?:on|going on|in progress)|not (?:yet )?(?:ready|completed)|yet to be (?:ready|built))\b/i;
       const READY_HOME = /\b(already ready|(?:home|house|flat|villa) is ready|living there|staying there|moved in|got the keys)\b/i;
-      if (possessionQuestionEarly && !absorbed.answers[possessionQuestionEarly.id] && !recordedAnswers[possessionQuestionEarly.id]) {
+      if (!formRead && possessionQuestionEarly && !absorbed.answers[possessionQuestionEarly.id] && !recordedAnswers[possessionQuestionEarly.id]) {
         if (BUILDING.test(typedFresh)) absorbed.answers[possessionQuestionEarly.id] = "Under construction";
         else if (READY_HOME.test(typedFresh)) absorbed.answers[possessionQuestionEarly.id] = "Ready";
       }
@@ -1536,7 +1542,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       }
       const HOME_TYPE_ONLY = /^(?:it(?:'s| is) )?(?:an? )?(apartment|appartment|flat|villa|bungalow|independent house|individual house|row house|duplex|penthouse)(?: sir| ji)?\.?$/i;
       const SCOPE_ONLY = /^(?:(?:it(?:'s| is) )?(?:the )?(?:full|whole|entire|complete) (?:home|house|flat)|selected rooms|only (?:some|few) rooms)(?: sir| ji)?\.?$/i;
-      for (const question of questions) {
+      for (const question of formRead ? [] : questions) {
         const value = (absorbed.answers[question.id] ?? "").trim();
         if (!value || value === recordedAnswers[question.id]) continue;
         const misfiled = (/\b(full home|selected rooms|scope)\b/i.test(question.label) && HOME_TYPE_ONLY.test(value))
@@ -1546,12 +1552,12 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         else delete absorbed.answers[question.id];
       }
       const scopeQuestion = questions.find((question) => /\b(full home|selected rooms)\b/i.test(question.label));
-      if (scopeQuestion && !absorbed.answers[scopeQuestion.id] && SCOPE_ONLY.test(freshText.trim())) absorbed.answers[scopeQuestion.id] = freshText.trim();
+      if (!formRead && scopeQuestion && !absorbed.answers[scopeQuestion.id] && SCOPE_ONLY.test(freshText.trim())) absorbed.answers[scopeQuestion.id] = freshText.trim();
       for (const [id, value] of Object.entries(absorbed.answers)) {
         const question = questions.find((item) => item.id === id);
         const needsNumber = Boolean(question && /budget|sq\.? ?ft|carpet|area in/i.test(question.label));
         if (question?.kind === "text" && (CLOSING_ACK.test(value.trim()) || /^(yes|ya|yeah|no|hmm+|ok(ay)? sir)$/i.test(value.trim())
-          || /^(ok(ay)?|sure|fine|alright|right)[,.]?\s+(we|i|let'?s)\s+(can|will|shall)?\s*(plan|see|talk|discuss|decide|check)\b.{0,15}$/i.test(value.trim()))) delete absorbed.answers[id];
+          || (!formRead && /^(ok(ay)?|sure|fine|alright|right)[,.]?\s+(we|i|let'?s)\s+(can|will|shall)?\s*(plan|see|talk|discuss|decide|check)\b.{0,15}$/i.test(value.trim())))) delete absorbed.answers[id];
         else if (needsNumber && !/\d/.test(value) && !NOT_SURE.test(value) && !/\b(lakh|lac|crore|thousand|hundred)\b/i.test(value)) delete absorbed.answers[id];
         else if (question && /\b(start|finish|timeline)\b/i.test(question.label) && /\b\d{1,2}(?:[:.]\d{2})?\s*(am|pm)\b/i.test(value)
           && !/\b(week|month|year|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|diwali|festival)\w*\b/i.test(value)) {
@@ -1801,7 +1807,12 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const optionalNext = complete && !complete.cold
       ? questions.find((question) => complete.optional.includes(question.label) && !spoken.some((message) => message.author === "AI" && questionAsked(question, message.body)))
       : undefined;
-    const nextDetail = missingNow.find((question) => !ignored(question) && !justAsked(question)) ?? optionalNext ?? missingNow.find((question) => !justAsked(question));
+    const modelNext = form?.next ? questions.find((question) => question.id === form?.next) : undefined;
+    const modelPick = modelNext && !ignored(modelNext) && !justAsked(modelNext)
+      && (missingNow.includes(modelNext) || (!missingNow.length && Boolean(optionalNext) && complete?.optional.includes(modelNext.label)))
+      ? modelNext
+      : undefined;
+    const nextDetail = modelPick ?? missingNow.find((question) => !ignored(question) && !justAsked(question)) ?? optionalNext ?? missingNow.find((question) => !justAsked(question));
     const phoneQuestion = questions.find((question) => question.kind === "phone");
     const wrongNumber = phoneQuestion && !complete?.cold
       ? wrongInEdit ?? wrongPhoneIn(latestProspect, phoneRegion, nextDetail?.kind === "phone" ? 6 : 8)
@@ -2109,7 +2120,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? screenLead({ questions, answers: answerRecord(updatedLead.answers), name: updatedLead.contact.chosenName, phoneE164: null })
       : screen;
     const stillMissing = replyScreen && !replyScreen.ready && !replyScreen.cold ? questions.filter((question) => replyScreen.missing.includes(question.label)) : [];
-    const pending = stillMissing.find((question) => !ignored(question) && !justAsked(question));
+    const pending = (modelPick && stillMissing.includes(modelPick) ? modelPick : undefined)
+      ?? stillMissing.find((question) => !ignored(question) && !justAsked(question));
     const askedByThem = Boolean(pastTime) || /\?/.test(latestUser)
       || /^\s*(how|what|when|where|why|which|who|can|could|will|would|do|does|is|are|should|pls|please|send|share|show|tell|book)\b/i.test(latestUser)
       || /\b(send|share|show|tell) me\b|\bmay i know\b|\bbook me\b/i.test(latestUser);

@@ -78,6 +78,7 @@ export function unrealisticAnswers(
       const feet = sizeIn(raw)?.feet ?? NaN;
       return Number.isFinite(feet) && feet > 0 && (feet < 100 || feet > 100_000) ? [{ id: question.id, label: question.label, value: feet }] : [];
     }
+    if (/e-?mail|\bmail\b/i.test(question.label)) return [];
     const value = Number(raw.replace(/[,\s]/g, ""));
     if (!Number.isFinite(value) || value <= 0) return [];
     const limit = /volume|month/i.test(question.label) ? 10_000_000 : /team|telecaller|agent|staff|people/i.test(question.label) ? 5_000 : null;

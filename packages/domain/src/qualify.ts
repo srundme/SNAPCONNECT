@@ -525,7 +525,7 @@ export function cleanName(candidate: string | null | undefined, source: string):
 export const CALLBACK_TIME_KEY = "preferred-call-time";
 
 export function numericQuestion(question: LeadQuestion): boolean {
-  return question.kind === "text" && /team|size|volume|how many|count|number of|calls/i.test(question.label) && !/issue|why|problem/i.test(question.label);
+  return question.kind === "text" && /team|size|volume|how many|count|number of|calls/i.test(question.label) && !/issue|why|problem|e-?mail|\bmail\b/i.test(question.label);
 }
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -574,8 +574,10 @@ export function acceptExtractedAnswers(input: {
   raw: Record<string, unknown>;
   prospectText: string;
   phoneRegion?: string;
-}): { name: string | null; phoneE164: string | null; answers: Record<string, string>; callbackTime: string | null } {
+}): { name: string | null; phoneE164: string | null; answers: Record<string, string>; callbackTime: string | null; next?: string } {
   const answers: Record<string, string> = {};
+  const nextId = typeof input.raw._next === "string" ? input.raw._next.trim() : "";
+  const next = input.questions.some((question) => question.id === nextId) ? nextId : undefined;
   const time = input.raw[CALLBACK_TIME_KEY];
   const callbackTime = typeof time === "string" && time.trim() && !/^(null|none)$/i.test(time.trim()) && wordsWereTyped(time, input.prospectText, 0.5)
     ? time.trim().slice(0, 80)
@@ -587,6 +589,12 @@ export function acceptExtractedAnswers(input: {
     const text = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
     if (!text || /^(null|none|unknown|n\/a|not provided)$/i.test(text)) continue;
     const spoken = spokenByThem(input.prospectText);
+    if (question.kind === "text" && /^not sure yet$/i.test(text)) {
+      if (/\b(don'?t|dont|dnt|do not|no|not|nahi|illa|theriyala)\b.{0,25}\b(know|idea|sure|decided|decide|told|pata|maloom|fixed|confirm\w*)\b|\bnot (?:yet )?decided\b|\bno idea\b|\bundecided\b|\bpata nahi\b/i.test(spoken)) {
+        answers[question.id] = "Not sure yet";
+      }
+      continue;
+    }
     if (question.kind === "name") {
       name = cleanName(text, spoken);
     } else if (question.kind === "phone") {
@@ -600,12 +608,14 @@ export function acceptExtractedAnswers(input: {
       const amount = Number(text.replace(/[,\s]/g, "").match(/^\d+(?:\.\d+)?/)?.[0] ?? NaN);
       const unit = Number.isFinite(amount) ? new RegExp(`\\b${Math.round(amount)}\\s*-?\\s*(bhk|rk)\\b`, "i").exec(input.prospectText) : null;
       if (unit) answers[question.id] = `${Math.round(amount)} ${unit[1]!.toUpperCase()}`;
-      else if (Number.isFinite(amount) && amount > 0 && saidNumber(amount, input.prospectText)) answers[question.id] = String(Math.round(amount));
+      else if (Number.isFinite(amount) && amount > 0 && saidNumber(amount, input.prospectText)) {
+        answers[question.id] = /\bbhk\b/i.test(question.label) && amount <= 12 ? `${Math.round(amount)} BHK` : String(Math.round(amount));
+      }
     } else if (answerIsTheirs(text, input.prospectText) || (/issue|why|problem/i.test(question.label) && wordsWereTyped(text, input.prospectText, 0.5))) {
       answers[question.id] = text.slice(0, 180);
     }
   }
-  return { name, phoneE164, answers, callbackTime };
+  return next ? { name, phoneE164, answers, callbackTime, next } : { name, phoneE164, answers, callbackTime };
 }
 
 export function asksForName(aiText: string): boolean {

@@ -1020,6 +1020,17 @@ describe("lead form read by the model", () => {
     expect(meant.name).toBeNull();
   });
 
+  it("reads a bare BHK number as BHK, and never treats an email question as a number", () => {
+    const questions = [
+      { id: "home", label: "What kind of home is it: apartment, villa or independent house, and how many BHK?", kind: "text" as const, zohoField: null },
+      { id: "email", label: "Email for the team to share designs?", kind: "text" as const, zohoField: null },
+    ];
+    const read = acceptExtractedAnswers({ questions, raw: { home: "4", email: "4500000", _next: "email" }, prospectText: "it is apartment sir\n4\nbudget 45 lakh" });
+    expect(read.answers).toEqual({ home: "4 BHK" });
+    expect(read.next).toBe("email");
+    expect(unrealisticAnswers(questions, { email: "45 lakh" })).toEqual([]);
+  });
+
   it("keeps the preferred call time only when they typed it", () => {
     const typed = acceptExtractedAnswers({ questions, raw: { "preferred-call-time": "Tom 2 pm" }, prospectText: "Tom 2 pm" });
     expect(typed.callbackTime).toBe("Tom 2 pm");
