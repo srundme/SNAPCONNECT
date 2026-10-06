@@ -32,6 +32,7 @@ import {
   absorbTranscript,
   refusesNumber,
   swapNumber,
+  naturalAcknowledgement,
   dropAnsweredQuestions,
   looksEnglish,
   chatLanguageSample,
@@ -744,6 +745,11 @@ describe("ai validation", () => {
     expect(looksEnglish("हमारी टीम में 20 लोग हैं")).toBe(false);
     expect(answered.answers["company-name"]).toBe("The AItel");
     expect(absorbTranscript({ questions, messages: [{ author: "PROSPECT", body: "I’m Karthik" }], name: null, phoneE164: null, answers: {} }).name).toBe("Karthik");
+    expect(naturalAcknowledgement("ok sir whole house noted\nmay i know ur name?", ["is this for the whole home?"])).toBe("Got it sir.\nmay i know ur name?");
+    expect(naturalAcknowledgement("noted sir\nwhich area?", ["Got it sir."])).toBe("Sure sir.\nwhich area?");
+    expect(naturalAcknowledgement("noted sir\nand which area is the home in?", ["Got it sir."], "Ashoke")).toBe("Thanks Ashoke sir.\nand which area is the home in?");
+    expect(naturalAcknowledgement("ok sir HSR Layout noted. Since it is an independent house, the team plans every floor. How many BHK?", [])).toBe("Since it is an independent house, the team plans every floor. How many BHK?");
+    expect(naturalAcknowledgement("I've noted 4 PM for the team call. Anything else?", [])).toBe("I've noted 4 PM for the team call. Anything else?");
     expect(refusesNumber("i dont want to share my number")).toBe(true);
     expect(refusesNumber("I won’t give my phone number")).toBe(true);
     expect(refusesNumber("why do you need my number? will u spam me?")).toBe(false);

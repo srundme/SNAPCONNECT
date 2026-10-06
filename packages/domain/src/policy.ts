@@ -100,6 +100,35 @@ export function dropRepeatGreeting(text: string): string {
   return body || text;
 }
 
+const REACTIONS = ["Got it", "Sure", "Alright", "Okay", "Right"];
+
+export function naturalAcknowledgement(text: string, earlier: string[], newName?: string | null): string {
+  const lines = text.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/));
+  let honorific = "";
+  let dropped = false;
+  const kept = lines.map((parts) => parts.filter((part) => {
+    const words = part.replace(/[.!,…]+/g, " ").trim().split(/\s+/);
+    const noted = /\bnoted\b/i.test(part) && !part.includes("?") && words.length <= 8
+      && !/\b(team|call|time|pm|am|tomorrow|today)\b/i.test(part);
+    if (noted) {
+      dropped = true;
+      honorific ||= part.match(/\b(sir|mam|ma'am|madam)\b/i)?.[1] ?? "";
+    }
+    return !noted;
+  }).join(" ").trim()).filter(Boolean);
+  const name = newName?.trim() && !new RegExp(`\\b${newName.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text) ? newName.trim() : null;
+  if (!dropped && !name) return text;
+  const rest = kept.join("\n");
+  const onlyQuestion = !rest || rest.split(/(?<=[.!?])\s+/).every((part) => part.includes("?"));
+  if (!name && !onlyQuestion) return rest;
+  const used = earlier.join(" ").toLowerCase();
+  const reaction = name
+    ? `Thanks ${name}`
+    : REACTIONS.find((word) => !used.includes(word.toLowerCase())) ?? REACTIONS[0];
+  const opener = `${reaction}${honorific ? ` ${honorific}` : ""}.`;
+  return rest ? `${opener}\n${rest}` : opener;
+}
+
 export function platformReplyBlock(reply: string): string | null {
   return PLATFORM_REPLY.test(reply) ? "Reply asserts an unsupported claim." : null;
 }

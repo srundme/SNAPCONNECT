@@ -65,6 +65,7 @@ import {
   validateAiOutput,
   wrongPhoneIn,
   swapNumber,
+  naturalAcknowledgement,
   validPhonesIn,
   dedupKey,
   type Channel,
@@ -1798,7 +1799,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : kept || composed;
     const numbered = unasked && numberPending && waNumber ? askSameNumber(unasked, waNumber) : unasked;
     const inLanguage = numbered && !languageSample ? dropIndicSentences(numbered) || numbered : numbered;
-    const greeted = inLanguage && earlierReplies.length ? dropRepeatGreeting(inLanguage) : inLanguage;
+    const greetedOnce = inLanguage && earlierReplies.length ? dropRepeatGreeting(inLanguage) : inLanguage;
+    const newName = recordedName && recordedName !== conversation.contact.chosenName ? recordedName : null;
+    const greeted = greetedOnce && !languageSample && !situationHandoff ? naturalAcknowledgement(greetedOnce, earlierReplies, newName) : greetedOnce;
     const humanized = greeted ? applyReplySwitches(oneAddress(dropCannedLines(humanizeReply(greeted))), agent) || null : greeted;
     const asksIfBot = /\b(bot|robot|chat ?bot|ai|automated|real (person|human)|human)\b/i.test(latestUser) && /\?|\bare (you|u)\b/i.test(latestUser);
     const owned = humanized && updatedLead.phoneE164 && updatedLead.whatsappE164 && updatedLead.phoneE164 !== updatedLead.whatsappE164
