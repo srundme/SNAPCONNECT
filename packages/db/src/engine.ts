@@ -1831,7 +1831,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
                 checkedIds.length
                   ? "This reply has a quick check to make above. Make that check your one question in this reply, and leave the next detail for your next message."
                   : "",
-                `Next detail to collect${checkedIds.length ? " after that check" : ""}: ${nextDetail.label}${nextDetail.kind === "phone" ? numberPending && waNumber ? ` (ask once whether the team can call them on this same WhatsApp number, ${waNumber}; never ask them to type a number)` : " (ask them to type their mobile number; never ask for permission instead)" : ""}. ${checkedIds.length ? "Do not ask it in this reply." : "End your reply with one natural question that asks for exactly this."} Do not ask for anything already recorded or anything else.`,
+                `Next detail to collect${checkedIds.length ? " after that check" : ""}: ${nextDetail.label}${nextDetail.kind === "phone" ? numberPending && waNumber ? ` (ask once whether the team can call them on this same WhatsApp number, ${waNumber}; never ask them to type a number)` : " (ask them to type their mobile number; never ask for permission instead)" : ""}. ${checkedIds.length ? "Do not ask it in this reply." : "End your reply with one natural question that asks for exactly this, in your own words fitted to what you know about them (their home, BHK, stage or what they just said). That label is only the topic: never copy its wording, and never reuse the wording of a question from another chat or an earlier message."} Do not ask for anything already recorded or anything else.`,
                 `Talk like a premium interior sales consultant, not a form. In one short sentence, react to what they just said and add one useful, specific point from the knowledge base that fits their situation, such as the process, the timeline, the experience centre, materials, warranty or why ${workspace.brandName}. Use only facts from the knowledge base, and do not repeat a point you already made in this chat. Then ask the question.`,
                 "If they sent several messages, answer all of them together. If a later message corrects an earlier one, the latest message is what they mean.",
                 "If they asked something, answer it first in one sentence, then ask the question.",
@@ -2144,6 +2144,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : target && validated.reply
       ? questionAsked(target, validated.reply) || echoesScript(target, validated.reply) || asksSomething(validated.reply)
         || /\b(which room|what do (?:u|you) like|do (?:u|you) have (?:any )?more|what (?:u|you) like most|kaunsa room|kya pasand)\b/i.test(validated.reply) || validated.reply.split(/(?<=[.!?])\s+|\n+|(?<=\.\.)(?=[^\s.])/).some(isQuestionSentence) || (askedByThem && validated.reply.length >= 60) || raisesConcern(latestUser) || customerComplaint(latestUser) || Boolean(situationHandoff)
+        || target.id === extra?.id || !target.required
         ? validated.reply
         : [statement.replace(/[^.!?\s]$/, "$&."), askQuestion(target)].filter(Boolean).join(" ")
       : validated.reply ?? fallback;
@@ -2165,7 +2166,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       .map((parts) => parts.filter((part) => !optionalPart(part)).join(" ").trim())
       .filter(Boolean).join("\n");
     const planText = planAsk ? local?.get(planAsk) ?? planAsk : null;
-    const addsPlan = Boolean(planText && composed && !pending && !checkedIds.length && !situationHandoff && !askedByThem && !passedReply && !hoursReply
+    const addsPlan = Boolean(planText && composed && !pending && !asksSomething(composed) && !checkedIds.length && !situationHandoff && !askedByThem && !passedReply && !hoursReply
       && !/\b(floor ?plan|layout plan|unit plan|photos? of (?:the|ur|your) (?:space|home|flat|house))\b/i.test(composed));
     const focused = asksOptionalInstead && composed
       ? [withoutOptional(composed), askQuestion(pending!)].filter(Boolean).join("\n")
