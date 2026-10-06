@@ -4,7 +4,7 @@ import { classifyFetch } from "../src/channel";
 import { decryptSecret, encryptSecret } from "../src/crypto";
 import { facebookAdapter, instagramAdapter } from "../src/meta";
 import { listInstagramPosts } from "../src/meta-media";
-import { assertPrivateOllamaUrl, readVoiceDirection, sarvamDocumentReader, sarvamLlm, sarvamTranscriber } from "../src/llm";
+import { assertPrivateOllamaUrl, parseFloorPlan, readVoiceDirection, sarvamDocumentReader, sarvamLlm, sarvamTranscriber, sarvamVision } from "../src/llm";
 import { unzipText } from "../src/zip";
 import { deflateRawSync } from "node:zlib";
 
@@ -74,6 +74,24 @@ describe("documents", () => {
     const fetchImpl = (async () => new Response(new Uint8Array([1, 2]), { headers: { "content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document" } })) as unknown as typeof fetch;
     const reader = sarvamDocumentReader({ apiKey: "k", fetchImpl });
     await expect(reader.start("https://lookaside.fbsbx.com/x", undefined, "plan.docx")).rejects.toThrow(/Unsupported document type/);
+  });
+
+  it("reads a floor plan in a second pass and estimates the area from the room sizes", async () => {
+    const prompts: string[] = [];
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      if (String(input).startsWith("https://lookaside.fbsbx.com/")) return new Response(new Uint8Array([1]), { headers: { "content-type": "image/jpeg" } });
+      const text = JSON.parse(String(init?.body)).messages[0].content[0].text as string;
+      prompts.push(text);
+      const content = prompts.length === 1
+        ? "A floor plan of a 4 BHK apartment."
+        : '```json\n{"written": false, "bhk": 5, "bathrooms": 6, "balconies": 1, "rooms": [{"name": "Bedroom 1", "size": "11 x 13 ft"}, {"name": "Living (and) Dining", "size": "22 x 25 ft"}, {"name": "Kitchen", "size": "10 x 12"}, {"name": "Bathrooms (avg)", "size": "5 x 8 ft"}], "carpetSqft": null, "notes": "Open living core."}\n```';
+      return Response.json({ choices: [{ message: { content } }] });
+    }) as typeof fetch;
+    const seen = await sarvamVision({ apiKey: "k", fetchImpl })("https://lookaside.fbsbx.com/x");
+    expect(prompts[1]).toMatch(/top-left/);
+    expect(seen).toBe("A floor plan, no sizes written, sizes estimated from the furniture drawn: 5 BHK, 6 bathrooms. Rooms: Bedroom 1 about 11 x 13 ft; Living and Dining about 22 x 25 ft; Kitchen about 10 x 12 ft; Bathrooms avg about 5 x 8 ft. Estimated carpet area about 1800 to 2050 sq ft, an estimate from the plan, not measured. Open living core.");
+    expect(parseFloorPlan('{"written": true, "bhk": 3, "rooms": [], "carpetSqft": 1450}')?.carpet).toEqual({ low: 1450, high: 1450, written: true });
+    expect(parseFloorPlan("no json here")).toBeNull();
   });
 });
 import { zohoAdapter } from "../src/zoho";

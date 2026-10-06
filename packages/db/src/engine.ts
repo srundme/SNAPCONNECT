@@ -1527,6 +1527,16 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         && (questionAsked(styleQuestion, lastAsk) || REFERENCE_WORDS.test(freshText))) {
         absorbed.answers[styleQuestion.id] = `Reference photos: ${burstLooks.join("; ")}`.slice(0, 600);
       }
+      const areaQuestion = questions.find((question) => question.kind === "text" && /\b(carpet|sq\.? ?ft|area in)\b/i.test(question.label));
+      const planArea = [...sinceReply].reverse().map((body) => body.match(PHOTO_SEEN)?.[1] ?? "").map((seen) =>
+        seen.match(/Carpet area written on the plan: ([\d,]+) sq ft/)?.[1]?.concat(" sq ft (from the floor plan)")
+        ?? seen.match(/Estimated carpet area about ([\d,]+ to [\d,]+) sq ft/)?.[1]?.concat(" sq ft (estimated from the floor plan)")).find(Boolean);
+      const typed = sinceReply.map((body) => body.replace(PHOTO_SEEN, "")).join(" ");
+      const areaValue = areaQuestion ? absorbed.answers[areaQuestion.id] ?? "" : "";
+      const areaTyped = /\d/.test(areaValue) && (areaValue.match(/\d[\d,]*/g) ?? []).some((n) => typed.includes(n));
+      if (areaQuestion && planArea && !recordedAnswers[areaQuestion.id] && !areaTyped) {
+        absorbed.answers[areaQuestion.id] = planArea;
+      }
       for (const question of questions) {
         const value = absorbed.answers[question.id] ?? "";
         if (/\b(book|schedule|fix|arrange)\b.*\b(consultation|meeting|appointment|visit)\b/i.test(value)) {
@@ -2615,7 +2625,7 @@ function seenIn(body: string): { kind: "photo" | "document"; name: string | null
 }
 
 function floorPlanLine(seen: string): string {
-  return `It is the floor plan of their home. What it shows: ${seen} Reply like an interior designer who just studied the plan. In a few words say what you read (for example 'a 3 BHK of about 1,450 sq ft with the kitchen next to the dining'). Then give one or two genuine, specific planning ideas that this plan allows (for example the kitchen can take an L-shaped layout with a breakfast counter, the master bedroom has room for a walk-in wardrobe, the long living wall suits a TV unit). Say the designer will use this plan for the layout and 3D designs. If the plan shows the BHK or the area and that detail is still missing, ask them to confirm it instead of asking from scratch. Never promise exact measurements or prices.`;
+  return `It is the floor plan of their home. What it shows: ${seen} Reply like an interior designer who just studied the plan. In a few words say what you read (for example 'a 3 BHK of about 1,450 sq ft with the kitchen next to the dining'). Then give one or two genuine, specific planning ideas that this plan allows (for example the kitchen can take an L-shaped layout with a breakfast counter, the master bedroom has room for a walk-in wardrobe, the long living wall suits a TV unit). Say the designer will use this plan for the layout and 3D designs. If the plan shows the BHK or the area and that detail is still missing, ask them to confirm it instead of asking from scratch. ${/estimated carpet area/i.test(seen) ? "No sizes are written on this plan, so the area is your estimate from the drawing: say the estimated range written above as a rough figure ('roughly X to Y sq ft going by the plan', using those exact numbers) and that the team will take exact measurements at the site visit. Never ask them for the carpet area when you already have this estimate." : ""} Never promise exact measurements or prices.`;
 }
 
 function photoLine(messages: { author: string; body: string }[]): string {
@@ -2633,6 +2643,7 @@ function photoLine(messages: { author: string; body: string }[]): string {
     return [
       `They just sent ${items.length} ${photos ? "photos" : "photos and documents"} together, one after another. You can see all of them through these descriptions: ${list}`,
       "Reply ONCE to the whole set, the way a designer reacts when a client shares a few pictures at once. Never reply to only the last one, and never go through them one by one.",
+      items.length >= 4 ? `Open by making it clear you went through all ${items.length} (for example 'went through all ${items.length} sir, lovely set'). Then talk about what most of them have in common, not about any single photo.` : "",
       "If they are design references, name the common look or theme in a few words and the one or two things they share, and say the designer will use them as references.",
       plan ? `One of them is a floor plan. ${floorPlanLine(plan.seen)}` : "",
       "Then ask one question that moves things forward.",

@@ -54,7 +54,7 @@ export function rateLead(input: { questions: LeadQuestion[]; answers: Record<str
   const scope = answerFor(input.questions, input.answers, /full home|selected rooms|scope/i);
   const area = answerFor(input.questions, input.answers, /carpet|sq\.? ?ft|area in/i);
   const bhk = Number(home.match(/(\d+)\s*-?\s*bhk/i)?.[1] ?? 0);
-  const sqft = Number(area.match(/\d{3,5}/)?.[0] ?? 0);
+  const sqft = Number(area.replace(/(\d),(\d)/g, "$1$2").match(/\d{3,5}/)?.[0] ?? 0);
   const full = /\b(full|fully|whole|entire|complete|pura|poora|puraa|pooraa|saara|sara|pure|poore|muzhu|muzhusa|fullaa?|all rooms|everything|sab kuch)\b/i.test(scope);
   const partial = !full && /\b(selected|some|few|only|just|one|single|kitchen|wardrobe|bedroom|living|bathroom|rooms?|sirf|kuch|bas|mattum)\b/i.test(scope);
   const estimate = `Estimated from project size (no budget ${budgetText ? "given" : "yet"})`;
