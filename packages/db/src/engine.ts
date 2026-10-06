@@ -12,6 +12,8 @@ import {
   pricePush,
   messageSituations,
   abroadSituation,
+  pastTimeToday,
+  pastTimeReply,
   dayOffLine,
   askSameNumber,
   asksSameNumberIn,
@@ -44,6 +46,7 @@ import {
   scriptQuestionFor,
   replyAsksFor,
   questionAsked,
+  isQuestionSentence,
   chatLanguageSample,
   languageName,
   salesBriefing,
@@ -1262,6 +1265,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       memoryLines.push(situation.line);
       situationHandoff ??= situation.handoff ?? null;
     }
+    const pastTime = pastTimeToday(freshText, runtime.now());
+    if (pastTime) memoryLines.push(pastTime);
     const abroad = abroadSituation({ phoneE164: lead.whatsappE164 ?? lead.phoneE164, texts: prospectBodies, now: runtime.now() });
     if (abroad) {
       await noteOnce(`Situation: ${abroad.key}`, abroad.note);
@@ -1303,6 +1308,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     let formRead = false;
     const checkedIds: string[] = [];
     let form: Awaited<ReturnType<typeof readLeadForm>> = null;
+    let homeKind: string | null = null;
     if (questions.length) {
       let absorbed = absorbTranscript({
         questions,
@@ -1326,6 +1332,26 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       }
       for (const [id, value] of Object.entries(labelledAnswers(questions, freshText))) {
         if (!absorbed.answers[id]) absorbed.answers[id] = value;
+      }
+      const bhkQuestion = questions.find((question) => /\bbhk\b/i.test(question.label));
+      if (bhkQuestion && !/\d\s*-?\s*(bhk|rk)\b|\bstudio\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
+        homeKind = prospectBodies.join("\n").match(/\b(apartment|flat|villa|independent house|individual house|row house|duplex|penthouse)\b/i)?.[1]?.toLowerCase() ?? null;
+        if (homeKind) {
+          delete absorbed.answers[bhkQuestion.id];
+          memoryLines.push(`They already said it is ${/^[aeiou]/.test(homeKind) ? "an" : "a"} ${homeKind}. Never ask the home type again; when the BHK is your next detail, ask only how many BHK.`);
+        }
+      }
+      for (const [id, value] of Object.entries(absorbed.answers)) {
+        const question = questions.find((item) => item.id === id);
+        const needsNumber = Boolean(question && /budget|sq\.? ?ft|carpet|area in/i.test(question.label));
+        if (question?.kind === "text" && (CLOSING_ACK.test(value.trim()) || /^(yes|ya|yeah|no|hmm+|ok(ay)? sir)$/i.test(value.trim()))) delete absorbed.answers[id];
+        else if (needsNumber && !/\d/.test(value) && !NOT_SURE.test(value) && !/\b(lakh|lac|crore|thousand|hundred)\b/i.test(value)) delete absorbed.answers[id];
+        else if (question && /\b(start|finish|timeline)\b/i.test(question.label) && /\b\d{1,2}(?:[:.]\d{2})?\s*(am|pm)\b/i.test(value)
+          && !/\b(week|month|year|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|diwali|festival)\w*\b/i.test(value)) {
+          if (recordedAnswers[id]) absorbed.answers[id] = recordedAnswers[id]!;
+          else delete absorbed.answers[id];
+        }
+        else if (NOT_SURE.test(value) && value.length <= 80) absorbed.answers[id] = "Not sure yet";
       }
       const photo = [...prospectBodies].reverse().map((body) => body.match(/\(Sent a photo\. It shows: ([^)]+)\)/)?.[1]).find(Boolean);
       for (const question of questions) {
@@ -1373,8 +1399,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       if (placeText && runtime.lookupPlace) {
         const place = await runtime.lookupPlace(placeText, agent.serviceArea.split(/[,\n]+/)[0]?.trim() || undefined).catch(() => null);
         if (place) {
-          const found = `${place.name} is in ${[place.locality, place.city, place.pincode].filter(Boolean).join(", ")} (OpenStreetMap).${place.underConstruction ? " The map marks it as under construction." : ""}`;
-          await noteOnce(`Map: ${placeText}`, found);
+          const livesThere = Object.values(absorbed.answers).some((value) => /^ready\b|\b(living|staying|already (ready|with me|have))\b/i.test(value));
+          const found = `${place.name} is in ${[place.locality, place.city, place.pincode].filter(Boolean).join(", ")} (OpenStreetMap).${place.underConstruction && !livesThere ? " The map marks it as under construction." : ""}`;
+          await noteOnce(`Map: ${place.name.toLowerCase()}`, found);
           memoryLines.push(`A map lookup of their project found: ${found} If they have not said the locality, you may confirm it naturally once, like "that is in <locality> side, right?", and use the area to make your reply relevant. This is all you know about the project: never invent the builder, flat sizes, possession dates, amenities or prices.`);
         }
       }
@@ -1388,7 +1415,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         where: { id: lead.id },
         data: {
           ...(absorbed.phoneE164 ? { phoneE164: absorbed.phoneE164, phonePermission: true } : {}),
-          ...(form?.callbackTime ? { timeframeRaw: form.callbackTime } : {}),
+          ...(form?.callbackTime && !pastTimeToday(form.callbackTime, runtime.now()) ? { timeframeRaw: form.callbackTime } : {}),
           answers: absorbed.answers,
         },
       });
@@ -1475,7 +1502,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const screenPhone = numberPending ? null : recordedPhone;
     const askQuestion = (question: LeadQuestion) => numberPending && waNumber && question.kind === "phone"
       ? sameNumberQuestion(waNumber)
-      : scriptQuestionFor(question, languageSample ? languageName(languageSample) : null);
+      : homeKind && !languageSample && /\bbhk\b/i.test(question.label)
+        ? `How many BHK is the ${homeKind}?`
+        : scriptQuestionFor(question, languageSample ? languageName(languageSample) : null);
     const scriptedText = questions.length
       ? scriptedReply({ questions, answers: recordedAnswers, name: recordedName, phoneE164: screenPhone, latestUser: latestProspect, about: workspace.services })
       : "";
@@ -1493,7 +1522,15 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const lastTwoAi = spoken.filter((message) => message.author === "AI").slice(-2).map((message) => message.body);
     const ignored = (question: LeadQuestion) => lastTwoAi.length === 2 && lastTwoAi.every((body) => replyAsksFor(question, body));
     const missingNow = complete && !complete.ready && !complete.cold ? questions.filter((question) => complete.missing.includes(question.label)) : [];
-    const nextDetail = missingNow.find((question) => !ignored(question)) ?? missingNow[0];
+    const plainText = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const askedIn = (question: LeadQuestion, body: string) => questionAsked(question, body) || plainText(body).includes(plainText(askQuestion(question)));
+    const timesAsked = (question: LeadQuestion) => spoken.filter((message) => message.author === "AI" && askedIn(question, message.body)).length;
+    const justAnsweredPart = (question: LeadQuestion) => Boolean(homeKind && /\bbhk\b/i.test(question.label) && freshText.toLowerCase().includes(homeKind));
+    const justAsked = (question: LeadQuestion) => timesAsked(question) >= 3 || (!justAnsweredPart(question) && lastTwoAi.some((body) => askedIn(question, body)));
+    const optionalNext = complete && !complete.cold
+      ? questions.find((question) => complete.optional.includes(question.label) && !spoken.some((message) => message.author === "AI" && questionAsked(question, message.body)))
+      : undefined;
+    const nextDetail = missingNow.find((question) => !ignored(question) && !justAsked(question)) ?? optionalNext ?? missingNow.find((question) => !justAsked(question));
     const phoneQuestion = questions.find((question) => question.kind === "phone");
     const wrongNumber = phoneQuestion && !complete?.cold
       ? wrongInEdit ?? wrongPhoneIn(latestProspect, phoneRegion, nextDetail?.kind === "phone" ? 6 : 8)
@@ -1791,22 +1828,25 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const fallback = scripted
       || nextReplyPrompt(toSnapshot(await db.lead.findUniqueOrThrow({ where: { id: lead.id } })), rule.settings, prompts).prompt;
     const stillMissing = screen && !screen.ready && !screen.cold ? questions.filter((question) => screen.missing.includes(question.label)) : [];
-    const pending = stillMissing.find((question) => !ignored(question)) ?? stillMissing[0];
-    const askedByThem = /\?/.test(latestUser)
+    const pending = stillMissing.find((question) => !ignored(question) && !justAsked(question));
+    const askedByThem = Boolean(pastTime) || /\?/.test(latestUser)
       || /^\s*(how|what|when|where|why|which|who|can|could|will|would|do|does|is|are|should|pls|please|send|share|show|tell|book)\b/i.test(latestUser)
       || /\b(send|share|show|tell) me\b|\bmay i know\b|\bbook me\b/i.test(latestUser);
-    const extra = !pending && screen?.ready && !screen.cold && !askedByThem && !situationHandoff
+    const extra = !pending && screen && !screen.cold && !askedByThem && !situationHandoff
       ? questions.find((question) => screen.optional.includes(question.label) && !spoken.some((message) => message.author === "AI" && questionAsked(question, message.body)))
       : undefined;
     const target = pending ?? extra;
     const statement = validated.reply
-      ? validated.reply.split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?")).join(" ").trim()
+      ? validated.reply.split(/(?<=[.!?])\s+|\n+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()
       : "";
     const echoesWrongNumber = Boolean(wrongNumber && validated.reply && validated.reply.replace(/\D/g, "").includes(wrongNumber.replace(/\D/g, "")));
-    const composed = wrongNumber && phoneQuestion && (!validated.reply || echoesWrongNumber || !replyAsksFor(phoneQuestion, validated.reply))
+    const passedReply = pastTime && !languageSample ? pastTimeReply(freshText, runtime.now()) : null;
+    const composed = passedReply && !/\b(passed|already|over|gone|later|another)\b/i.test(validated.reply ?? "")
+      ? passedReply
+      : wrongNumber && phoneQuestion && (!validated.reply || echoesWrongNumber || !replyAsksFor(phoneQuestion, validated.reply))
       ? `Hmm, ${phoneProblem(wrongNumber)}. ${scriptQuestionFor(phoneQuestion, languageSample ? languageName(languageSample) : null)}`
       : target && validated.reply
-      ? questionAsked(target, validated.reply) || asksSomething(validated.reply) || (askedByThem && validated.reply.length >= 60) || raisesConcern(latestUser) || customerComplaint(latestUser) || Boolean(situationHandoff)
+      ? questionAsked(target, validated.reply) || asksSomething(validated.reply) || validated.reply.split(/(?<=[.!?])\s+|\n+|(?<=\.\.)(?=[^\s.])/).some(isQuestionSentence) || (askedByThem && validated.reply.length >= 60) || raisesConcern(latestUser) || customerComplaint(latestUser) || Boolean(situationHandoff)
         ? validated.reply
         : [statement.replace(/[^.!?\s]$/, "$&."), askQuestion(target)].filter(Boolean).join(" ")
       : validated.reply ?? fallback;
@@ -1820,7 +1860,14 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const unasked = composed && !situationHandoff && kept !== composed && asksSomething(composed) && !asksSomething(kept ?? "") && nextQuestion
       ? [kept?.replace(/[^.!?\s]$/, "$&."), askQuestion(nextQuestion)].filter(Boolean).join(" ")
       : kept || composed;
-    const numbered = unasked && numberPending && waNumber ? askSameNumber(unasked, waNumber) : unasked;
+    const recentlyAsked = questions.filter((question) => question.id !== target?.id && question.id !== checkedIds[0] && justAsked(question));
+    const nagging = (sentence: string) => isQuestionSentence(sentence) && recentlyAsked.some((question) => questionAsked(question, sentence)
+      || plainText(sentence).includes(plainText(askQuestion(question)))
+      || (/\bbhk\b/i.test(question.label) && /\bbhk\b/i.test(sentence)));
+    const unnagged = unasked && recentlyAsked.length
+      ? unasked.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !nagging(part)).join(" ").trim()).filter(Boolean).join("\n") || unasked
+      : unasked;
+    const numbered = unnagged && numberPending && waNumber ? askSameNumber(unnagged, waNumber) : unnagged;
     const inLanguage = numbered && !languageSample ? dropIndicSentences(numbered) || numbered : numbered;
     const greetedOnce = inLanguage && earlierReplies.length ? dropRepeatGreeting(inLanguage) : inLanguage;
     const newName = recordedName && recordedName !== conversation.contact.chosenName ? recordedName : null;
@@ -1839,8 +1886,12 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? withAutomationDisclosure(honest, workspace.brandName, workspace.agentName)
       : honest;
     const keepCase = [workspace.brandName, workspace.agentName ?? "", ...workspace.brandName.split(/\s+/)];
+    const reask = target ? askQuestion(target).toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean).slice(0, 5) : [];
+    const keep = asksIfBot
+      ? /\b(ai|bot|automated|assistant)\b/i
+      : reask.length >= 3 ? new RegExp(reask.join("\\W+"), "i") : undefined;
     const bubbles = written
-      ? humanBubbles(written, earlierReplies, keepCase, { casual: agent.casualTexting, split: agent.splitMessages, ...(asksIfBot ? { keep: /\b(ai|bot|automated|assistant)\b/i } : {}) })
+      ? humanBubbles(written, earlierReplies, keepCase, { casual: agent.casualTexting, split: agent.splitMessages, ...(keep ? { keep } : {}) })
       : [];
     const reply = bubbles.length ? bubbles.join("\n") : null;
     const spokenReply = written ? dropRepeatedSentences(written.replace(/\s*\n+\s*/g, " "), earlierReplies) : null;
@@ -1961,6 +2012,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
 }
 
 const MEMORY_WINDOW = 20;
+const NOT_SURE = /\b(d(?:o)?n'?t know|dnt know|dont know|not sure|no idea|can (?:u|you) suggest|you suggest|u suggest|will (?:tell|explain|discuss)|i'?ll (?:tell|explain|discuss)|explain (?:this|it|that) to (?:the )?team|tell (?:the )?team|decide later|not decided)\b/i;
+
 const CLOSING_ACK = /^(ok+|okay|k+|ok ok|ok bro|ok sir|ok thanks?|ok thank you|thanks?|thank you|thank u|thx|tq|ty|seri|sari|super|nice|great|cool|done|fine|theek hai|thik hai|achha|accha|haan ok|\p{Extended_Pictographic}+)[\s.!🙏👍]*$/iu;
 
 async function refreshMemory(

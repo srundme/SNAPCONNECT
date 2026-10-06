@@ -668,15 +668,21 @@ const LABEL_FILLER = new Set(["what", "which", "when", "where", "your", "their",
 export function scriptQuestionFor(question: LeadQuestion, language?: string | null): string {
   const local = language?.startsWith("Tanglish") ? TANGLISH_QUESTIONS : language?.startsWith("Hinglish") ? HINGLISH_QUESTIONS : null;
   if (!local) return scriptQuestion(question);
-  const key = question.kind === "name" ? "name"
-    : question.kind === "phone" ? "phone"
-    : /company/i.test(question.label) ? "company"
-    : /team/i.test(question.label) ? "team"
-    : /issue|why/i.test(question.label) ? "issue"
-    : /volume|month/i.test(question.label) ? "volume"
-    : question.kind === "yesno" ? "demo"
-    : null;
-  return key ? local[key] : scriptQuestion(question);
+  const key = scriptKey(question);
+  return key ? local[key]! : scriptQuestion(question);
+}
+
+/** Canned wording only for the labels it was written for; another workspace's "team" or "month" label keeps its own question. */
+function scriptKey(question: LeadQuestion): string | null {
+  const label = question.label;
+  if (question.kind === "name") return "name";
+  if (question.kind === "phone") return "phone";
+  if (/^company( name)?$/i.test(label.trim())) return "company";
+  if (/telecall\w* team|team size/i.test(label)) return "team";
+  if (/what is the issue|why do you think ai calling/i.test(label)) return "issue";
+  if (/call volume|calls? (a|per) month/i.test(label)) return "volume";
+  if (question.kind === "yesno" && /\bdemo\b/i.test(label)) return "demo";
+  return null;
 }
 
 const TANGLISH_QUESTIONS: Record<string, string> = {
@@ -750,6 +756,12 @@ function askScore(question: LeadQuestion, sentence: string): number {
   return keywords.filter((word) => ask.includes(word.slice(0, Math.max(4, word.length - 2)))).length;
 }
 
+/** A sentence that asks something, even when the model left out the question mark. */
+export function isQuestionSentence(sentence: string): boolean {
+  return sentence.includes("?")
+    || /^\W*(?:(?:ok(?:ay)?|sure|got it|alright|noted|and|so|also)\W+)*(?:(?:sir|mam|ma'am)\W+)?(is|are|do|does|did|when|what|which|where|how|can|could|will|would|shall|may)\b/i.test(sentence);
+}
+
 /** A strict check that a message really asked this question: a question sentence sharing two topic words with it. */
 export function questionAsked(question: LeadQuestion, text: string): boolean {
   if (text.includes(scriptQuestion(question))) return true;
@@ -771,8 +783,7 @@ export function dropAnsweredQuestions(reply: string, questions: LeadQuestion[], 
   const answered = new Set(answeredIds);
   if (!answered.size) return reply;
   const repeatsAnswer = (sentence: string) => {
-    const opensAsQuestion = /^\W*(?:(?:ok(?:ay)?|sure|got it|alright|noted|and|so)\W+)*(?:(?:sir|mam|ma'am)\W+)?(is|are|do|does|did|when|what|which|where|how|can|could|will|would|shall|may)\b/i.test(sentence);
-    if (!sentence.includes("?") && !ASKING.test(sentence) && !opensAsQuestion) return false;
+    if (!isQuestionSentence(sentence) && !ASKING.test(sentence)) return false;
     if (/\b(which day|what day|what time|day and time|time suits?|suit (?:u|you)|convenient time|good time)\b/i.test(sentence)) return false;
     const scored = questions.map((question) => ({ question, score: askScore(question, sentence) })).filter((item) => item.score > 0);
     if (!scored.length) return false;
@@ -792,14 +803,17 @@ export function replyAsksFor(question: LeadQuestion, reply: string): boolean {
 }
 
 function scriptQuestion(question: LeadQuestion): string {
-  if (question.kind === "name") return "May I know your name?";
-  if (question.kind === "phone") return "Which number should the team call you on?";
-  if (/company/i.test(question.label)) return "Which company is this for?";
-  if (/team/i.test(question.label)) return "How big is your telecalling team?";
-  if (/issue|why/i.test(question.label)) return "What's not working with your calls right now?";
-  if (/volume|month/i.test(question.label)) return "Roughly how many calls do you handle a month?";
-  if (question.kind === "yesno") return "Would you like to see a quick demo?";
-  return question.label;
+  const script: Record<string, string> = {
+    name: "May I know your name?",
+    phone: "Which number should the team call you on?",
+    company: "Which company is this for?",
+    team: "How big is your telecalling team?",
+    issue: "What's not working with your calls right now?",
+    volume: "Roughly how many calls do you handle a month?",
+    demo: "Would you like to see a quick demo?",
+  };
+  const key = scriptKey(question);
+  return key ? script[key]! : question.label;
 }
 
 export function collectionBrief(fields: ChecklistField[], sendWhen: ZohoSendWhen): string {

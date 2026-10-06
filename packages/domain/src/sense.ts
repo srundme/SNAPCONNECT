@@ -21,7 +21,7 @@ const WHEN = /possession|start|finish|move in|handover|timeline/i;
 const PLACE = /where is the home|location|which city|which area|locality/i;
 const POSSESSION = /possession|already ready|home ready|handover/i;
 export const RENOVATING = /\b(renovat\w*|remodel\w*|revamp\w*|makeover|redo(?:ing)? (?:my|our|the) (?:home|house|flat)|re-?do (?:my|our|the) (?:home|house|flat)|old (?:house|home|flat))\b/i;
-const LIVING_IN = /\b(?:already|currently|now) (?:living|staying)\b|\b(?:living|staying) (?:in|on|at) (?:that|this|the|my|our) (?:house|home|flat|villa)\b|\bwe live (?:there|in it)\b/i;
+const LIVING_IN = /\b(?:already|currently|now) (?:living|staying)\b|\b(?:living|staying) (?:already|now|there)\b|\b(?:living|staying) (?:already|now|there)\b|\b(?:living|staying) (?:already|now|there)\b|\b(?:living|staying) (?:in|on|at) (?:that|this|the|my|our) (?:house|home|flat|villa)\b|\bwe live (?:there|in it)\b/i;
 
 /** Lowest believable budget for full-home premium interiors, by BHK. Anything below is respected but checked. */
 const FULL_HOME_FLOOR: Record<number, number> = { 1: 300_000, 2: 400_000, 3: 500_000, 4: 700_000, 5: 1_000_000 };

@@ -607,6 +607,9 @@ describe("ai validation", () => {
     expect(absorbed.answers["company-name"]).toBe("Consoling");
     expect(absorbed.answers.demo).toBe("yes");
     expect(scriptedReply({ ...absorbed, questions, latestUser: "Yes" })).toBe("How big is your telecalling team?");
+    const email = { id: "email", label: "Email for the team to share designs", kind: "text" as const, zohoField: null, required: false };
+    expect(scriptQuestionFor(email)).toBe("Email for the team to share designs");
+    expect(scriptQuestionFor({ ...email, label: "When would you like the work to start or finish, which month?" })).not.toMatch(/calls/);
     const answered = absorbTranscript({
       questions,
       messages: [
@@ -755,6 +758,9 @@ describe("ai validation", () => {
     const kb = "Portfolio: https://www.thekarighars.com/interior-design-portfolio/ 4 BHK: https://www.thekarighars.com/4-bhk-interior-design/";
     expect(fitBhkLinks("for 6 BHK work see https://www.thekarighars.com/4-bhk-interior-design/ sir", "6 BHK", kb)).toBe("for 6 BHK work see https://www.thekarighars.com/interior-design-portfolio/ sir");
     expect(fitBhkLinks("see https://www.thekarighars.com/4-bhk-interior-design/", "4 BHK villa", kb)).toBe("see https://www.thekarighars.com/4-bhk-interior-design/");
+    expect(fitBhkLinks("see https://www.thekarighars.com/3bhk-interior-design/", "Apartment", kb)).toBe("see https://www.thekarighars.com/interior-design-portfolio/");
+    expect(fitBhkLinks("here are design ideas for 4 BHK homes https://www.thekarighars.com/4-bhk-interior-design/ and our portfolio https://www.thekarighars.com/interior-design-portfolio/", "", kb))
+      .toBe("here are design ideas and our portfolio https://www.thekarighars.com/interior-design-portfolio/");
     const budgetQuestion = { id: "budget", label: "Roughly what interior budget do you have in mind?", kind: "text" as const, zohoField: null };
     expect(questionAsked(budgetQuestion, "im Varun here...how can i help u with ur home interiors today?")).toBe(false);
     expect(questionAsked(budgetQuestion, "Got it sir. What budget do u have in mind for this?")).toBe(true);

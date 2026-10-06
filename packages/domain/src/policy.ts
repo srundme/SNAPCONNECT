@@ -103,10 +103,14 @@ export function dropRepeatGreeting(text: string): string {
 export function fitBhkLinks(text: string, homeType: string, knowledgeBase: string): string {
   const bhk = homeType.match(/(\d+)\s*-?\s*bhk/i)?.[1];
   const portfolio = knowledgeBase.match(/https?:\/\/[^\s)]*portfolio[^\s)]*/i)?.[0]?.replace(/[.,]+$/, "") ?? "";
-  return text.replace(/https?:\/\/[^\s)]*?\b(\d+)-bhk[^\s)]*/gi, (link, size: string) => {
+  const wrong = new Set<string>();
+  const linked = text.replace(/https?:\/\/[^\s)]*?\b(\d+)-?bhk[^\s)]*/gi, (link, size: string) => {
     if (size === bhk) return link;
+    wrong.add(size);
     return text.includes(portfolio) ? "" : portfolio;
-  }).replace(/[ \t]{2,}/g, " ");
+  });
+  return [...wrong].reduce((result, size) => result.replace(new RegExp(`\\s*\\b(?:for|of)?\\s*(?:our\\s+)?${size}\\s*-?\\s*bhk\\b(?:\\s+(?:homes?|interiors?|work|projects?))?`, "gi"), ""), linked)
+    .replace(/[ \t]{2,}/g, " ");
 }
 
 const REACTIONS = ["Got it", "Sure", "Alright", "Okay", "Right"];

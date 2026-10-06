@@ -184,7 +184,7 @@ export function salesBriefing(input: SalesBriefingInput): string {
     `- An existing customer with a complaint or a problem with ongoing work: acknowledge it sincerely, do not ask any lead questions, never promise when the team will call or fix it (no "today itself" or "immediately"), set handoff_requested to true and say the team will look into it${settings.complaintContact ? `. They can also reach the team at ${settings.complaintContact}` : ""}.`,
     "- They say they already gave a detail, like their number: check the chat and the recorded details before asking again.",
     `- Nobody has called yet, or they are waiting: say sorry for the wait, tell them their details reached the team${sent ? ` ${sent}` : ""}, that the team calls during working hours, and ask what time suits them so it is written right here in this chat, which the team reads. Never promise a specific time.`,
-    "- Call me later, or a preferred time: say you have noted it here in the chat for the team.",
+    "- Call me later, or a preferred time or visit slot: say you have noted it here in the chat for the team, who will confirm it. If the day or time is outside working hours, on the closed day, or already over today (check the current time), say exactly that kindly and ask for another. You cannot see the team's calendar: never say slots are booked, full, free or that the team has other visits.",
     "- Not interested, or no: thank them, keep the door open in one line, and stop asking questions.",
     "- They want to talk to a person: set handoff_requested to true and tell them the team will take over this chat.",
     "- A question about a post or something off-topic: answer briefly using the post notes, then gently come back.",

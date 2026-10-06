@@ -200,6 +200,34 @@ export function messageSituations(text: string, brandName: string): Situation[] 
   return found;
 }
 
+/** "Today 10 am" when it is already past 10 in India: the model does not reliably compare times itself. */
+function passedToday(text: string, now: Date): { said: string; time: string; clock: string } | null {
+  const said = text.match(/\btoday\b[^.?!\n]*?\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b/i)
+    ?? text.match(/\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b[^.?!\n]*?\btoday\b/i);
+  if (!said) return null;
+  const hour = (Number(said[1]) % 12) + (said[3]!.toLowerCase() === "pm" ? 12 : 0);
+  const minute = Number(said[2] ?? 0);
+  const india = new Date(now.getTime() + 330 * 60_000);
+  const current = india.getUTCHours() * 60 + india.getUTCMinutes();
+  if (hour * 60 + minute > current) return null;
+  const clock = `${india.getUTCHours() % 12 || 12}:${String(india.getUTCMinutes()).padStart(2, "0")} ${india.getUTCHours() >= 12 ? "PM" : "AM"}`;
+  const time = `${said[1]}${said[2] ? `:${said[2]}` : ""} ${said[3]!.toUpperCase()}`;
+  return { said: said[0], time, clock };
+}
+
+export function pastTimeToday(text: string, now: Date): string | null {
+  const passed = passedToday(text, now);
+  if (!passed) return null;
+  return `They asked for ${passed.said}, but it is already ${passed.clock} now, so that time has passed. Say so kindly in a few words and ask for a later time today or another day.`;
+}
+
+/** The model sometimes skips the passed-time hint and moves on to its next question. */
+export function pastTimeReply(text: string, now: Date): string | null {
+  const passed = passedToday(text, now);
+  if (!passed) return null;
+  return `${passed.time} today has already passed, it's ${passed.clock} now. Would a later time today or another day work for u?`;
+}
+
 const PRICE = /\b(how much|price|pricing|cost|rate|approx\w*|ballpark|rough(ly)? (cost|idea|estimate)|estimate|quote|starting (price|from)|per sq ?ft|minimum|budget (range|kitna|evlo)|evlo aagum|kitna (lagega|hoga))\b/i;
 
 /** Asking the price again after hearing it depends: the same explanation again would read like a script. */

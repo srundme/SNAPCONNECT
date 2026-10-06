@@ -20,6 +20,8 @@ import {
   screenLead,
   unrealisticAnswers,
   messageSituations,
+  pastTimeToday,
+  pastTimeReply,
   labelledAnswers,
   repeatsEarlier,
   pricePush,
@@ -125,6 +127,12 @@ describe("common sense checks", () => {
     expect(keysOf("can we schedule a site visit on saturday")).toContain("book-consultation");
     expect(keysOf("I want to design interior for my new flat")).toEqual([]);
     expect(keysOf("No i can't come and visit jst send me everything")).toContain("wants-portfolio");
+    const lateMorning = new Date("2026-10-06T06:10:00Z");
+    expect(pastTimeToday("Today 10 am", lateMorning)).toMatch(/already 11:40 AM/);
+    expect(pastTimeToday("today 4pm", lateMorning)).toBeNull();
+    expect(pastTimeToday("Tomorrow 10 am", lateMorning)).toBeNull();
+    expect(pastTimeReply("Today 10 am", lateMorning)).toBe("10 AM today has already passed, it's 11:40 AM now. Would a later time today or another day work for u?");
+    expect(pastTimeReply("Tomorrow 10 am", lateMorning)).toBeNull();
   });
 
   it("does not resend a reply that only repeats earlier ones", () => {
