@@ -54,6 +54,7 @@ import {
   questionAsked,
   isQuestionSentence,
   chatLanguageSample,
+  commentLeadSignal,
   languageName,
   salesBriefing,
   humanizeReply,
@@ -575,9 +576,12 @@ async function handleComment(db: Db, connectionId: string, body: Record<string, 
     return skip(db, connection, commentId, eligibility.allowed ? decision.reason : eligibility.reason);
   }
   const rule = connection.rules.find((item) => item.id === winner.id);
+  const post = connection.media.find((item) => item.externalId === mediaId) ?? null;
+  const lead = await commentIsLead(runtime, connection.workspace, String(body.text ?? ""), post);
+  if (!lead.lead) return skip(db, connection, commentId, `Not a lead: ${lead.reason}`);
   const openingText = await writeOpening(runtime, connection.workspace, {
     comment: String(body.text ?? ""),
-    post: connection.media.find((item) => item.externalId === mediaId) ?? null,
+    post,
     name: [contact.displayName, contact.username].filter(Boolean).join(" / "),
   }) ?? rule?.openingTemplate ?? "";
   try {
@@ -2358,6 +2362,46 @@ type PromptedInput = {
   connection: Prisma.ChannelConnectionGetPayload<object>;
   lead: Prisma.LeadGetPayload<object>;
 };
+
+/**
+ * Whether a comment deserves a private message. Obvious junk and clear enquiries are decided by code;
+ * only the comments in between are read by the model. Without a model, those still get a reply.
+ */
+async function commentIsLead(
+  runtime: Runtime,
+  workspace: { brandName: string; services: string },
+  comment: string,
+  post: { caption: string | null; seenSummary: string | null } | null,
+): Promise<{ lead: boolean; reason: string }> {
+  const signal = commentLeadSignal(comment);
+  if (signal.verdict !== "unsure") return { lead: signal.verdict === "lead", reason: signal.reason };
+  if (!runtime.llm.complete) return { lead: true, reason: "No model to read it; replied." };
+  try {
+    const raw = await runtime.llm.complete({
+      system: [
+        `You screen Instagram and Facebook comments for ${workspace.brandName}. What they do: ${workspace.services}`,
+        "Decide whether the person who wrote this comment could be a real customer worth a private message.",
+        "A lead shows interest in getting this work done for themselves: asks about price, process, timeline, materials, location or availability, mentions their own home or project, or asks to be contacted. Any language counts, including Tamil or Hindi typed in English letters.",
+        "Not a lead: only praise or a reaction (nice, wow, love it), emojis, tagging friends, jokes, spam, links, promoting their own business, job or vendor requests, or a question only about who made or where the post is from with no interest for themselves.",
+        "When it is unclear, it is not a lead.",
+        'Return only JSON: {"lead": true or false, "reason": "a few words"}',
+      ].join("\n"),
+      messages: [{
+        role: "user",
+        content: `Post: ${[post?.caption?.trim(), post?.seenSummary ? `(shows: ${post.seenSummary})` : ""].filter(Boolean).join(" ") || "no caption"}\nComment: "${comment.slice(0, 500)}"`,
+      }],
+      temperature: 0,
+      maxTokens: 120,
+      timeoutMs: 30_000,
+    });
+    const parsed = reviewJson(raw);
+    if (typeof parsed?.lead !== "boolean") return { lead: true, reason: "The model gave no clear answer; replied." };
+    return { lead: parsed.lead, reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 120) : parsed.lead ? "Looks like an enquiry." : "Does not look like an enquiry." };
+  } catch (error) {
+    console.warn(`Comment check failed: ${error instanceof Error ? error.message : String(error)}`);
+    return { lead: true, reason: "The comment check failed; replied." };
+  }
+}
 
 /**
  * The first private message after a comment, written from the Agent page settings, the post and the

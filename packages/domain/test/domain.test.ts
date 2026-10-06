@@ -51,6 +51,7 @@ import {
   demoQualificationSettings,
   nextReplyPrompt,
   openingForPost,
+  commentLeadSignal,
   parseLeadFields,
   parseLeadQuestions,
   questionsFromRows,
@@ -260,6 +261,16 @@ describe("rules and eligibility", () => {
     active: true,
     activatedAt: new Date("2026-10-01T00:00:00Z"),
   };
+
+  it("tells junk comments from enquiries before any model is asked", () => {
+    for (const junk of ["😍", "🔥🔥🔥", "❤️👏", "@priya.k @anand_99", "Nice", "wow!!", "Beautiful work 😍", "Semma", "love it", "bahut badhiya", "Check my page for cheap modular kitchens", "looking for a job as interior designer", "We supply modular kitchen hardware, DM us", "follow back pls"]) {
+      expect(commentLeadSignal(junk).verdict, junk).toBe("not_lead");
+    }
+    for (const lead of ["Price?", "price for 3bhk", "interested", "need this for my flat", "evlo aagum?", "kitna kharcha hoga", "DM details pls", "@karthik see this, how much for full home"]) {
+      expect(commentLeadSignal(lead).verdict, lead).toBe("lead");
+    }
+    expect(commentLeadSignal("who designed this?").verdict).toBe("unsure");
+  });
 
   it("uses a post opening and prompt when that post has its own copy", () => {
     expect(openingForPost("Default hello", "  Ask about this reel.  ")).toBe("Ask about this reel.");
