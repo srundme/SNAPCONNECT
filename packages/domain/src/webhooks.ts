@@ -33,7 +33,10 @@ export type NormalizedMessage = {
   /** What kind of attachment came without being text or a voice note: image, video, sticker, document, share... */
   mediaKind?: string | null;
   imageUrl?: string | null;
+  /** Every photo in the message, when one message carries several (Instagram and Messenger). */
+  imageUrls?: string[];
   imageMediaId?: string | null;
+  document?: { url: string | null; mediaId: string | null; fileName: string | null; mimeType: string | null } | null;
 };
 
 export type NormalizedMessageEdit = {
@@ -128,6 +131,23 @@ export function mediaNote(kind: string, seen?: string | null): string {
   return MEDIA_NOTES[kind] ?? "(Sent an attachment.)";
 }
 
+/** The note saved for a document, with what was read in it, or why it could not be read. */
+export function documentNote(fileName: string | null, read: { seen?: string | null; problem?: string | null }): string {
+  const name = fileName?.replace(/[()]/g, "").trim().slice(0, 80);
+  const head = `(Sent a document${name ? ` [${name}]` : ""}.`;
+  if (read.seen?.trim()) return `${head} It shows: ${read.seen.trim().replace(/[()]/g, "")})`;
+  return read.problem ? `${head} ${read.problem.replace(/[()]/g, "")})` : `${head})`;
+}
+
+function fileNameFromUrl(url: string): string | null {
+  try {
+    const last = decodeURIComponent(new URL(url).pathname.split("/").pop() ?? "");
+    return /\.[a-z0-9]{2,5}$/i.test(last) ? last : null;
+  } catch {
+    return null;
+  }
+}
+
 function whatsappEntry(entry: Json, receivedAt: Date): NormalizedEvent[] {
   const events: NormalizedEvent[] = [];
   for (const change of asArray(entry.changes)) {
@@ -179,6 +199,9 @@ function whatsappEntry(entry: Json, receivedAt: Date): NormalizedEvent[] {
         audioMediaId,
         mediaKind,
         imageMediaId: type === "image" ? asString(media?.id) : null,
+        document: type === "document"
+          ? { url: null, mediaId: asString(media?.id), fileName: asString(media?.filename), mimeType: asString(media?.mime_type) }
+          : null,
       });
     }
   }
@@ -322,6 +345,12 @@ function readMessaging(accountId: string, value: unknown, receivedAt: Date): Nor
   const audio = attachments.find((item) => asString(item?.type) === "audio");
   const other = attachments.find((item) => item && asString(item.type) !== "audio");
   const otherKind = other ? asString(other.type) ?? "attachment" : null;
+  const imageUrls = attachments
+    .filter((item) => asString(item?.type) === "image")
+    .map((item) => asString(asObject(item?.payload)?.url))
+    .filter((url): url is string => Boolean(url));
+  const file = attachments.find((item) => asString(item?.type) === "file");
+  const fileUrl = asString(asObject(file?.payload)?.url);
   return {
     kind: "message",
     externalAccountId: accountId,
@@ -333,8 +362,10 @@ function readMessaging(accountId: string, value: unknown, receivedAt: Date): Nor
     referralCommentId: asString(referral?.comment_id) ?? asString(referral?.commentId),
     referralPostId: asString(referral?.post_id) ?? asString(referral?.postId),
     audioUrl: asString(asObject(audio?.payload)?.url),
-    mediaKind: otherKind,
-    imageUrl: otherKind === "image" ? asString(asObject(other?.payload)?.url) : null,
+    mediaKind: imageUrls.length ? "image" : otherKind,
+    imageUrl: imageUrls[0] ?? null,
+    imageUrls,
+    document: fileUrl ? { url: fileUrl, mediaId: null, fileName: fileNameFromUrl(fileUrl), mimeType: null } : null,
   };
 }
 

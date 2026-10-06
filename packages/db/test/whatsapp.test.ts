@@ -219,6 +219,75 @@ describeDb("whatsapp chat", () => {
     expect(conversation.messages.some((message) => message.author === "AI")).toBe(true);
   });
 
+  it("reads a PDF in the background and replies only once it is read", async () => {
+    const seeded = await seedDemo(db);
+    const key = randomBytes(32);
+    const started: Array<{ url: string; token?: string; name: string | null }> = [];
+    let polls = 0;
+    const documentRuntime: Runtime = {
+      ...runtime,
+      credentialKeys: { test: key },
+      whatsappMediaUrl: async () => "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=9",
+      readDocument: {
+        start: async (url, token, name) => {
+          started.push({ url, token, name });
+          return "job-1";
+        },
+        poll: async () => {
+          polls += 1;
+          return polls < 2 ? { state: "running", text: "" } : { state: "done", text: "# Unit 1204\n3 BHK floor plan, carpet area 1,450 sq ft" };
+        },
+      },
+    };
+    await db.channelConnection.upsert({
+      where: { channel_mode_externalAccountId: { channel: "WHATSAPP", mode: "SIMULATION", externalAccountId: "pnid-test" } },
+      update: { automationPaused: false, revokedAt: null, credentialCiphertext: encryptSecret("wa-token", key, "test") },
+      create: {
+        workspaceId: seeded.workspaceId,
+        channel: "WHATSAPP",
+        mode: "SIMULATION",
+        externalAccountId: "pnid-test",
+        displayName: "Demo WhatsApp",
+        automationPaused: false,
+        credentialCiphertext: encryptSecret("wa-token", key, "test"),
+      },
+    });
+    const now = new Date(Date.now() - 120_000);
+    const waId = `9198480${String(Date.now()).slice(-5)}`;
+    const events = normalizeMetaPayload("WHATSAPP", {
+      object: "whatsapp_business_account",
+      entry: [{
+        id: "waba-test",
+        changes: [{
+          field: "messages",
+          value: {
+            messaging_product: "whatsapp",
+            metadata: { display_phone_number: "919000000000", phone_number_id: "pnid-test" },
+            contacts: [{ profile: { name: "Meena" }, wa_id: waId }],
+            messages: [{ from: waId, id: `wamid.d${now.getTime()}`, timestamp: String(Math.floor(now.getTime() / 1000)), type: "document", document: { id: "doc-3", filename: "plan (1204).pdf", mime_type: "application/pdf" } }],
+          },
+        }],
+      }],
+    }, now);
+    await ingestEvents(db, { channel: "WHATSAPP", mode: "SIMULATION", events, receivedAt: now });
+    const identityWhere = { channel: "WHATSAPP" as const, externalId: waId };
+    for (let round = 0; round < 6; round += 1) {
+      await db.outboxJob.updateMany({ where: { type: { in: ["READ_DOCUMENT", "INFERENCE"] }, status: "PENDING" }, data: { availableAt: new Date(Date.now() - 1000) } });
+      await processAvailableJobs(db, documentRuntime, 30);
+      if (round === 0) {
+        const identity = await db.contactIdentity.findFirstOrThrow({ where: identityWhere });
+        const replies = await db.message.count({ where: { conversation: { contactId: identity.contactId }, author: "AI" } });
+        expect(replies).toBe(0);
+      }
+    }
+    const identity = await db.contactIdentity.findFirstOrThrow({ where: identityWhere });
+    const conversation = await db.conversation.findFirstOrThrow({ where: { contactId: identity.contactId }, include: { messages: { orderBy: { createdAt: "asc" } } } });
+    const sent = conversation.messages.find((message) => message.author === "PROSPECT")!;
+    expect(started).toEqual([{ url: "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=9", token: "wa-token", name: "plan (1204).pdf" }]);
+    expect(sent.body).toMatch(/^\(Sent a document \[plan 1204\.pdf\]\. It shows: .*3 BHK floor plan, carpet area 1,450 sq ft\)$/);
+    expect(conversation.messages.filter((message) => message.author === "AI").length).toBeGreaterThanOrEqual(1);
+  });
+
   it("joins a WhatsApp chat to the Instagram contact who gave that number, and schedules a follow-up", async () => {
     const seeded = await seedDemo(db);
     const instagram = await db.channelConnection.findFirstOrThrow({ where: { workspaceId: seeded.workspaceId, channel: "INSTAGRAM" } });

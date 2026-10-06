@@ -4,7 +4,78 @@ import { classifyFetch } from "../src/channel";
 import { decryptSecret, encryptSecret } from "../src/crypto";
 import { facebookAdapter, instagramAdapter } from "../src/meta";
 import { listInstagramPosts } from "../src/meta-media";
-import { assertPrivateOllamaUrl, readVoiceDirection, sarvamLlm, sarvamTranscriber } from "../src/llm";
+import { assertPrivateOllamaUrl, readVoiceDirection, sarvamDocumentReader, sarvamLlm, sarvamTranscriber } from "../src/llm";
+import { unzipText } from "../src/zip";
+import { deflateRawSync } from "node:zlib";
+
+function zipOf(files: Record<string, string>): Uint8Array {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let offset = 0;
+  for (const [name, text] of Object.entries(files)) {
+    const data = deflateRawSync(Buffer.from(text));
+    const nameBytes = Buffer.from(name);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt16LE(nameBytes.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(8, 10);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt16LE(nameBytes.length, 28);
+    central.writeUInt32LE(offset, 42);
+    locals.push(local, nameBytes, data);
+    centrals.push(central, nameBytes);
+    offset += 30 + nameBytes.length + data.length;
+  }
+  const directory = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(Object.keys(files).length, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return new Uint8Array(Buffer.concat([...locals, directory, end]));
+}
+
+describe("documents", () => {
+  it("reads the markdown pages out of a ZIP", () => {
+    const files = unzipText(zipOf({ "page_2.md": "Kitchen 10x8", "page_1.md": "3 BHK plan", "meta.json": "{}" }), (name) => name.endsWith(".md"));
+    expect([...files.keys()].sort()).toEqual(["page_1.md", "page_2.md"]);
+    expect(files.get("page_1.md")).toBe("3 BHK plan");
+  });
+
+  it("uploads a Meta-hosted PDF to Sarvam, then polls and returns its text", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.startsWith("https://lookaside.fbsbx.com/")) return new Response(new Uint8Array([37, 80, 68, 70]), { headers: { "content-type": "application/pdf" } });
+      if (url.endsWith("/job/digitise")) {
+        const file = (init?.body as FormData).get("file") as File;
+        expect(file.name).toBe("plan.pdf");
+        expect((init?.body as FormData).get("output_format")).toBe("md");
+        return Response.json({ job_id: "j1", status: "pending" }, { status: 201 });
+      }
+      if (url.endsWith("/job/j1/status")) return Response.json({ status: "completed" });
+      if (url.endsWith("/job/j1/download-url")) return Response.json({ method: "GET", url: "https://blob.sarvam.test/out.zip" });
+      if (url === "https://blob.sarvam.test/out.zip") return new Response(zipOf({ "out/page_1.md": "3 BHK floor plan" }));
+      throw new Error(`unexpected ${url}`);
+    }) as typeof fetch;
+    const reader = sarvamDocumentReader({ apiKey: "k", fetchImpl });
+    expect(await reader.start("https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1", "wa", "plan.pdf")).toBe("j1");
+    expect(await reader.poll("j1")).toEqual({ state: "done", text: "3 BHK floor plan" });
+    await expect(reader.start("https://evil.example/plan.pdf", undefined, "plan.pdf")).rejects.toThrow(/Meta media host/);
+    expect(calls[1]).toBe("POST https://api.sarvam.ai/doc-ai/v1/job/digitise");
+  });
+
+  it("refuses Word files so the chat can ask for a PDF", async () => {
+    const fetchImpl = (async () => new Response(new Uint8Array([1, 2]), { headers: { "content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document" } })) as unknown as typeof fetch;
+    const reader = sarvamDocumentReader({ apiKey: "k", fetchImpl });
+    await expect(reader.start("https://lookaside.fbsbx.com/x", undefined, "plan.docx")).rejects.toThrow(/Unsupported document type/);
+  });
+});
 import { zohoAdapter } from "../src/zoho";
 import { checkWhatsAppNumber, subscribeWhatsAppAccount, whatsappAdapter } from "../src/whatsapp";
 import { cartesiaSpeaker, speechLocale, speechScript, speechSentences } from "../src/cartesia";

@@ -13,7 +13,7 @@ export function budgetLakhs(text: string): { low: number; high: number | null } 
     if (!word && value >= LAKH) return value / LAKH;
     return value;
   };
-  const range = plain.match(/(\d+(?:\.\d+)?)\s*(l|lac|lacs|lakh|lakhs|cr|crore|crores|k|thousand)?\s*(?:-|to|till)\s*(\d+(?:\.\d+)?)\s*(l|lac|lacs|lakh|lakhs|cr|crore|crores|k|thousand)?\b/);
+  const range = plain.match(/(\d+(?:\.\d+)?)\s*(l|lac|lacs|lakh|lakhs|cr|crore|crores|k|thousand)?\s*(?:-|to|till|se|muthal)\s*(\d+(?:\.\d+)?)\s*(l|lac|lacs|lakh|lakhs|cr|crore|crores|k|thousand)?\b/);
   if (range) {
     const highUnit = range[4] ?? range[2];
     const high = unit(highUnit, Number(range[3]));

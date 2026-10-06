@@ -51,7 +51,7 @@ export type AgentFormSettings = {
 
 const BEHAVIOUR: Array<[string, string, string]> = [
   ["voiceReplies", "Voice replies", "Answers a voice note with a voice note."],
-  ["photoReading", "Read photos", "Understands photos customers send and what each post shows."],
+  ["photoReading", "Read photos and documents", "Understands photos, floor plans and PDFs customers send, and what each post shows."],
   ["laughter", "Laughter", "May write haha, and laughs in voice notes. Off means never."],
   ["emojis", "Emojis", "May use an emoji now and then. Off removes every emoji."],
   ["casualTexting", "Casual texting", "Types like a person: no commas, u and ok, dots between thoughts. Off writes clean, polite sentences."],

@@ -144,6 +144,7 @@ describe("common sense checks", () => {
   it("rates leads HOT at the budget line, JUNK below it, and by project size without a budget", () => {
     expect(budgetLakhs("30-50L")).toEqual({ low: 30, high: 50 });
     expect(budgetLakhs("20 to 30 lakhs")).toEqual({ low: 20, high: 30 });
+    expect(budgetLakhs("25 se 35 lakh")).toEqual({ low: 25, high: 35 });
     expect(budgetLakhs("50L+")).toEqual({ low: 50, high: null });
     expect(budgetLakhs("under 20L")).toEqual({ low: 0, high: 20 });
     expect(budgetLakhs("1.2 cr")).toEqual({ low: 120, high: 120 });

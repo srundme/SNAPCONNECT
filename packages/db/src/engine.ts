@@ -95,8 +95,9 @@ import {
   dropCannedLines,
   oneAddress,
   mediaNote,
+  documentNote,
 } from "@snapsocial/domain";
-import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, neutralDirection, speechLocale, speechScript, speechSentences, zohoAdapter, ZohoOAuthError, type LlmProvider, type SendResult, type Speaker, type VoiceDirection, type ZohoAdapter } from "@snapsocial/integrations";
+import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, neutralDirection, speechLocale, speechScript, speechSentences, zohoAdapter, ZohoOAuthError, type DocumentReader, type LlmProvider, type SendResult, type Speaker, type VoiceDirection, type ZohoAdapter } from "@snapsocial/integrations";
 import { randomBytes } from "node:crypto";
 import type { Db } from "./client";
 
@@ -130,6 +131,7 @@ export type Runtime = {
   transcribe?: (audioUrl: string, bearerToken?: string) => Promise<string>;
   seeImage?: (imageUrl: string, bearerToken?: string, prompt?: string) => Promise<string>;
   whatsappMediaUrl?: (mediaId: string, token: string) => Promise<string>;
+  readDocument?: DocumentReader;
   speak?: Speaker;
   publicBaseUrl?: string;
   replySettleMs?: number;
@@ -311,6 +313,7 @@ async function processJob(db: Db, job: JobRecord, runtime: Runtime): Promise<"do
     if (job.type === "CRM_SYNC") return syncLead(db, String(payload.leadId), runtime);
     if (job.type === "DESCRIBE_POSTS") return describePosts(db, String(payload.workspaceId), runtime);
     if (job.type === "FOLLOW_UP") return runFollowUp(db, payload, runtime);
+    if (job.type === "READ_DOCUMENT") return readDocumentJob(db, job, runtime);
     return "done";
   } catch (error) {
     console.error(`${job.type} job failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -803,6 +806,9 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
   const nextInbound = !conversation.lastUserMessageAt || sentAt > conversation.lastUserMessageAt ? sentAt : conversation.lastUserMessageAt;
   let text = String(body.text ?? "");
   const voice = !text.trim() && Boolean(body.audioUrl || body.audioMediaId);
+  if (voice || body.mediaKind) {
+    await db.conversation.update({ where: { id: conversation.id }, data: { revision: { increment: 1 } } });
+  }
   if (voice) {
     const transcript = runtime.transcribe
       ? await voiceTranscript(runtime, connection, body).catch((error: unknown) => {
@@ -814,17 +820,55 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
   }
   const agent = parseAgentSettings(connection.workspace.agentSettings);
   const mediaKind = typeof body.mediaKind === "string" && body.mediaKind ? body.mediaKind : null;
+  const document = asRecord(body.document);
+  const documentName = typeof document.fileName === "string" ? document.fileName : null;
+  const documentSource = { url: typeof document.url === "string" ? document.url : null, mediaId: typeof document.mediaId === "string" ? document.mediaId : null };
+  let extraNotes: string[] = [];
+  let documentJob: string | null = null;
   if (mediaKind && !voice) {
-    const seen = mediaKind === "image" && agent.photoReading ? await imageDescription(runtime, connection, body).catch((error: unknown) => {
-      console.warn(`Photo description failed: ${error instanceof Error ? error.message : String(error)}`);
+    const failed = (what: string) => (error: unknown) => {
+      console.warn(`${what} failed: ${error instanceof Error ? error.message : String(error)}`);
       return "";
-    }) : "";
-    const note = mediaNote(mediaKind, seen);
-    text = text.trim() ? `${text.trim()} ${note}` : note;
+    };
+    let notes: string[];
+    if (mediaKind === "image") {
+      const urls = Array.isArray(body.imageUrls) ? body.imageUrls.filter((url): url is string => typeof url === "string").slice(0, 6) : [];
+      const seen = !agent.photoReading
+        ? [""]
+        : urls.length > 1 && runtime.seeImage
+          ? await Promise.all(urls.map((url) => runtime.seeImage!(url).catch(failed("Photo description"))))
+          : [await imageDescription(runtime, connection, body).catch(failed("Photo description"))];
+      notes = seen.map((item) => mediaNote("image", item));
+    } else if ((mediaKind === "document" || mediaKind === "file") && (documentSource.url || documentSource.mediaId) && agent.photoReading) {
+      const mime = typeof document.mimeType === "string" ? document.mimeType : "";
+      const source = await mediaSource(runtime, connection, documentSource).catch((error: unknown) => {
+        failed("Document link")(error);
+        return null;
+      });
+      if (source && /^image\//.test(mime) && runtime.seeImage) {
+        notes = [mediaNote("image", await runtime.seeImage(source.url, source.token).catch(failed("Photo description")))];
+      } else if (source && runtime.readDocument) {
+        try {
+          documentJob = await runtime.readDocument.start(source.url, source.token, documentName);
+          notes = [documentNote(documentName, {})];
+        } catch (error) {
+          const unsupported = error instanceof Error && /unsupported document type/i.test(error.message);
+          failed("Document reading")(error);
+          notes = [documentNote(documentName, { problem: unsupported ? "It is not a PDF or image, so it could not be opened here." : "It could not be opened." })];
+        }
+      } else {
+        notes = [documentNote(documentName, {})];
+      }
+    } else {
+      notes = [mediaKind === "document" || mediaKind === "file" ? documentNote(documentName, {}) : mediaNote(mediaKind, "")];
+    }
+    text = text.trim() ? `${text.trim()} ${notes[0]}` : notes[0]!;
+    extraNotes = notes.slice(1);
   }
   if (!text.trim()) return;
+  let savedId: string;
   try {
-    await db.message.create({
+    const saved = await db.message.create({
       data: {
         workspaceId: connection.workspaceId,
         connectionId,
@@ -836,9 +880,35 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
         createdAt: sentAt,
       },
     });
+    savedId = saved.id;
   } catch (error) {
     if (isUnique(error)) return;
     throw error;
+  }
+  for (const [index, note] of extraNotes.entries()) {
+    await db.message.create({
+      data: {
+        workspaceId: connection.workspaceId,
+        connectionId,
+        conversationId: conversation.id,
+        author: "PROSPECT",
+        body: note,
+        externalMessageId: `${String(body.messageId ?? "")}#${index + 2}`,
+        createdAt: new Date(sentAt.getTime() + index + 1),
+      },
+    }).catch((error: unknown) => {
+      if (!isUnique(error)) throw error;
+    });
+  }
+  if (documentJob) {
+    await db.outboxJob.create({
+      data: {
+        workspaceId: connection.workspaceId,
+        type: "READ_DOCUMENT",
+        payload: { messageId: savedId, conversationId: conversation.id, contactId, jobId: documentJob, fileName: documentName, tries: 0 },
+        availableAt: new Date(runtime.now().getTime() + 4_000),
+      },
+    });
   }
   const updated = await db.conversation.update({
     where: { id: conversation.id },
@@ -855,13 +925,13 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
     return;
   }
   const paused = connection.automationPaused || connection.workspace.automationPaused || Boolean(connection.revokedAt);
-  if (updated.owner === "AI" && !paused && !contact.optedOutAt) {
+  if (updated.owner === "AI" && !paused && !contact.optedOutAt && !documentJob) {
     await db.outboxJob.create({
       data: {
         workspaceId: connection.workspaceId,
         type: "INFERENCE",
         payload: { conversationId: conversation.id, expectedRevision: updated.revision, contactId },
-        availableAt: new Date(runtime.now().getTime() + settleMs(runtime, conversation.lastUserMessageAt, sentAt) + (runtime.pause && agent.typingDelay ? readingMs(text) : 0)),
+        availableAt: new Date(runtime.now().getTime() + settleMs(runtime, conversation.lastUserMessageAt, sentAt) + ((mediaKind || voice) && runtime.replySettleMs ? 3_000 : 0) + (runtime.pause && agent.typingDelay ? readingMs(text) : 0)),
       },
     });
   }
@@ -951,6 +1021,71 @@ async function imageDescription(
   const token = decryptSecret(connection.credentialCiphertext, runtime.credentialKeys);
   const url = await runtime.whatsappMediaUrl(String(body.imageMediaId), token);
   return runtime.seeImage(url, token);
+}
+
+async function mediaSource(
+  runtime: Runtime,
+  connection: { credentialCiphertext: string | null },
+  media: { url: string | null; mediaId: string | null },
+): Promise<{ url: string; token?: string } | null> {
+  if (media.url) return { url: media.url };
+  if (!media.mediaId || !runtime.whatsappMediaUrl || !connection.credentialCiphertext) return null;
+  const token = decryptSecret(connection.credentialCiphertext, runtime.credentialKeys);
+  return { url: await runtime.whatsappMediaUrl(media.mediaId, token), token };
+}
+
+/** Checks a document being read; when it is done, puts what it says in the chat and lets the agent reply once. */
+async function readDocumentJob(db: Db, job: JobRecord, runtime: Runtime): Promise<"done" | "requeue"> {
+  const payload = asRecord(job.payload);
+  const message = await db.message.findUnique({ where: { id: String(payload.messageId ?? "") } });
+  if (!message) return "done";
+  const tries = Number(payload.tries ?? 0);
+  const fileName = typeof payload.fileName === "string" ? payload.fileName : null;
+  let outcome: { state: "running" | "done" | "failed"; text: string } = { state: "failed", text: "" };
+  if (runtime.readDocument) {
+    outcome = await runtime.readDocument.poll(String(payload.jobId ?? "")).catch((error: unknown) => {
+      console.warn(`Document status failed: ${error instanceof Error ? error.message : String(error)}`);
+      return { state: tries < 30 ? "running" as const : "failed" as const, text: "" };
+    });
+  }
+  if (outcome.state === "running" && tries < 30) {
+    await db.outboxJob.update({
+      where: { id: job.id },
+      data: { status: "PENDING", availableAt: new Date(runtime.now().getTime() + 4_000), payload: { ...payload, tries: tries + 1 } },
+    });
+    return "requeue";
+  }
+  let seen = "";
+  if (outcome.state === "done" && outcome.text.trim()) {
+    seen = runtime.llm.summarizeDocument
+      ? await runtime.llm.summarizeDocument({ text: outcome.text, fileName }).catch((error: unknown) => {
+          console.warn(`Document summary failed: ${error instanceof Error ? error.message : String(error)}`);
+          return "";
+        })
+      : "";
+    if (!seen) seen = outcome.text.replace(/[#*|>`_-]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 500);
+  }
+  const body = documentNote(fileName, seen ? { seen } : { problem: "It could not be read." });
+  const prefix = message.body.slice(0, Math.max(0, message.body.indexOf("(Sent a document"))).trim();
+  await db.message.update({ where: { id: message.id }, data: { body: prefix ? `${prefix} ${body}` : body } });
+  const conversation = await db.conversation.update({
+    where: { id: message.conversationId },
+    data: { revision: { increment: 1 } },
+    include: { contact: true },
+  });
+  const connection = await db.channelConnection.findUniqueOrThrow({ where: { id: conversation.connectionId }, include: { workspace: true } });
+  const paused = connection.automationPaused || connection.workspace.automationPaused || Boolean(connection.revokedAt);
+  if (conversation.owner === "AI" && !paused && !conversation.contact.optedOutAt) {
+    await db.outboxJob.create({
+      data: {
+        workspaceId: conversation.workspaceId,
+        type: "INFERENCE",
+        payload: { conversationId: conversation.id, expectedRevision: conversation.revision, contactId: conversation.contactId },
+        availableAt: new Date(runtime.now().getTime() + 1_000),
+      },
+    });
+  }
+  return "done";
 }
 
 async function handleMessageEdit(db: Db, connectionId: string, body: Record<string, unknown>, runtime: Runtime) {
@@ -1171,6 +1306,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
   const payload = asRecord(job.payload);
   const conversationId = String(payload.conversationId);
   const expectedRevision = Number(payload.expectedRevision ?? 0);
+  const reading = await db.outboxJob.findFirst({
+    where: { type: "READ_DOCUMENT", status: { in: ["PENDING", "DISPATCHED", "PROCESSING"] }, payload: { path: ["conversationId"], equals: conversationId } },
+    select: { id: true },
+  });
+  if (reading) return "done";
   const holder = job.id;
   const acquired = await db.$queryRaw<{ id: string }[]>`
     UPDATE "InferenceLease"
@@ -1380,6 +1520,13 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         && (!absorbed.answers[styleQuestion.id] || /^\(Sent a photo/.test(absorbed.answers[styleQuestion.id]!)) && !/their photo:/.test(recordedAnswers[styleQuestion.id] ?? "")) {
         absorbed.answers[styleQuestion.id] = freshText.trim();
       }
+      const burstLooks = sinceReply.map((body) => body.match(PHOTO_SEEN)?.[1]?.trim()).filter((seen): seen is string => Boolean(seen) && !FLOOR_PLAN.test(seen!));
+      const styleValue = styleQuestion ? absorbed.answers[styleQuestion.id] ?? "" : "";
+      if (styleQuestion && burstLooks.length && (!styleValue || /^(?:\(Sent a photo\.\)\s*)+$/.test(styleValue))
+        && !/their photo|Reference photos:/.test(recordedAnswers[styleQuestion.id] ?? "")
+        && (questionAsked(styleQuestion, lastAsk) || REFERENCE_WORDS.test(freshText))) {
+        absorbed.answers[styleQuestion.id] = `Reference photos: ${burstLooks.join("; ")}`.slice(0, 600);
+      }
       for (const question of questions) {
         const value = absorbed.answers[question.id] ?? "";
         if (/\b(book|schedule|fix|arrange)\b.*\b(consultation|meeting|appointment|visit)\b/i.test(value)) {
@@ -1529,6 +1676,21 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       memoryLines.push(
         `They just edited an earlier message from "${String(payload.editedFrom ?? "")}" to "${editedTo}". Use the edited version. Thank them for the correction in a few words, confirm the corrected detail, and continue.`,
       );
+    }
+    const possessionQuestion = questions.find((question) => /\bpossession\b/i.test(question.label));
+    const possession = possessionQuestion ? recordedAnswers[possessionQuestion.id] ?? "" : "";
+    const planShared = prospectBodies.some((body) => FLOOR_PLAN.test(seenIn(body)?.seen ?? "") || /\(Sent a document/.test(body));
+    const planAsked = spoken.some((message) => message.author === "AI" && /\b(floor ?plan|layout plan|unit plan)\b/i.test(message.body));
+    const mustHavesIn = questions.filter((question) => question.required && question.kind === "text").every((question) => recordedAnswers[question.id]);
+    const planAsk = possession && mustHavesIn && !numberPending && (recordedPhone || !questions.some((question) => question.kind === "phone")) && !planShared && !planAsked && !freshText.includes("?")
+      ? /\b(ready|living|moved|staying|already|got (?:the )?(?:keys|possession)|mil gaya|mil gayi|ready hai|vandhachu)\b/i.test(possession) && !/\bnot ready\b|\bnahi\b|\billa\b/i.test(possession)
+        ? PLAN_READY_TEMPLATE
+        : PLAN_BUILDER_TEMPLATE
+      : null;
+    if (planAsk) {
+      memoryLines.push(planAsk === PLAN_READY_TEMPLATE
+        ? "Their home is ready. In this reply, instead of any optional question, ask once whether they can share the floor plan or a few photos of the space, so the designer can start planning. Never ask again."
+        : "Their home is not ready yet (under construction or possession later). In this reply, instead of any optional question, ask once whether they have the floor plan from the builder (a photo or PDF is fine), so the designer can start planning the layout before possession. Never ask again.");
     }
     const latestProspect = [...conversation.messages].reverse().find((message) => message.author === "PROSPECT")?.body ?? "";
     const languageSample = chatLanguageSample(conversation.messages.filter((message) => message.author === "PROSPECT").map((message) => message.body));
@@ -1877,7 +2039,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     const fallback = scripted
       || nextReplyPrompt(toSnapshot(await db.lead.findUniqueOrThrow({ where: { id: lead.id } })), rule.settings, prompts).prompt;
-    const stillMissing = screen && !screen.ready && !screen.cold ? questions.filter((question) => screen.missing.includes(question.label)) : [];
+    const replyScreen = questions.length && screen && !screen.cold && numberPending
+      ? screenLead({ questions, answers: answerRecord(updatedLead.answers), name: updatedLead.contact.chosenName, phoneE164: null })
+      : screen;
+    const stillMissing = replyScreen && !replyScreen.ready && !replyScreen.cold ? questions.filter((question) => replyScreen.missing.includes(question.label)) : [];
     const pending = stillMissing.find((question) => !ignored(question) && !justAsked(question));
     const askedByThem = Boolean(pastTime) || /\?/.test(latestUser)
       || /^\s*(how|what|when|where|why|which|who|can|could|will|would|do|does|is|are|should|pls|please|send|share|show|tell|book)\b/i.test(latestUser)
@@ -1911,15 +2076,24 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : [];
     const nextQuestion = questions.find((question) => question.id === checkedIds[0]) ?? nextDetail ?? pending;
     const optionalOnly = screen ? questions.filter((question) => screen.optional.includes(question.label)) : [];
-    const mustMissing = screen ? questions.filter((question) => screen.missing.includes(question.label)) : [];
+    const mustMissing = replyScreen ? questions.filter((question) => replyScreen.missing.includes(question.label)) : [];
     const splitSentences = (text: string) => text.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/));
     const asksOptionalInstead = Boolean(pending && composed && !situationHandoff && !checkedIds.length
       && splitSentences(composed).flat().some((part) => isQuestionSentence(part) && optionalOnly.some((question) => questionAsked(question, part)))
       && !mustMissing.some((question) => askedIn(question, composed)));
+    const optionalPart = (part: string) => optionalOnly.some((question) => (isQuestionSentence(part) && questionAsked(question, part))
+      || (part.trim().split(/\s+/).length >= 3 && plainText(askQuestion(question)).includes(plainText(part))));
+    const withoutOptional = (text: string) => splitSentences(text)
+      .map((parts) => parts.filter((part) => !optionalPart(part)).join(" ").trim())
+      .filter(Boolean).join("\n");
+    const planText = planAsk ? local?.get(planAsk) ?? planAsk : null;
+    const addsPlan = Boolean(planText && composed && !pending && !checkedIds.length && !situationHandoff && !askedByThem && !passedReply && !hoursReply
+      && !/\b(floor ?plan|layout plan|unit plan|photos? of (?:the|ur|your) (?:space|home|flat|house))\b/i.test(composed));
     const focused = asksOptionalInstead && composed
-      ? [splitSentences(composed).map((parts) => parts.filter((part) => !(isQuestionSentence(part) && optionalOnly.some((question) => questionAsked(question, part)))).join(" ").trim()).filter(Boolean).join("\n"), askQuestion(pending!)]
-        .filter(Boolean).join("\n")
-      : composed;
+      ? [withoutOptional(composed), askQuestion(pending!)].filter(Boolean).join("\n")
+      : addsPlan && composed
+        ? [withoutOptional(composed), planText].filter(Boolean).join("\n")
+        : composed;
     const kept = focused && answered.length ? dropAnsweredQuestions(focused, questions, answered) : focused;
     const unasked = focused && !situationHandoff && kept !== focused && asksSomething(focused) && !asksSomething(kept ?? "") && nextQuestion
       ? [kept?.replace(/[^.!?\s]$/, "$&."), askQuestion(nextQuestion)].filter(Boolean).join(" ")
@@ -2395,12 +2569,14 @@ export function clockLine(now: Date): string {
 
 const SAME_NUMBER_TEMPLATE = "Shall the team call you on this same WhatsApp number?";
 const BHK_ONLY_TEMPLATE = "How many BHK is it?";
+const PLAN_BUILDER_TEMPLATE = "Do you have the floor plan from the builder? A photo or PDF is fine, the designer can start planning the layout before possession.";
+const PLAN_READY_TEMPLATE = "Can you share the floor plan of your home? Even a phone picture of it works, the designer can start planning from it.";
 const localQuestionCache = new Map<string, string>();
 
 /** The lead questions in the chat's language, so a question added in code never switches the chat to English. */
 async function localQuestions(runtime: Runtime, language: string, questions: LeadQuestion[]): Promise<Map<string, string> | null> {
   if (!runtime.llm.localizeQuestions) return null;
-  const labels = [...questions.filter((question) => question.kind !== "name").map((question) => question.label), SAME_NUMBER_TEMPLATE, BHK_ONLY_TEMPLATE];
+  const labels = [...questions.filter((question) => question.kind !== "name").map((question) => question.label), SAME_NUMBER_TEMPLATE, BHK_ONLY_TEMPLATE, PLAN_BUILDER_TEMPLATE, PLAN_READY_TEMPLATE];
   const missing = labels.filter((label) => !localQuestionCache.has(`${language}|${label}`));
   if (missing.length) {
     const rewritten = await runtime.llm.localizeQuestions(language, missing).catch(() => null);
@@ -2421,24 +2597,62 @@ async function localQuestions(runtime: Runtime, language: string, questions: Lea
 
 const PHOTO_SEEN = /\(Sent a photo\. It shows: ([^]*?)\)\s*$/;
 
-/** A photo description is what is in the picture, never the customer's own name, company or number. */
+const DOCUMENT_SEEN = /\(Sent a document(?: \[([^\]]*)\])?\. It shows: ([^]*?)\)\s*$/;
+const DOCUMENT_UNREAD = /\(Sent a document(?: \[[^\]]*\])?\.(?: [^()]*(?:could not|not a PDF)[^()]*)?\)\s*$/;
+const FLOOR_PLAN = /\bfloor ?plans?\b|\blayout (?:plan|drawing)\b|\bunit plan\b|\bblue ?print\b|\bfloor layout\b/i;
+const REFERENCE_TALK = /\b(like this|like that|this one|this type|this kind|same as|similar|reference|inspiration|want this|this design|this style|aisa|aise|aisi|waisa|ithu maari|ipdi|indha maari)\b/i;
+
+/** A photo or document description is what is in it, never the customer's own name, company or number. */
 function withoutPhotoText(body: string): string {
-  return body.replace(PHOTO_SEEN, "(Sent a photo.)");
+  return body.replace(PHOTO_SEEN, "(Sent a photo.)").replace(DOCUMENT_SEEN, "(Sent a document.)");
+}
+
+function seenIn(body: string): { kind: "photo" | "document"; name: string | null; seen: string } | null {
+  const photo = body.match(PHOTO_SEEN)?.[1];
+  if (photo?.trim()) return { kind: "photo", name: null, seen: photo.trim() };
+  const document = body.match(DOCUMENT_SEEN);
+  return document?.[2]?.trim() ? { kind: "document", name: document[1] ?? null, seen: document[2].trim() } : null;
+}
+
+function floorPlanLine(seen: string): string {
+  return `It is the floor plan of their home. What it shows: ${seen} Reply like an interior designer who just studied the plan. In a few words say what you read (for example 'a 3 BHK of about 1,450 sq ft with the kitchen next to the dining'). Then give one or two genuine, specific planning ideas that this plan allows (for example the kitchen can take an L-shaped layout with a breakfast counter, the master bedroom has room for a walk-in wardrobe, the long living wall suits a TV unit). Say the designer will use this plan for the layout and 3D designs. If the plan shows the BHK or the area and that detail is still missing, ask them to confirm it instead of asking from scratch. Never promise exact measurements or prices.`;
 }
 
 function photoLine(messages: { author: string; body: string }[]): string {
   const prospect = messages.filter((message) => message.author === "PROSPECT");
   const latest = prospect.at(-1)?.body ?? "";
-  const seen = latest.match(PHOTO_SEEN)?.[1];
-  if (seen) {
-    const around = prospect.slice(-3).map((message) => message.body.replace(PHOTO_SEEN, "")).join(" ");
-    const reference = /\b(like this|like that|this type|this kind|same as|similar|reference|inspiration|want this|this design|this style|aisa|aise|ithu maari|ipdi|indha maari)\b/i.test(around)
-      || !/\b(my|mera|meri|en|enga|current|existing|now|present|old|site)\b/i.test(around);
-    const what = `You can see it through this description: ${seen.trim()}`;
-    const shared = "Names, companies or numbers written in a photo are what the picture shows, not their own details, unless they say so. Never say you cannot see photos.";
+  const lastAi = messages.map((message) => message.author).lastIndexOf("AI");
+  const burst = messages.slice(lastAi + 1).filter((message) => message.author === "PROSPECT");
+  const items = burst.map((message) => seenIn(message.body)).filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const words = burst.map((message) => message.body.replace(PHOTO_SEEN, "").replace(DOCUMENT_SEEN, "").replace(DOCUMENT_UNREAD, "")).join(" ");
+  const shared = "Names, companies or numbers written in a photo or document are what it shows, not their own details, unless they say so. Never say you cannot see photos or open documents.";
+  if (items.length >= 2) {
+    const list = items.map((item, index) => `${index + 1}. ${item.kind === "photo" ? "Photo" : `Document${item.name ? ` ${item.name}` : ""}`}: ${item.seen}`).join(" ");
+    const plan = items.find((item) => FLOOR_PLAN.test(item.seen));
+    const photos = items.every((item) => item.kind === "photo");
+    return [
+      `They just sent ${items.length} ${photos ? "photos" : "photos and documents"} together, one after another. You can see all of them through these descriptions: ${list}`,
+      "Reply ONCE to the whole set, the way a designer reacts when a client shares a few pictures at once. Never reply to only the last one, and never go through them one by one.",
+      "If they are design references, name the common look or theme in a few words and the one or two things they share, and say the designer will use them as references.",
+      plan ? `One of them is a floor plan. ${floorPlanLine(plan.seen)}` : "",
+      "Then ask one question that moves things forward.",
+      shared,
+    ].filter(Boolean).join(" ");
+  }
+  if (items.length === 1) {
+    const item = items[0]!;
+    if (FLOOR_PLAN.test(item.seen)) return `They just sent a ${item.kind === "photo" ? "photo" : "document"}. ${floorPlanLine(item.seen)} ${shared}`;
+    if (item.kind === "document") {
+      return `They just sent a document${item.name ? ` (${item.name})` : ""}. You have read it: ${item.seen} React in a few words like an interior designer, using the facts in it. If it is a quotation from another company, never criticise them; say the team will give its own estimate after the free consultation. ${shared}`;
+    }
+    const what = `You can see it through this description: ${item.seen}`;
+    const reference = REFERENCE_TALK.test(words) || !/\b(my|mera|meri|en|enga|current|existing|now|present|old|site)\b/i.test(words);
     return reference
-      ? `Their latest message is a photo, most likely a design reference they like. ${what} React the way an experienced interior designer would when a client shows a reference: never describe the photo back to them item by item. Name the look in a few words (for example 'a warm modern look with a deep green accent wall'), point out the one or two things that make it work, and say the designer will use it as a reference for their home. Then ask one designer question that moves things forward, such as which room this is for, what they like most in it (the colour, the layout, the storage or the lighting), or whether they have more references. If a must-have detail is still missing, you may ask that instead. ${shared}`
-      : `Their latest message is a photo, most likely of their own home or site as it is now. ${what} React like a designer who just looked at their space: one quick, useful observation (light, space, layout, what could change), and say the team will see it properly on the site visit. Never describe the photo back item by item. ${shared}`;
+      ? `They just sent a photo, most likely a design reference they like. ${what} React the way an experienced interior designer would when a client shows a reference: never describe the photo back to them item by item. Name the look in a few words (for example 'a warm modern look with a deep green accent wall'), point out the one or two things that make it work, and say the designer will use it as a reference for their home. Then ask one designer question that moves things forward, such as which room this is for, what they like most in it (the colour, the layout, the storage or the lighting), or whether they have more references. If a must-have detail is still missing, you may ask that instead. ${shared}`
+      : `They just sent a photo, most likely of their own home or site as it is now. ${what} React like a designer who just looked at their space: one quick, useful observation (light, space, layout, what could change), and say the team will see it properly on the site visit. Never describe the photo back item by item. ${shared}`;
+  }
+  if (burst.some((message) => DOCUMENT_UNREAD.test(message.body))) {
+    return "They just sent a document that could not be opened here. Say so kindly in a few words, ask them to send it as a PDF or a clear photo or screenshot, and say the designer will go through it. Ask only once.";
   }
   const earlier = [...prospect].reverse().map((message) => message.body.match(PHOTO_SEEN)?.[1]).find(Boolean);
   if (earlier) {
@@ -2679,7 +2893,9 @@ function promptsGuide(prompts: Record<ReplyPromptField, string>): string {
   ].join("\n");
 }
 
-function sanitize(event: NormalizedEvent): Record<string, string | boolean | null> {
+type StoredValue = string | boolean | null | string[] | Record<string, string | null>;
+
+function sanitize(event: NormalizedEvent): Record<string, StoredValue> {
   if (event.kind === "comment") {
     return {
       kind: event.kind,
@@ -2712,7 +2928,9 @@ function sanitize(event: NormalizedEvent): Record<string, string | boolean | nul
       audioMediaId: event.audioMediaId ?? null,
       mediaKind: event.mediaKind ?? null,
       imageUrl: event.imageUrl ?? null,
+      imageUrls: event.imageUrls ?? [],
       imageMediaId: event.imageMediaId ?? null,
+      document: event.document ?? null,
     };
   }
   if (event.kind === "message_edit") {

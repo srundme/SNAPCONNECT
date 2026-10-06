@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   acceptExtractedAnswers,
   mediaNote,
+  documentNote,
   dropCannedLines,
   oneAddress,
   unrealisticAnswers,
@@ -1151,5 +1152,48 @@ describe("photos, videos and other attachments", () => {
     expect(mediaNote("image", "")).toBe("(Sent a photo.)");
     expect(mediaNote("ig_reel")).toBe("(Shared a reel.)");
     expect(mediaNote("something_new")).toBe("(Sent an attachment.)");
+    expect(documentNote("plan (A).pdf", { seen: "A 3 BHK floor plan (1,450 sq ft)." })).toBe("(Sent a document [plan A.pdf]. It shows: A 3 BHK floor plan 1,450 sq ft.)");
+    expect(documentNote(null, { problem: "It could not be read." })).toBe("(Sent a document. It could not be read.)");
+  });
+
+  it("keeps every photo of a Messenger message and its PDF, and WhatsApp documents with their name", () => {
+    const facebook = normalizeMetaPayload("FACEBOOK", {
+      object: "page",
+      entry: [{
+        id: "page-1",
+        messaging: [{
+          sender: { id: "u1" },
+          recipient: { id: "page-1" },
+          timestamp: 1759670000000,
+          message: {
+            mid: "m1",
+            attachments: [
+              { type: "image", payload: { url: "https://lookaside.fbsbx.com/p/1.jpg" } },
+              { type: "image", payload: { url: "https://lookaside.fbsbx.com/p/2.jpg" } },
+              { type: "file", payload: { url: "https://cdn.fbsbx.com/v/t59/Floor%20Plan.pdf?_nc=1" } },
+            ],
+          },
+        }],
+      }],
+    }, new Date("2026-10-05T00:00:00Z"));
+    expect(facebook[0]).toMatchObject({
+      mediaKind: "image",
+      imageUrls: ["https://lookaside.fbsbx.com/p/1.jpg", "https://lookaside.fbsbx.com/p/2.jpg"],
+      document: { url: "https://cdn.fbsbx.com/v/t59/Floor%20Plan.pdf?_nc=1", fileName: "Floor Plan.pdf" },
+    });
+    const whatsapp = normalizeMetaPayload("WHATSAPP", {
+      object: "whatsapp_business_account",
+      entry: [{
+        id: "waba-1",
+        changes: [{
+          field: "messages",
+          value: {
+            metadata: { phone_number_id: "pnid-1" },
+            messages: [{ from: "919845012345", id: "wamid.d1", timestamp: "1759670000", type: "document", document: { id: "doc-1", filename: "plan.pdf", mime_type: "application/pdf" } }],
+          },
+        }],
+      }],
+    }, new Date("2026-10-05T00:00:00Z"));
+    expect(whatsapp[0]).toMatchObject({ mediaKind: "document", document: { mediaId: "doc-1", fileName: "plan.pdf", mimeType: "application/pdf" } });
   });
 });
