@@ -9,6 +9,7 @@ import {
   dropAnsweredQuestions,
   dropIndicSentences,
   hasIndicSentence,
+  ownLandHome,
   humanBubbles,
   withAutomationDisclosure,
   dropRepeatGreeting,
@@ -103,6 +104,14 @@ describe("common sense checks", () => {
     expect(keys({ when: "March 2026" })).toEqual(["past-date"]);
     expect(keys({ when: "December 2026" })).toEqual([]);
     expect(keys({ when: "got keys in 2025, already ready" })).toEqual([]);
+  });
+
+  it("knows a home on their own land has no project to look up", () => {
+    expect(ownLandHome("it is indiviadual villa in HSR layout")).toBe(true);
+    expect(ownLandHome("independent house, we built it on our own land")).toBe(true);
+    expect(ownLandHome("own plot in Yelahanka")).toBe(true);
+    expect(ownLandHome("villa in Adarsh Palm Retreat")).toBe(false);
+    expect(ownLandHome("3 bhk flat in Prestige Lakeside Habitat")).toBe(false);
   });
 
   it("flags a home in another city, not a Bengaluru locality", () => {

@@ -56,6 +56,13 @@ export function labelledAnswers(questions: Question[], text: string): Record<str
   return found;
 }
 
+const OWN_LAND = /\b(?:ind[ei]p\w*nd\w*|indiv\w*d\w*l|own|standalone|separate)\s+(?:villa|house|home|bungalow|building)\b|\bown (?:land|plot|site)\b|\bbuilt (?:it )?(?:on|in) (?:our|my) (?:own )?(?:land|plot|site)\b|\bbungalow\b/i;
+
+/** A home on their own land, like an independent villa or house, which has no project to look up. */
+export function ownLandHome(text: string): boolean {
+  return OWN_LAND.test(text);
+}
+
 /** Their answer to where the home is, which may name the apartment project. */
 export function placeAnswer(questions: Question[], answers: Record<string, string>): string {
   return answerFor(questions, answers, PLACE);

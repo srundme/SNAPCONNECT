@@ -9,6 +9,7 @@ import {
   contextChecks,
   labelledAnswers,
   placeAnswer,
+  ownLandHome,
   pricePush,
   messageSituations,
   abroadSituation,
@@ -142,7 +143,11 @@ export type Runtime = {
   publicBaseUrl?: string;
   replySettleMs?: number;
   /** Finds a named apartment project on a map, to learn its locality. */
-  lookupPlace?: (query: string, city?: string) => Promise<{ name: string; locality: string | null; city: string | null; pincode: string | null; underConstruction: boolean } | null>;
+  lookupPlace?: (query: string, city?: string) => Promise<
+    | { name: string; locality: string | null; city: string | null; pincode: string | null; underConstruction: boolean; kind?: "apartment" | "villa" | null; address?: string | null; source?: string }
+    | { missing: string; source: string }
+    | null
+  >;
   /** Waits like a person reading and typing. Left out in tests, so replies go straight away. */
   pause?: (ms: number) => Promise<void>;
 };
@@ -1517,11 +1522,18 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         && !/\d\s*-?\s*(bhk|rk)\b|\bstudio\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
         absorbed.answers[bhkQuestion.id] = recordedAnswers[bhkQuestion.id]!;
       }
+      const placeText = placeAnswer(questions, absorbed.answers).slice(0, 120);
+      const ownLand = ownLandHome(prospectBodies.join("\n"));
+      const place = placeText && runtime.lookupPlace && !ownLand
+        ? await runtime.lookupPlace(placeText, agent.serviceArea.split(/[,\n]+/)[0]?.trim() || undefined).catch(() => null)
+        : null;
+      const found = place && !("missing" in place) ? place : null;
+      const mapType = found?.kind ? homeTypeName(found.kind) : null;
       const bareBhk = formRead ? undefined : freshText.trim().toLowerCase().match(/^(?:it(?:'s| is) )?(?:a )?([1-9]|one|two|three|four|five|six|seven|eight)(?: (?:bed ?rooms?|bedrooms|rooms))?(?: sir| ji| bro)?\.?$/)?.[1];
       if (bhkQuestion && bareBhk && /\bbhk\b|\bbed ?rooms?\b/i.test(lastAsk) && !/\d\s*-?\s*(bhk|rk)\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
         const words = ["one", "two", "three", "four", "five", "six", "seven", "eight"];
         const count = /\d/.test(bareBhk) ? bareBhk : String(words.indexOf(bareBhk) + 1);
-        const kind = homeTypeName(prospectBodies.join("\n"));
+        const kind = homeTypeName(prospectBodies.join("\n")) ?? mapType;
         absorbed.answers[bhkQuestion.id] = `${count} BHK${kind ? ` ${kind}` : ""}`;
       }
       const plansSeen = [...prospectBodies].reverse().map((body) => body.match(PHOTO_SEEN)?.[1] ?? body.match(DOCUMENT_SEEN)?.[2] ?? "")
@@ -1547,14 +1559,18 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       }
       if (bhkQuestion && !/\d\s*-?\s*(bhk|rk)\b|\bstudio\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
         homeKind = prospectBodies.join("\n").match(/\b(apartment|appartment|flat|villa|bungalow|independent house|individual house|row house|duplex|penthouse)\b/i)?.[1]?.toLowerCase() ?? null;
+        const saidKind = Boolean(homeKind);
+        if (!homeKind && found?.kind) homeKind = found.kind;
         if (homeKind) {
           delete absorbed.answers[bhkQuestion.id];
           const type = homeTypeName(homeKind);
-          memoryLines.push(`They already said it is ${/^[aeiou]/.test(homeKind) ? "an" : "a"} ${homeKind}${type && type.toLowerCase() !== homeKind ? ` (${type.toLowerCase()})` : ""}. Never ask the home type again; when the BHK is your next detail, ask only how many BHK.`);
+          memoryLines.push(saidKind || !found?.kind
+            ? `They already said it is ${/^[aeiou]/.test(homeKind) ? "an" : "a"} ${homeKind}${type && type.toLowerCase() !== homeKind ? ` (${type.toLowerCase()})` : ""}. Never ask the home type again; when the BHK is your next detail, ask only how many BHK.`
+            : `Google Maps lists ${found.name} as ${found.kind === "apartment" ? "an apartment" : "a villa"} project, so take it as ${found.kind === "apartment" ? "an apartment" : "a villa"}. Never ask apartment, villa or independent house; when the BHK is your next detail, ask only how many BHK in words that let them correct you, like "how many BHK is ur ${found.kind === "apartment" ? "flat" : "villa"} in ${found.name}?".`);
         }
       } else if (bhkQuestion) {
         const value = absorbed.answers[bhkQuestion.id]!;
-        const type = homeTypeName(value) ?? homeTypeName(prospectBodies.join("\n"));
+        const type = homeTypeName(value) ?? homeTypeName(prospectBodies.join("\n")) ?? mapType;
         const size = value.match(/\d+\s*-?\s*(?:bhk|rk)\b/i)?.[0]?.replace(/\s*-?\s*(bhk|rk)/i, (_, unit: string) => ` ${unit.toUpperCase()}`);
         if (type && size) absorbed.answers[bhkQuestion.id] = `${size} ${type}`;
       }
@@ -1669,15 +1685,15 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         memoryLines.push(check.line);
         if (check.questionId) checkedIds.push(check.questionId);
       }
-      const placeText = placeAnswer(questions, absorbed.answers).slice(0, 120);
-      if (placeText && runtime.lookupPlace) {
-        const place = await runtime.lookupPlace(placeText, agent.serviceArea.split(/[,\n]+/)[0]?.trim() || undefined).catch(() => null);
-        if (place) {
-          const livesThere = Object.values(absorbed.answers).some((value) => /^ready\b|\b(living|staying|already (ready|with me|have))\b/i.test(value));
-          const found = `${place.name} is in ${[place.locality, place.city, place.pincode].filter(Boolean).join(", ")} (OpenStreetMap).${place.underConstruction && !livesThere ? " The map marks it as under construction." : ""}`;
-          await noteOnce(`Map: ${place.name.toLowerCase()}`, found);
-          memoryLines.push(`A map lookup of their project found: ${found} If they have not said the locality, you may confirm it naturally once, like "that is in <locality> side, right?", and use the area to make your reply relevant. This is all you know about the project: never invent the builder, flat sizes, possession dates, amenities or prices.`);
-        }
+      if (found) {
+        const livesThere = Object.values(absorbed.answers).some((value) => /^ready\b|\b(living|staying|already (ready|with me|have))\b/i.test(value));
+        const kindNote = found.kind ? ` (${found.kind} project)` : "";
+        const where = [found.locality, found.city, found.pincode].filter(Boolean).join(", ");
+        const seen = `${found.name}${kindNote} is in ${where} (${found.source ?? "map"}).${found.underConstruction && !livesThere ? " The map marks it as under construction." : ""}`;
+        await noteOnce(`Project check: ${placeText.toLowerCase()}`, `Found on ${found.source ?? "the map"}: ${found.name}${kindNote}, ${found.address ?? where}`);
+        memoryLines.push(`A map lookup of their project found: ${seen} If they have not said the locality, you may confirm it naturally once, like "that is in <locality> side, right?", and use the area to make your reply relevant. This is all you know about the project: never invent the builder, flat sizes, possession dates, amenities or prices.`);
+      } else if (place && "missing" in place) {
+        await noteOnce(`Project check: ${placeText.toLowerCase()}`, `"${place.missing}" was not found on ${place.source}. Confirm the project name on the call.`);
       }
       if (agent.hotBudgetLakhs) {
         const budgetValue = questions.filter((question) => /budget/i.test(question.label)).map((question) => absorbed.answers[question.id] ?? "").find(Boolean) ?? "";
@@ -3005,9 +3021,15 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
     if (!record.Company && leadAgent.zohoCompanyFallback) record.Company = leadAgent.zohoCompanyFallback;
     if (lead.rating && lead.rating !== "UNRATED" && leadAgent.zohoRatingField) record[leadAgent.zohoRatingField] = lead.rating;
     const concern = nameConcern(lead.contact.chosenName, [lead.contact.displayName, lead.contact.username]);
+    const projectCheck = await db.message.findFirst({
+      where: { author: "SYSTEM", body: { startsWith: "Project check: " }, createdAt: { gte: lead.createdAt }, conversation: { contactId: lead.contactId, channel: lead.channel } },
+      orderBy: { createdAt: "desc" },
+      select: { body: true },
+    });
     const lines = [
       ...(lead.rating ? [`Lead rating: ${lead.rating}${lead.ratingReason ? ` (${lead.ratingReason})` : ""}`] : []),
       ...placed.lines,
+      ...(projectCheck ? [`Project check: ${projectCheck.body.split(" | ").slice(1).join(" | ")}`] : []),
       ...(lead.timeframeRaw ? [`Preferred call time: ${lead.timeframeRaw}`] : []),
       ...(concern
         ? [concern.kind === "public_figure"

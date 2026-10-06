@@ -97,7 +97,7 @@ describe("documents", () => {
 import { zohoAdapter } from "../src/zoho";
 import { checkWhatsAppNumber, subscribeWhatsAppAccount, whatsappAdapter } from "../src/whatsapp";
 import { cartesiaSpeaker, speechLocale, speechScript, speechSentences } from "../src/cartesia";
-import { osmPlaceLookup } from "../src/places";
+import { bestPlaceLookup, googlePlaceLookup, osmPlaceLookup } from "../src/places";
 
 describe("project lookup", () => {
   const reply = (results: unknown[]) => (async () => new Response(JSON.stringify(results), { status: 200 })) as unknown as typeof fetch;
@@ -109,10 +109,52 @@ describe("project lookup", () => {
       return new Response(JSON.stringify([{ name: "Godrej Splendour (u/c)", type: "construction", address: { suburb: "Belathur", postcode: "560067" } }]), { status: 200 });
     }) as unknown as typeof fetch;
     const place = await osmPlaceLookup({ userAgent: "test", fetcher })("my flat is in Godrej Splendour", "Bengaluru");
-    expect(place).toEqual({ name: "Godrej Splendour", locality: "Belathur", city: null, pincode: "560067", underConstruction: true });
+    expect(place).toEqual({ name: "Godrej Splendour", locality: "Belathur", city: null, pincode: "560067", underConstruction: true, source: "OpenStreetMap" });
     expect(decodeURIComponent(urls[0]!)).toContain("q=Godrej Splendour, Bengaluru");
     expect(await osmPlaceLookup({ userAgent: "test", fetcher: reply([{ name: "HSR Layout", type: "suburb" }]) })("HSR Layout")).toBeNull();
     expect(await osmPlaceLookup({ userAgent: "test", fetcher: reply([{ name: "Brigade Gateway", type: "residential" }]) })("Prestige Shantiniketan")).toBeNull();
+  });
+
+  it("confirms a project on Google Maps only when the name and the city really match", async () => {
+    const parts = (locality: string, pincode: string) => [
+      { longText: locality, types: ["sublocality_level_1", "sublocality", "political"] },
+      { longText: "Bengaluru", types: ["locality", "political"] },
+      { longText: pincode, types: ["postal_code"] },
+    ];
+    const google = (places: unknown[]) => {
+      const bodies: string[] = [];
+      const fetcher = (async (_url: string, init: RequestInit) => {
+        bodies.push(String(init.body));
+        return new Response(JSON.stringify({ places }), { status: 200 });
+      }) as unknown as typeof fetch;
+      return { lookup: googlePlaceLookup({ apiKey: "test", fetcher }), bodies };
+    };
+    const lakeside = { displayName: { text: "Prestige Lakeside Habitat" }, formattedAddress: "Varthur Main Rd, Gunjur, Bengaluru, Karnataka 560087", types: ["apartment_complex", "point_of_interest"], addressComponents: parts("Gunjur", "560087") };
+    const { lookup, bodies } = google([lakeside]);
+    expect(await lookup("whitefield, prestige lakeside habitat", "Bengaluru")).toEqual({
+      name: "Prestige Lakeside Habitat", locality: "Gunjur", city: "Bengaluru", pincode: "560087", underConstruction: false,
+      kind: "apartment", address: "Varthur Main Rd, Gunjur, Bengaluru, Karnataka 560087", source: "Google Maps",
+    });
+    expect(JSON.parse(bodies[0]!).textQuery).toBe("whitefield, Bengaluru");
+    const villas = { displayName: { text: "Adarsh Palm Retreat Villas" }, formattedAddress: "Bellandur, Bengaluru 560103", types: ["housing_complex"], addressComponents: parts("Bellandur", "560103") };
+    expect((await google([villas]).lookup("Adarsh Palm Retreat, Bellandur", "Bengaluru")) as { kind: string }).toMatchObject({ kind: "villa" });
+    const mixed = { displayName: { text: "Sobha City" }, formattedAddress: "Thanisandra, Bengaluru 560077", types: ["housing_complex"], addressComponents: parts("Thanisandra", "560077") };
+    expect(await google([mixed]).lookup("sobha city hebbal", "Bengaluru")).toMatchObject({ name: "Sobha City", kind: null });
+    const otherProject = { displayName: { text: "Brigade Woods" }, formattedAddress: "Whitefield, Bengaluru", types: ["apartment_complex"] };
+    expect(await google([otherProject]).lookup("Brigade Utopia Varthur", "Bengaluru")).toEqual({ missing: "Brigade Utopia Varthur", source: "Google Maps" });
+    const office = { displayName: { text: "Prestige Lakeside Habitat Sales Office" }, formattedAddress: "Bengaluru", types: ["real_estate_agency"] };
+    expect(await google([office]).lookup("Prestige Lakeside Habitat", "Bengaluru")).toEqual({ missing: "Prestige Lakeside Habitat", source: "Google Maps" });
+    const elsewhere = { ...lakeside, formattedAddress: "Hyderabad, Telangana" };
+    expect(await google([elsewhere]).lookup("Prestige Lakeside Habitat", "Bengaluru")).toEqual({ missing: "Prestige Lakeside Habitat", source: "Google Maps" });
+    const area = { displayName: { text: "HSR Layout" }, formattedAddress: "HSR Layout, Bengaluru", types: ["sublocality_level_1", "sublocality", "political"] };
+    expect(await google([area]).lookup("HSR Layout", "Bengaluru")).toBeNull();
+  });
+
+  it("falls back to OpenStreetMap when Google finds nothing", async () => {
+    const osmHit = async () => ({ name: "Godrej Splendour", locality: "Belathur", city: null, pincode: null, underConstruction: false, source: "OpenStreetMap" as const });
+    expect(await bestPlaceLookup(async () => ({ missing: "Godrej Splendour", source: "Google Maps" }), osmHit)("Godrej Splendour")).toMatchObject({ source: "OpenStreetMap" });
+    expect(await bestPlaceLookup(async () => ({ missing: "Xyz Heights", source: "Google Maps" }), async () => null)("Xyz Heights")).toEqual({ missing: "Xyz Heights", source: "Google Maps" });
+    expect(await bestPlaceLookup(async () => { throw new Error("403"); }, async () => null)("Xyz Heights")).toBeNull();
   });
 });
 
