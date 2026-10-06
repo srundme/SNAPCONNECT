@@ -1503,6 +1503,20 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       const plansSeen = [...prospectBodies].reverse().map((body) => body.match(PHOTO_SEEN)?.[1] ?? body.match(DOCUMENT_SEEN)?.[2] ?? "")
         .filter((seen) => FLOOR_PLAN.test(seen));
       const planBhk = plansSeen.map((seen) => seen.match(/\b([1-9])\s*-?\s*BHK\b/i)?.[1]).find(Boolean);
+      const possessionQuestionEarly = questions.find((question) => /\bpossession\b/i.test(question.label));
+      const typedFresh = sinceReply.map((body) => body.replace(PHOTO_SEEN, "").replace(DOCUMENT_SEEN, "")).join(" ");
+      const BUILDING = /\b((?:still |yet )?(?:under|in) construction|construction (?:is )?(?:on|going on|in progress)|not (?:yet )?(?:ready|completed)|yet to be (?:ready|built))\b/i;
+      const READY_HOME = /\b(already ready|(?:home|house|flat|villa) is ready|living there|staying there|moved in|got the keys)\b/i;
+      if (possessionQuestionEarly && !absorbed.answers[possessionQuestionEarly.id] && !recordedAnswers[possessionQuestionEarly.id]) {
+        if (BUILDING.test(typedFresh)) absorbed.answers[possessionQuestionEarly.id] = "Under construction";
+        else if (READY_HOME.test(typedFresh)) absorbed.answers[possessionQuestionEarly.id] = "Ready";
+      }
+      const possessionKnown = possessionQuestionEarly ? absorbed.answers[possessionQuestionEarly.id] ?? "" : "";
+      const possessionDated = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|20\d\d|next (?:month|year)|this (?:month|year)|in \d+ months?)\b/i.test(`${possessionKnown} ${typedFresh}`);
+      const askedPossessionWhen = spoken.some((message) => message.author === "AI" && /\bwhen\b/i.test(message.body) && /\bpossession\b/i.test(message.body));
+      if (/^under construction$/i.test(possessionKnown) && !possessionDated && !askedPossessionWhen) {
+        memoryLines.push("They already said the home is under construction, so it is not ready. Never ask whether the home is ready, and never repeat the possession question as it is written. Ask once, in a few words, only when they expect possession.");
+      }
       if (bhkQuestion && planBhk && !/\d\s*-?\s*(bhk|rk)\b/i.test(recordedAnswers[bhkQuestion.id] ?? "") && !/\d\s*-?\s*(bhk|rk)\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
         const kind = homeTypeName(prospectBodies.filter((body) => !PHOTO_SEEN.test(body)).join("\n")) ?? homeTypeName(plansSeen[0] ?? "");
         absorbed.answers[bhkQuestion.id] = `${planBhk} BHK${kind ? ` ${kind}` : ""} (from the floor plan)`;
