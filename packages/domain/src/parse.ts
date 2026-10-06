@@ -63,10 +63,21 @@ export function parsePhone(text: string | null | undefined, defaultRegion = "IN"
   const raw = (text ?? "").trim();
   if (!raw) return { kind: "absent" };
   if (DECLINED.test(raw) && !/\d{5,}/.test(raw)) return { kind: "declined", raw };
-  const parsed = parsePhoneNumberFromString(raw, defaultRegion as "IN");
+  const parsed = parsePhoneNumberFromString(raw.replace(/^\s*00(?=[1-9])/, "+"), defaultRegion as "IN");
   if (!parsed || !parsed.isValid()) return { kind: "invalid", raw };
-  if (parsed.country === "IN" && !realIndianMobile(String(parsed.nationalNumber))) return { kind: "invalid", raw };
+  const national = String(parsed.nationalNumber);
+  if (parsed.country === "IN" ? !realIndianMobile(national) : patternedNumber(national)) return { kind: "invalid", raw };
   return { kind: "valid", e164: parsed.number, raw };
+}
+
+/** Digits someone types to get past a form, in any country: one digit over and over, a short repeat, or a run like 12345678. */
+function patternedNumber(national: string): boolean {
+  if (/(\d)\1{6,}/.test(national) || /^(\d{1,2})\1+$/.test(national)) return true;
+  for (let start = 0; start + 8 <= national.length; start += 1) {
+    const run = national.slice(start, start + 8);
+    if (ASCENDING.includes(run) || DESCENDING.includes(run)) return true;
+  }
+  return false;
 }
 
 const ASCENDING = "01234567890123456789";
@@ -93,7 +104,8 @@ export function wrongPhoneIn(text: string, defaultRegion = "IN", minDigits = 6):
   const runs = digitRuns(text, minDigits);
   if (!runs.length) return null;
   if (runs.some((run) => parsePhone(run, defaultRegion).kind === "valid")) return null;
-  return runs[0].replace(/\D/g, "");
+  const first = runs[0]!;
+  return `${/^\+|^00/.test(first) ? "+" : ""}${first.replace(/\D/g, "").replace(/^00/, "")}`;
 }
 
 export function validPhonesIn(text: string, defaultRegion = "IN"): string[] {

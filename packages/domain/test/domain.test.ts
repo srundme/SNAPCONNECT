@@ -1010,7 +1010,8 @@ describe("name sanity", () => {
 describe("human reply style", () => {
   it("says what is wrong with a number", () => {
     expect(phoneProblem("9876543210")).toBe("that looks like a sample number, not a real one");
-    expect(phoneProblem("63836532798179")).toBe("that has 14 digits, and a mobile number has 10");
+    expect(phoneProblem("63836532798179")).toMatch(/^that has 14 digits, and an Indian mobile number has 10\./);
+    expect(phoneProblem("98450123")).toBe("that has 8 digits, and a mobile number has 10");
     expect(phoneProblem("3346686789")).toBe("Indian mobile numbers start with 6, 7, 8 or 9");
   });
 

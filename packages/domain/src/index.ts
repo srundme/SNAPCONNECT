@@ -16,6 +16,7 @@ export * from "./identity";
 export * from "./style";
 export * from "./agent";
 export * from "./sense";
+export * from "./situations";
 
 export function pausesBlock(flags: {
   platform: boolean;

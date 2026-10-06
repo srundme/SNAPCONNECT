@@ -6,6 +6,9 @@ import {
   customerComplaint,
   agreesToWhatsAppNumber,
   contextChecks,
+  messageSituations,
+  abroadSituation,
+  dayOffLine,
   askSameNumber,
   asksSameNumberIn,
   type LeadQuestion,
@@ -1210,7 +1213,12 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       clockLine(runtime.now()),
       elsewhere,
       conversation.contact.memory ? `What you remember about this person from earlier chats:\n${conversation.contact.memory}` : "",
-      lead.crmState === "SYNCED" ? "Their details already went to the team earlier. Do not collect them again." : "",
+      lead.crmState === "SYNCED"
+        ? gapHours >= 72
+          ? "Their details already went to the team earlier, and they are coming back days later. Welcome them back and do not restart the questions. Ask what they need now. If it is about a project already underway, that is for the team, so offer to have the team take it."
+          : "Their details already went to the team earlier. Do not collect them again."
+        : "",
+      dayOffLine(runtime.now(), agent.holidays, agent.workingHours),
       conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI")
         ? `They messaged ${workspace.brandName} on WhatsApp. This is your first reply: greet them, say you are ${workspace.agentName ?? "the assistant"}, an automated assistant for ${workspace.brandName}, then continue.`
         : "",
@@ -1225,6 +1233,31 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         ? `They are messaging again after ${gapHours >= 48 ? `${Math.round(gapHours / 24)} days` : `${Math.round(gapHours)} hours`}. Welcome them back in a few words and continue from where you stopped.`
         : "",
     ].filter(Boolean);
+    const noteOnce = async (marker: string, note: string) => {
+      const noted = await db.message.findFirst({ where: { conversationId, author: "SYSTEM", body: { startsWith: marker } }, select: { id: true } });
+      if (noted) return false;
+      await db.message.create({
+        data: { workspaceId: workspace.id, connectionId: conversation.connectionId, conversationId, author: "SYSTEM", body: `${marker} | ${note}`, createdAt: runtime.now() },
+      });
+      return true;
+    };
+    const lastAiAt = [...spoken].reverse().find((message) => message.author === "AI")?.createdAt;
+    const prospectBodies = spoken.filter((message) => message.author === "PROSPECT").map((message) => message.body);
+    const freshText = spoken
+      .filter((message) => message.author === "PROSPECT" && (!lastAiAt || message.createdAt > lastAiAt))
+      .map((message) => message.body)
+      .join("\n");
+    let situationHandoff: string | null = null;
+    for (const situation of customerComplaint(freshText) ? [] : messageSituations(freshText, workspace.brandName)) {
+      if (!(await noteOnce(`Situation: ${situation.key}`, situation.note))) continue;
+      memoryLines.push(situation.line);
+      situationHandoff ??= situation.handoff ?? null;
+    }
+    const abroad = abroadSituation({ phoneE164: lead.whatsappE164 ?? lead.phoneE164, texts: prospectBodies, now: runtime.now() });
+    if (abroad) {
+      await noteOnce(`Situation: ${abroad.key}`, abroad.note);
+      memoryLines.push(abroad.line);
+    }
     const prompts = resolveReplyPrompts(workspace.replyPrompts);
     const sourceMediaId = conversation.sourceMediaId ?? lead.sourceMediaId;
     const posts = await db.media.findMany({
@@ -1302,19 +1335,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         memoryLines.push(`They said their ${doubt.label.toLowerCase()} is ${doubt.value.toLocaleString("en-IN")}, which is not realistic for this enquiry. It is almost surely a joke or a slip. Do not record it, never say noted and never repeat it back as fact. React like a person who got the joke: ${agent.laughter ? "start your reply with a short haha, then" : "with a light touch,"} ask for the real number.`);
       }
       for (const check of contextChecks({ questions, answers: absorbed.answers, now: runtime.now(), serviceArea: agent.serviceArea })) {
-        const marker = `Check: ${check.key}`;
-        const noted = await db.message.findFirst({ where: { conversationId, author: "SYSTEM", body: { startsWith: marker } }, select: { id: true } });
-        if (noted) continue;
-        await db.message.create({
-          data: {
-            workspaceId: workspace.id,
-            connectionId: conversation.connectionId,
-            conversationId,
-            author: "SYSTEM",
-            body: `${marker} | ${check.note}`,
-            createdAt: runtime.now(),
-          },
-        });
+        if (!(await noteOnce(`Check: ${check.key}`, check.note))) continue;
         memoryLines.push(check.line);
         if (check.questionId) checkedIds.push(check.questionId);
       }
@@ -1436,7 +1457,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? wrongInEdit ?? wrongPhoneIn(latestProspect, runtime.phoneRegion, nextDetail?.kind === "phone" ? 6 : 8)
       : null;
     const wrongNumberLine = wrongNumber
-      ? `They typed ${wrongNumber} as their number, but that is not a real mobile number (an Indian mobile number has exactly 10 digits, starts with 6, 7, 8 or 9, and is never a pattern like 9876543210, 1234567890 or 9999999999). Do not say it is noted, saved or updated, and do not repeat it. Tell them briefly what is wrong: ${phoneProblem(wrongNumber)}. Then ask them to send it again. If you already asked before, say it differently this time, like a person would. Do not ask any other question.`
+      ? `They typed ${wrongNumber} as their number, but that is not a real phone number (an Indian mobile number has exactly 10 digits, starts with 6, 7, 8 or 9, and is never a pattern like 9876543210, 1234567890 or 9999999999; a number from another country is welcome when it has the + and its country code and is a real number for that country). Do not say it is noted, saved or updated, and do not repeat it. Tell them briefly what is wrong: ${phoneProblem(wrongNumber)}. Then ask them to send it again. If you already asked before, say it differently this time, like a person would. Do not ask any other question.`
       : null;
     const safety = questions.length
       ? [
@@ -1488,7 +1509,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           teamNotes: context.account || null,
           questions,
           recorded,
-          nextDetail: nextDetail ?? null,
+          nextDetail: situationHandoff ? null : nextDetail ?? null,
           ready: Boolean(complete?.ready),
           cold: Boolean(complete?.cold),
           minutesSinceSent: firstSync ? (runtime.now().getTime() - firstSync.updatedAt.getTime()) / 60_000 : null,
@@ -1712,11 +1733,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const statement = validated.reply
       ? validated.reply.split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?")).join(" ").trim()
       : "";
-    const echoesWrongNumber = Boolean(wrongNumber && validated.reply && validated.reply.replace(/\D/g, "").includes(wrongNumber));
+    const echoesWrongNumber = Boolean(wrongNumber && validated.reply && validated.reply.replace(/\D/g, "").includes(wrongNumber.replace(/\D/g, "")));
     const composed = wrongNumber && phoneQuestion && (!validated.reply || echoesWrongNumber || !replyAsksFor(phoneQuestion, validated.reply))
       ? `Hmm, ${phoneProblem(wrongNumber)}. ${scriptQuestionFor(phoneQuestion, languageSample ? languageName(languageSample) : null)}`
       : pending && validated.reply
-      ? replyAsksFor(pending, validated.reply) || asksSomething(validated.reply) || validated.reply.length >= 60 || raisesConcern(latestUser) || customerComplaint(latestUser)
+      ? replyAsksFor(pending, validated.reply) || asksSomething(validated.reply) || validated.reply.length >= 60 || raisesConcern(latestUser) || customerComplaint(latestUser) || Boolean(situationHandoff)
         ? validated.reply
         : [statement, askQuestion(pending)].filter(Boolean).join(" ")
       : validated.reply ?? fallback;
@@ -1727,7 +1748,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : [];
     const nextQuestion = questions.find((question) => question.id === checkedIds[0]) ?? nextDetail ?? pending;
     const kept = composed && answered.length ? dropAnsweredQuestions(composed, questions, answered) : composed;
-    const unasked = composed && kept !== composed && asksSomething(composed) && !asksSomething(kept ?? "") && nextQuestion
+    const unasked = composed && !situationHandoff && kept !== composed && asksSomething(composed) && !asksSomething(kept ?? "") && nextQuestion
       ? [kept, askQuestion(nextQuestion)].filter(Boolean).join(" ")
       : kept || composed;
     const numbered = unasked && numberPending && waNumber ? askSameNumber(unasked, waNumber) : unasked;
@@ -1841,8 +1862,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         ].filter(Boolean).join("; ") || null,
       },
     });
-    if (customerComplaint(latestUser)) {
-      await handoff(db, conversation.id, lead.id, "Customer complaint. Staff should take this chat.");
+    if (customerComplaint(latestUser) || situationHandoff) {
+      await handoff(db, conversation.id, lead.id, situationHandoff ?? "Customer complaint. Staff should take this chat.");
       await refreshMemory(db, runtime, conversation.contact, spoken);
       return "done";
     }
@@ -2152,7 +2173,6 @@ async function readLeadForm(
   }
 }
 
-/** The model has no clock of its own; every reply gets the real day, date and time in India. */
 /** People who send several quick messages are still typing, so Varun waits longer before answering all of them together. */
 function settleMs(runtime: Runtime, previousInbound: Date | null, sentAt: Date): number {
   const base = runtime.replySettleMs ?? 0;
@@ -2160,6 +2180,7 @@ function settleMs(runtime: Runtime, previousInbound: Date | null, sentAt: Date):
   return base && burst ? base + 5_000 : base;
 }
 
+/** The model has no clock of its own; every reply gets the real day, date and time in India. */
 export function clockLine(now: Date): string {
   const when = new Intl.DateTimeFormat("en-IN", {
     timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true,

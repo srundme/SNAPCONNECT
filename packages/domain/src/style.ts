@@ -1,9 +1,14 @@
 const SAMPLE_NUMBERS = new Set(["9876543210", "1234567890", "0123456789", "9123456789", "9898989898"]);
 
 /** Says what is actually wrong with a number, so the reply is specific instead of a generic "looks incorrect". */
-export function phoneProblem(digits: string): string {
+export function phoneProblem(number: string): string {
+  const digits = number.replace(/\D/g, "");
+  if (number.startsWith("+") && !digits.startsWith("91")) {
+    return /(\d)\1{6,}/.test(digits) ? "that looks like a made-up number, not a real one" : "that does not look like a complete number for that country code, so the digits after the code may be off";
+  }
   const local = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
   if (SAMPLE_NUMBERS.has(local) || /^(\d)\1{9}$/.test(local)) return "that looks like a sample number, not a real one";
+  if (local.length > 10) return `that has ${local.length} digits, and an Indian mobile number has 10. If it is a number from another country, send it with the + and country code`;
   if (local.length !== 10) return `that has ${local.length} digits, and a mobile number has 10`;
   if (!/^[6-9]/.test(local)) return "Indian mobile numbers start with 6, 7, 8 or 9";
   return "that does not look like a working mobile number";
@@ -25,6 +30,31 @@ export function rupeesIn(text: string): number | null {
   return Number.isFinite(amount) ? amount * (unit ? unit[1] : 1) : null;
 }
 
+/** A budget written as a bare small number, like "3" or "15", which in Indian home interiors means lakhs. */
+export function bareBudget(text: string): number | null {
+  if (/[a-z₹]/i.test(text.replace(/\b(around|about|approx\w*|max\w*|only|budget|is|my|ok)\b/gi, ""))) return null;
+  const value = Number(text.replace(/[^\d.]/g, ""));
+  return Number.isFinite(value) && value >= 1 && value < 100 ? value : null;
+}
+
+const SIZE_UNITS: Array<{ pattern: RegExp; unit: string; factor: number; plot?: boolean }> = [
+  { pattern: /\b(?:sq\.?\s*m(?:eters?|etres?|trs?|t)?|sqm|square\s*met(?:er|re)s?|m2)\b|m²/i, unit: "sq m", factor: 10.764 },
+  { pattern: /\b(?:sq\.?\s*y(?:ar)?ds?|square\s*yards?|gaj|gajam)\b/i, unit: "sq yards", factor: 9 },
+  { pattern: /\bcents?\b/i, unit: "cents", factor: 435.6, plot: true },
+  { pattern: /\bg(?:u|h)nth?as?\b/i, unit: "guntas", factor: 1089, plot: true },
+  { pattern: /\bacres?\b/i, unit: "acres", factor: 43_560, plot: true },
+];
+
+/** Reads a home size in any unit people use in India, as square feet. A plot or land size is marked as such. */
+export function sizeIn(text: string): { value: number; unit: string | null; feet: number; plot: boolean } | null {
+  const value = Number(text.replace(/,/g, "").match(/\d+(?:\.\d+)?/)?.[0] ?? NaN);
+  if (!Number.isFinite(value)) return null;
+  const known = SIZE_UNITS.find((item) => item.pattern.test(text));
+  const plot = Boolean(known?.plot) || /\b(plot|site|land)\b/i.test(text);
+  if (known) return { value, unit: known.unit, feet: value * known.factor, plot };
+  return { value, unit: plot ? "sq ft of plot" : null, feet: value, plot };
+}
+
 /**
  * Answers no real customer would give: a telecalling team of lakhs, crores of calls a month, a home
  * budget of a few hundred rupees or hundreds of crores, a flat of a lakh square feet. These are jokes
@@ -37,11 +67,12 @@ export function unrealisticAnswers(
   return questions.flatMap((question) => {
     const raw = String(answers[question.id] ?? "");
     if (/budget|price|spend|cost/i.test(question.label)) {
+      if (bareBudget(raw) !== null) return [];
       const rupees = rupeesIn(raw);
       return rupees && (rupees < 10_000 || rupees > 5_000_000_000) ? [{ id: question.id, label: question.label, value: rupees }] : [];
     }
     if (/sq\.?\s*ft|square|carpet/i.test(question.label)) {
-      const feet = Number(raw.replace(/,/g, "").match(/\d+(?:\.\d+)?/)?.[0]);
+      const feet = sizeIn(raw)?.feet ?? NaN;
       return Number.isFinite(feet) && feet > 0 && (feet < 100 || feet > 100_000) ? [{ id: question.id, label: question.label, value: feet }] : [];
     }
     const value = Number(raw.replace(/[,\s]/g, ""));

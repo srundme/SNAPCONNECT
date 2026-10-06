@@ -1,4 +1,4 @@
-import { rupeesIn } from "./style";
+import { bareBudget, rupeesIn, sizeIn } from "./style";
 
 export type ContextCheck = {
   /** Stable for the same answers, so each doubt is raised once and again only when the answer changes. */
@@ -67,6 +67,56 @@ function pastDate(text: string, now: Date): string | null {
   return null;
 }
 
+/** How many months ahead a date like "March 2028", "end of 2027" or "after 2 years" is. */
+function monthsAway(text: string, now: Date): number | null {
+  const years = text.match(/\b(?:after|in)\s+(\d+(?:\.\d+)?)\s*(?:years?|yrs?)\b/i);
+  if (years) return Math.round(Number(years[1]) * 12);
+  const year = Number(text.match(/\b(20\d{2})\b/)?.[1] ?? NaN);
+  if (!Number.isFinite(year)) return null;
+  const named = MONTHS.findIndex((month) => new RegExp(`\\b${month}[a-z]*\\b`, "i").test(text));
+  const month = named >= 0 ? named : /\bend\b/i.test(text) ? 11 : /\b(start|early|beginning)\b/i.test(text) ? 0 : 6;
+  return (year - now.getFullYear()) * 12 + month - now.getMonth();
+}
+
+/** A budget whose meaning is unclear: a rate per sq ft, a bare "3", a few thousand for a full home, or a crore for a flat. */
+function budgetShorthand(
+  text: string,
+  budget: number | null,
+  home: { fullHome: boolean; villa: boolean; bhk: number | null },
+): Omit<ContextCheck, "questionId"> | null {
+  if (!text || budget === null) return null;
+  if (/per\s*(sq|square|ft|sft)|\/\s*(sq|sft)|\bpsf\b/i.test(text)) {
+    return {
+      key: `budget-rate:${budget}`,
+      note: `Budget given as a rate per sq ft: "${text}".`,
+      line: `They gave a rate per sq ft ("${text}"), not a total budget. That is fine: do not do the maths and do not quote a total. If it fits, lightly ask what total budget they have in mind.`,
+    };
+  }
+  const bare = bareBudget(text);
+  if (bare !== null) {
+    return {
+      key: `budget-unit:${bare}`,
+      note: `Budget "${text}" has no unit; most likely ${bare} lakh.`,
+      line: `They said "${text}" for the budget with no unit. For home interiors that almost surely means ${bare} lakh. Confirm it lightly in a few words, like "${bare} lakh, right?", and never laugh at it.`,
+    };
+  }
+  if (budget >= 1_000 && budget < 100_000 && home.fullHome) {
+    return {
+      key: `budget-small:${budget}`,
+      note: `Budget "${text}" for a full home; they may mean lakhs or a budget per room.`,
+      line: `They said "${text}" for the full home, which is far below what any full home costs. They may mean lakhs, or a budget per room. Check lightly what they meant, without making them feel bad.`,
+    };
+  }
+  if (budget >= 10_000_000 && !home.villa && home.bhk && home.bhk <= 4) {
+    return {
+      key: `budget-crore:${budget}`,
+      note: `Budget "${text}" is very high for a flat's interiors; it may be the flat's price.`,
+      line: `They said "${text}". For a flat's interiors that is very high, so it may be the price of the flat itself. Lightly check whether that is the budget for the interiors.`,
+    };
+  }
+  return null;
+}
+
 function otherCity(text: string, serviceArea: string[]): string | null {
   const lower = ` ${text.toLowerCase().replace(/[^a-z ]+/g, " ")} `;
   if (serviceArea.some((place) => place && lower.includes(` ${place} `))) return null;
@@ -92,10 +142,14 @@ export function contextChecks(input: {
 
   const budgetText = answerFor(questions, answers, BUDGET);
   const budget = budgetText ? rupeesIn(budgetText) : null;
+  const budgetId = questionFor(questions, BUDGET)?.id ?? null;
   const scope = answerFor(questions, answers, SCOPE);
   const fullHome = /\b(full|whole|entire|complete|all rooms|end to end)\b/i.test(scope);
   const floor = villa ? 1_000_000 : bhk ? FULL_HOME_FLOOR[Math.min(bhk, 5)] : undefined;
-  if (budget && budget >= 10_000 && fullHome && floor && budget < floor) {
+  const shorthand = budgetShorthand(budgetText, budget, { fullHome, villa, bhk });
+  if (shorthand) {
+    checks.push({ ...shorthand, questionId: budgetId });
+  } else if (budget && budget >= 10_000 && fullHome && floor && budget < floor) {
     const what = villa ? "full villa" : `full ${bhk} BHK`;
     checks.push({
       key: `budget-scope:${budget}:${what}`,
@@ -106,19 +160,44 @@ export function contextChecks(input: {
   }
 
   const sizeText = answerFor(questions, answers, SIZE);
-  const feet = Number(sizeText.replace(/,/g, "").match(/\d+(?:\.\d+)?/)?.[0] ?? NaN);
-  const range = bhk && !villa ? CARPET_RANGE[Math.min(bhk, 5)] : undefined;
-  if (Number.isFinite(feet) && feet >= 100 && range && (feet < range[0] || feet > range[1])) {
+  const size = sizeIn(sizeText);
+  const feet = size?.feet ?? NaN;
+  const sizeId = questionFor(questions, SIZE)?.id ?? null;
+  if (size?.unit) {
     checks.push({
-      key: `area-bhk:${feet}:${bhk}`,
-      questionId: questionFor(questions, SIZE)?.id ?? null,
-      note: `${feet.toLocaleString("en-IN")} sq ft for a ${bhk} BHK is unusual. Confirm on the call.`,
-      line: `They said ${feet.toLocaleString("en-IN")} sq ft for a ${bhk} BHK, which is unusual (a ${bhk} BHK is usually about ${range[0]} to ${range[1]} sq ft carpet). Check once, lightly, whether that is carpet or built-up area or a typo. Do not insist, accept what they say.`,
+      key: `area-unit:${size.value}:${size.unit}`,
+      questionId: null,
+      note: `Size given as ${size.value} ${size.unit}${size.plot ? " (land or plot size, not the carpet area)" : `, about ${Math.round(feet).toLocaleString("en-IN")} sq ft`}.`,
+      line: size.plot
+        ? `They gave ${size.value} ${size.unit}, which is the land or plot size, not the carpet area of the home. That is fine. If it matters, lightly ask the built-up or carpet area of the home itself.`
+        : `They gave the size as ${size.value} ${size.unit}, which is about ${Math.round(feet).toLocaleString("en-IN")} sq ft. Understand it that way and do not ask again for the size.`,
+    });
+  }
+  const builtUp = /\b(built[- ]?up|super|sba|saleable)\b/i.test(sizeText);
+  const range = bhk && !villa && !size?.plot ? CARPET_RANGE[Math.min(bhk, 5)] : undefined;
+  const upper = range ? range[1] * (builtUp ? 1.4 : 1) : 0;
+  if (Number.isFinite(feet) && feet >= 100 && range && (feet < range[0] || feet > upper)) {
+    const shown = Math.round(feet).toLocaleString("en-IN");
+    checks.push({
+      key: `area-bhk:${Math.round(feet)}:${bhk}`,
+      questionId: sizeId,
+      note: `${shown} sq ft for a ${bhk} BHK is unusual. Confirm on the call.`,
+      line: `They said ${shown} sq ft for a ${bhk} BHK, which is unusual (a ${bhk} BHK is usually about ${range[0]} to ${range[1]} sq ft carpet). Check once, lightly, whether that is carpet or built-up area or a typo. Do not insist, accept what they say.`,
     });
   }
 
   for (const question of questions.filter((item) => WHEN.test(item.label))) {
     const text = String(answers[question.id] ?? "");
+    const far = text ? monthsAway(text, input.now) : null;
+    if (far !== null && far > 12) {
+      checks.push({
+        key: `far-date:${question.id}:${far}`,
+        questionId: null,
+        note: `Early stage: "${text}" is about ${far} months away. Not urgent; keep in touch.`,
+        line: `They said "${text}", which is more than a year away, so they are early. Help them fully and keep it warm, but do not push for a call or a site visit now. Say the team can plan the design closer to the date, or start early on design if they want to.`,
+      });
+      continue;
+    }
     const past = text ? pastDate(text, input.now) : null;
     if (!past) continue;
     checks.push({

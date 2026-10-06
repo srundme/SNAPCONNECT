@@ -37,6 +37,7 @@ export type AgentFormSettings = {
   pricingAnswer: string;
   workingHours: string;
   serviceArea: string;
+  holidays: string;
   complaintContact: string;
   rules: string;
   realityChecks: string;
@@ -183,6 +184,11 @@ export function AgentForm({
             <label>Working hours<input name="workingHours" maxLength={200} defaultValue={settings.workingHours} placeholder="Tuesday to Sunday, 10 AM to 7 PM" /></label>
             <label>Complaints go to<input name="complaintContact" maxLength={300} defaultValue={settings.complaintContact} placeholder="+91 70227 25656 or support@company.com" /></label>
             <label className="sm:col-span-2">Service area<input name="serviceArea" maxLength={300} defaultValue={settings.serviceArea} placeholder="Bengaluru, Bangalore" /><span className="text-[12px] text-[var(--color-muted)]">City names, comma separated. A home in another city is flagged for the team instead of promised.</span></label>
+            <label className="sm:col-span-2">
+              Holidays
+              <textarea name="holidays" rows={3} maxLength={2000} defaultValue={settings.holidays} placeholder={"2026-11-08 Deepavali\n11-01 Kannada Rajyotsava"} />
+              <span className="text-[12px] text-[var(--color-muted)]">One per line: date (YYYY-MM-DD, or MM-DD for every year) and name. On these days the agent wishes them and says the team calls the next working day.</span>
+            </label>
             <label className="sm:col-span-2">
               Rules
               <textarea name="rules" rows={8} maxLength={6000} defaultValue={settings.rules} placeholder={"Never promise a discount or EMI.\nNever confirm a visit slot."} />

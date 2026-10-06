@@ -19,6 +19,13 @@ import {
   salesBriefing,
   screenLead,
   unrealisticAnswers,
+  messageSituations,
+  abroadSituation,
+  dayOffLine,
+  openDays,
+  parsePhone,
+  wrongPhoneIn,
+  phoneProblem,
 } from "../src/index";
 
 describe("English chats stay English", () => {
@@ -86,6 +93,85 @@ describe("common sense checks", () => {
     expect(keys({ place: "Anna Nagar, Chennai" })).toEqual(["outside-area"]);
     expect(keys({ place: "HSR Layout" })).toEqual([]);
     expect(keys({ place: "Whitefield, Bangalore" })).toEqual([]);
+  });
+
+  it("reads budget shorthand instead of treating it as a joke", () => {
+    expect(keys({ type: "3 BHK", scope: "Full home", budget: "15" })).toEqual(["budget-unit"]);
+    expect(unrealisticAnswers(questions, { budget: "15" })).toEqual([]);
+    expect(keys({ type: "3 BHK", scope: "Full home", budget: "30k" })).toEqual(["budget-small"]);
+    expect(keys({ type: "3 BHK", scope: "Full home", budget: "1.5 cr" })).toEqual(["budget-crore"]);
+    expect(keys({ type: "3 BHK", budget: "2000 per sq ft" })).toEqual(["budget-rate"]);
+  });
+
+  it("understands other area units and plot sizes", () => {
+    expect(keys({ type: "3 BHK", size: "120 sq m" })).toEqual(["area-unit"]);
+    expect(unrealisticAnswers(questions, { size: "75 sq m" })).toEqual([]);
+    expect(keys({ type: "3 BHK villa", size: "5 cents plot" })).toEqual(["area-unit"]);
+    expect(keys({ type: "3 BHK", size: "1800 sq ft super built up" })).toEqual([]);
+  });
+
+  it("marks a possession date far away as early stage", () => {
+    expect(keys({ when: "March 2028" })).toEqual(["far-date"]);
+    expect(keys({ when: "after 2 years" })).toEqual(["far-date"]);
+    expect(keys({ when: "June 2027" })).toEqual([]);
+  });
+});
+
+describe("real-world situations", () => {
+  const keys = (text: string) => messageSituations(text, "The KariGhars").map((item) => item.key.split(":")[0]);
+
+  it("spots people who are not customers and hands them to staff", () => {
+    expect(keys("Hi, I am a carpenter looking for work")).toEqual(["not-a-lead"]);
+    expect(keys("We are manufacturers of modular kitchen hardware")).toEqual(["not-a-lead"]);
+    expect(keys("any job vacancy for interior designer?")).toEqual(["not-a-lead"]);
+    expect(messageSituations("Earn 5000 daily, click here", "The KariGhars")[0]?.handoff).toBeTruthy();
+    expect(keys("are you single?")).toEqual(["flirt"]);
+    expect(keys("need full home interiors for my 3 BHK")).toEqual([]);
+    expect(keys("can you send photos of your work?")).toEqual([]);
+  });
+
+  it("spots small jobs, rented homes, family enquiries and someone else's number", () => {
+    expect(keys("just need to fix one hinge")).toEqual(["small-job"]);
+    expect(keys("we are staying on rent, need wardrobes")).toEqual(["rented-home"]);
+    expect(keys("planning to rent it out after interiors")).toEqual([]);
+    expect(keys("asking for my parents flat in Jayanagar")).toEqual(["for-someone"]);
+    expect(keys("call my husband on 9845012345")).toEqual(["number-owner"]);
+  });
+
+  it("spots competitor quotes and rushed timelines", () => {
+    expect(keys("Livspace quoted 6 lakh, can you beat that price?")).toEqual(["competitor"]);
+    expect(keys("need it done before griha pravesh")).toEqual(["rush"]);
+    expect(keys("possession is in December")).toEqual([]);
+  });
+
+  it("knows someone is abroad from their number or their words", () => {
+    const now = new Date("2026-10-06T04:00:00Z");
+    expect(abroadSituation({ phoneE164: "+971502847316", texts: [], now })?.line).toMatch(/United Arab Emirates[\s\S]*about .* there now/);
+    expect(abroadSituation({ phoneE164: "+919845012345", texts: ["I'm based in London, flat is in HSR"], now })?.key).toBe("abroad:GB");
+    expect(abroadSituation({ phoneE164: "+919845012345", texts: ["flat in HSR layout"], now })).toBeNull();
+    expect(abroadSituation({ phoneE164: "+14155552671", texts: [], now })?.line).toMatch(/which time zone/);
+  });
+
+  it("knows the team's days off and holidays", () => {
+    expect(openDays("Tuesday to Sunday, 10 AM to 7 PM")?.has("Monday")).toBe(false);
+    expect(dayOffLine(new Date("2026-10-05T06:00:00Z"), "", "Tuesday to Sunday, 10 AM to 7 PM")).toMatch(/Monday.*weekly off.*Tuesday/);
+    expect(dayOffLine(new Date("2026-10-02T06:00:00Z"), "", "Monday to Saturday")).toMatch(/Gandhi Jayanti/);
+    expect(dayOffLine(new Date("2026-11-08T06:00:00Z"), "2026-11-08 Deepavali", "Monday to Saturday")).toMatch(/Deepavali/);
+    expect(dayOffLine(new Date("2026-10-06T06:00:00Z"), "", "Tuesday to Sunday, 10 AM to 7 PM")).toBe("");
+  });
+});
+
+describe("international numbers", () => {
+  it("accepts real foreign numbers and rejects made-up ones the same way as Indian ones", () => {
+    expect(parsePhone("+971 50 284 7316").kind).toBe("valid");
+    expect(parsePhone("00971 50 284 7316").kind).toBe("valid");
+    expect(parsePhone("+44 7911 283946").kind).toBe("valid");
+    expect(parsePhone("+971 55 555 5555").kind).toBe("invalid");
+    expect(parsePhone("+971 50 123 4567").kind).toBe("invalid");
+    expect(parsePhone("+971 50 123").kind).toBe("invalid");
+    expect(wrongPhoneIn("my number +971 50 123", "IN", 6)).toBe("+97150123");
+    expect(phoneProblem("+97150123")).toMatch(/country code/);
+    expect(phoneProblem("971501234567")).toMatch(/country code/);
   });
 });
 

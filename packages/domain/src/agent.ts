@@ -4,6 +4,7 @@ export type AgentSettings = {
   pricingAnswer: string;
   workingHours: string;
   serviceArea: string;
+  holidays: string;
   complaintContact: string;
   rules: string;
   realityChecks: string;
@@ -27,6 +28,7 @@ export const defaultAgentSettings: AgentSettings = {
   pricingAnswer: "Pricing depends on their exact requirement. The team shares exact pricing on the call. Never quote a number.",
   workingHours: "Monday to Saturday, 10 AM to 7 PM",
   serviceArea: "",
+  holidays: "",
   complaintContact: "",
   rules: "",
   realityChecks: "",
@@ -66,6 +68,7 @@ const TEXTS = {
   pricingAnswer: 600,
   workingHours: 200,
   serviceArea: 300,
+  holidays: 2000,
   complaintContact: 300,
   rules: 6000,
   realityChecks: 3000,
