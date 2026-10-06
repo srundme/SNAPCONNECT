@@ -365,7 +365,7 @@ async function otherChannelLine(
   const chats = others.filter((other) => other.messages.length);
   if (!chats.length) return "";
   return [
-    "This same person also chatted with you on another channel. Treat it as one ongoing conversation: never ask again for anything they already told you there, and mention it naturally if it helps, like 'I remember u asked about this on Instagram'.",
+    "This same person also chatted with you on another channel. Treat it as one ongoing conversation: never ask again for anything they already told you there. Do not bring up the other chat on your own; mention it only if they refer to it or it directly answers what they ask now.",
     ...chats.map((other) => `Their ${channelLabel(other.channel)} chat, latest last:\n${other.messages.reverse().map((message) => `${message.author === "AI" ? "You" : "They"}: ${message.body.replace(/\s+/g, " ").slice(0, 200)}`).join("\n")}`),
   ].join("\n");
 }
@@ -1429,7 +1429,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         });
         memoryLines.push(concern.kind === "public_figure"
           ? `They said their name is "${concern.name}", which is the name of ${concern.who}. It is most likely a joke or a test. Do not treat them as that person or get excited about it. In a friendly, light way, ask for their own name, then continue.`
-          : `They said their name is "${concern.name}", but their ${channelLabel(conversation.channel)} profile name is "${concern.profile}". That is often a nickname or someone enquiring for a boss, friend or family member, so never accuse them or mention checking their profile. In this reply, ask once, lightly, whether they are ${concern.name} themselves or messaging on their behalf, then continue. Accept whatever they answer.`);
+          : `They said their name is "${concern.name}". Use that name. Never question it, and never mention their profile name or other chats.`);
       }
     }
     const editedTo = typeof payload.editedTo === "string" ? payload.editedTo : null;

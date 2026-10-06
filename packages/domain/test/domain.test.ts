@@ -763,6 +763,7 @@ describe("ai validation", () => {
     expect(refusesNumber("why do you need my number? will u spam me?")).toBe(false);
     expect(swapNumber("ok sir the team will call on +91 90620 80271.", "+919062080271", "+916383653279")).toBe("ok sir the team will call on +916383653279.");
     expect(swapNumber("noted 9062080271", "+919062080271", "+916383653279")).toBe("noted +916383653279");
+    expect(dropAnsweredQuestions("is the home already ready or when do u get possession", [{ id: "when", label: "When do you get possession, or is the home already ready?", kind: "text", zohoField: null }], ["when"])).toBe("");
     expect(dropAnsweredQuestions("sure sir Which day and time suit u for the team's call? I will note it here.", [{ id: "phone", label: "Which number should the team call you on?", kind: "phone", zohoField: null }], ["phone"])).toBe("sure sir Which day and time suit u for the team's call? I will note it here.");
     expect(dropAnsweredQuestions("budget depends on size...team confirms it...full home ah illa sila rooms mattum ah?", [{ id: "full", label: "Is it the full home or selected rooms?", kind: "text", zohoField: null }], ["full"])).toBe("budget depends on size... team confirms it...");
     expect(absorbTranscript({ questions, messages: [{ author: "AI", body: "Since it is a 2 BHK, may I know your name?" }, { author: "PROSPECT", body: "91 6383653279" }], name: null, phoneE164: "+919061847240", answers: {} }).phoneE164).toBe("+916383653279");

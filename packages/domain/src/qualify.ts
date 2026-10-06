@@ -771,7 +771,8 @@ export function dropAnsweredQuestions(reply: string, questions: LeadQuestion[], 
   const answered = new Set(answeredIds);
   if (!answered.size) return reply;
   const repeatsAnswer = (sentence: string) => {
-    if (!sentence.includes("?") && !ASKING.test(sentence)) return false;
+    const opensAsQuestion = /^\W*(?:(?:ok(?:ay)?|sure|got it|alright|noted|and|so)\W+)*(?:(?:sir|mam|ma'am)\W+)?(is|are|do|does|did|when|what|which|where|how|can|could|will|would|shall|may)\b/i.test(sentence);
+    if (!sentence.includes("?") && !ASKING.test(sentence) && !opensAsQuestion) return false;
     if (/\b(which day|what day|what time|day and time|time suits?|suit (?:u|you)|convenient time|good time)\b/i.test(sentence)) return false;
     const scored = questions.map((question) => ({ question, score: askScore(question, sentence) })).filter((item) => item.score > 0);
     if (!scored.length) return false;
