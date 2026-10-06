@@ -100,6 +100,15 @@ export function dropRepeatGreeting(text: string): string {
   return body || text;
 }
 
+export function fitBhkLinks(text: string, homeType: string, knowledgeBase: string): string {
+  const bhk = homeType.match(/(\d+)\s*-?\s*bhk/i)?.[1];
+  const portfolio = knowledgeBase.match(/https?:\/\/[^\s)]*portfolio[^\s)]*/i)?.[0]?.replace(/[.,]+$/, "") ?? "";
+  return text.replace(/https?:\/\/[^\s)]*?\b(\d+)-bhk[^\s)]*/gi, (link, size: string) => {
+    if (size === bhk) return link;
+    return text.includes(portfolio) ? "" : portfolio;
+  }).replace(/[ \t]{2,}/g, " ");
+}
+
 const REACTIONS = ["Got it", "Sure", "Alright", "Okay", "Right"];
 
 export function naturalAcknowledgement(text: string, earlier: string[], newName?: string | null): string {

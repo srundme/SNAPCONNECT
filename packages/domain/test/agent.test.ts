@@ -110,6 +110,23 @@ describe("common sense checks", () => {
     expect(labelledAnswers(questions, "carpet area 1200 sq ft")).toEqual({ size: "1200 sq ft" });
   });
 
+  it("knows a renovation is a ready home and picks up a typed email", () => {
+    const withEmail = [...questions, { id: "email", label: "Email for the team to share designs?" }];
+    expect(labelledAnswers(questions, "Yes sir I want to renovate my home")).toEqual({ when: "Ready: renovating a home they already have" });
+    expect(labelledAnswers(questions, "Sir Im already living on that house only")).toEqual({ when: "Ready: they already live there (renovation)" });
+    expect(labelledAnswers(questions, "next month probably")).toEqual({});
+    expect(labelledAnswers(withEmail, "karthikeyan@theaitel.com")).toEqual({ email: "karthikeyan@theaitel.com" });
+  });
+
+  it("spots renovation and consultation booking", () => {
+    const keysOf = (text: string) => messageSituations(text, "The KariGhars").map((item) => item.key);
+    expect(keysOf("I want to renovate my home")).toContain("renovation");
+    expect(keysOf("Okay book me a consultation")).toContain("book-consultation");
+    expect(keysOf("can we schedule a site visit on saturday")).toContain("book-consultation");
+    expect(keysOf("I want to design interior for my new flat")).toEqual([]);
+    expect(keysOf("No i can't come and visit jst send me everything")).toContain("wants-portfolio");
+  });
+
   it("does not resend a reply that only repeats earlier ones", () => {
     const earlier = ["pricing depends on the home the scope and the materials so the team confirms it after understanding the requirement...may i know ur name?"];
     expect(repeatsEarlier("Pricing depends on the home, the scope and the materials, so the team confirms it after understanding the requirement in the free consultation. May I know your name?", earlier)).toBe(true);

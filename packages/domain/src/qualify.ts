@@ -750,20 +750,29 @@ function askScore(question: LeadQuestion, sentence: string): number {
   return keywords.filter((word) => ask.includes(word.slice(0, Math.max(4, word.length - 2)))).length;
 }
 
-/**
- * Removes questions about details they already gave. A question counts as the one it matches best,
- * so "which area and apartment" is the area question even though home type mentions apartments.
- */
+/** A strict check that a message really asked this question: a question sentence sharing two topic words with it. */
+export function questionAsked(question: LeadQuestion, text: string): boolean {
+  if (text.includes(scriptQuestion(question))) return true;
+  const keywords = [...new Set(question.label.toLowerCase().match(/[a-z]{4,}/g)?.filter((word) => !LABEL_FILLER.has(word)) ?? [])];
+  const needed = Math.min(2, keywords.length);
+  return text.split(/(?<=[.!?])\s+|\n+|(?<=\.\.)(?=[^\s.])/).some((sentence) => sentence.includes("?") && askScore(question, sentence) >= needed);
+}
+
 export function refusesNumber(text: string): boolean {
   return /\b(?:don'?t|do not|won'?t|will not|not going to|can'?t|cannot)\s+(?:want to\s+|wanna\s+)?(?:share|give|send)\b[^.?!]*\b(?:number|no\.?|contact|phone|mobile)\b|\bno (?:phone|number|calls?)\b|\bdon'?t call\b/i
     .test(text.replace(/[‘’`]/g, "'"));
 }
 
+/**
+ * Removes questions about details they already gave. A question counts as the one it matches best,
+ * so "which area and apartment" is the area question even though home type mentions apartments.
+ */
 export function dropAnsweredQuestions(reply: string, questions: LeadQuestion[], answeredIds: string[]): string {
   const answered = new Set(answeredIds);
   if (!answered.size) return reply;
   const repeatsAnswer = (sentence: string) => {
     if (!sentence.includes("?") && !ASKING.test(sentence)) return false;
+    if (/\b(which day|what day|what time|day and time|time suits?|suit (?:u|you)|convenient time|good time)\b/i.test(sentence)) return false;
     const scored = questions.map((question) => ({ question, score: askScore(question, sentence) })).filter((item) => item.score > 0);
     if (!scored.length) return false;
     const best = Math.max(...scored.map((item) => item.score));

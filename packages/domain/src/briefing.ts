@@ -92,9 +92,14 @@ export function salesBriefing(input: SalesBriefingInput): string {
   if (input.cold) {
     state.push("They said no. Do not sell or ask more questions. Be polite and leave the door open.");
   } else if (input.ready) {
-    state.push(`Every must-have detail is collected${sent ? ` and was sent to the ${brand} team ${sent}` : ""}. Do not push for anything more. Just respond to what they say now, like a helpful colleague would.`);
+    state.push(`Every must-have detail is collected${sent ? ` and was sent to the ${brand} team ${sent}` : ""}.`);
     if (input.optionalDetails?.length) {
-      state.push(`Only if the chat flows naturally and they seem happy to talk, you may ask for one of these extra details in a reply: ${input.optionalDetails.map((question) => question.label).join("; ")}. Never ask two at once, never push, and skip them if they seem busy or done.`);
+      state.push(
+        `Keep the conversation going like a good sales consultant, not a form. Respond to what they said first, then ask about the next of these as a natural follow-up: ${input.optionalDetails.map((question) => question.label).join("; ")}. One per reply, framed around why it helps them (a budget helps the designer suggest the right materials; a start date helps plan the work). If they skip or decline one, move on and never ask it again.`,
+        "While these remain and they keep chatting, do not wrap up, say goodbye or say their details are with the team. Stop asking only if they say they are busy or done.",
+      );
+    } else {
+      state.push("Do not push for anything more. Just respond to what they say now, like a helpful colleague would.");
     }
   } else if (input.nextDetail) {
     state.push(

@@ -19,6 +19,9 @@ const HOME_TYPE = /bhk|kind of home|type of home|property type/i;
 const SCOPE = /full home|selected rooms|scope/i;
 const WHEN = /possession|start|finish|move in|handover|timeline/i;
 const PLACE = /where is the home|location|which city|which area|locality/i;
+const POSSESSION = /possession|already ready|home ready|handover/i;
+export const RENOVATING = /\b(renovat\w*|remodel\w*|revamp\w*|makeover|redo(?:ing)? (?:my|our|the) (?:home|house|flat)|re-?do (?:my|our|the) (?:home|house|flat)|old (?:house|home|flat))\b/i;
+const LIVING_IN = /\b(?:already|currently|now) (?:living|staying)\b|\b(?:living|staying) (?:in|on|at) (?:that|this|the|my|our) (?:house|home|flat|villa)\b|\bwe live (?:there|in it)\b/i;
 
 /** Lowest believable budget for full-home premium interiors, by BHK. Anything below is respected but checked. */
 const FULL_HOME_FLOOR: Record<number, number> = { 1: 300_000, 2: 400_000, 3: 500_000, 4: 700_000, 5: 1_000_000 };
@@ -44,6 +47,12 @@ export function labelledAnswers(questions: Question[], text: string): Record<str
   const size = text.match(/\b(?:carpet|built[- ]?up|super built[- ]?up|area|size)\s*(?:area)?(?:\s*(?:is|of|:|-|around|about|approx\w*|roughly))*\s*(\d[\d,.]*\s*(?:sq\.?\s*(?:ft|feet|m|mt|mtrs?|meters?|metres?|yards?|yds?)|square\s*\w+|sqft|sft|sqm|cents?|guntas?)?)/i);
   const sizeId = questionFor(questions, SIZE)?.id;
   if (size && sizeId) found[sizeId] = size[1]!.trim();
+  const possessionId = questionFor(questions, POSSESSION)?.id;
+  if (possessionId && LIVING_IN.test(text)) found[possessionId] = "Ready: they already live there (renovation)";
+  else if (possessionId && RENOVATING.test(text)) found[possessionId] = "Ready: renovating a home they already have";
+  const email = text.match(/\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/);
+  const emailId = questionFor(questions, /e-?mail/i)?.id;
+  if (email && emailId) found[emailId] = email[0];
   return found;
 }
 

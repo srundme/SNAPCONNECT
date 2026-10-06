@@ -1,4 +1,5 @@
 import { parsePhoneNumberFromString } from "libphonenumber-js";
+import { RENOVATING } from "./sense";
 
 export type Situation = {
   /** Stable per situation, so the staff note is written once per chat. */
@@ -22,8 +23,9 @@ const SPAM = /\b(crypto|bitcoin|forex|trading tips|loan (offer|approved)|click (
 const ABUSE = /\b(fuck\w*|f\*+k|bitch|bastard|asshole|motherf\w*|madarchod|behenchod|bhenchod|chutiya|chutiye|gandu|punda|thevidiya|bosadi\w*|randi)\b/i;
 const FLIRT = /\b(are you single|date me|go on a date|send (me )?your (pic|photo|selfie)\b(?!s)|i love you|you('re| are) (so )?(sexy|hot|cute|beautiful)|marry me|sexy|nude)\b/i;
 const TINY = /\b(only|just)\b[^.?!]{0,25}\b(curtains?|blinds?|one (chair|door|hinge|shelf|wall|cupboard|drawer)|a (chair|hinge|handle|lock|tap)|repair\w*|fix(ing)?|polish\w*|hinges?)\b|\b(repair|fix) (my |a |the |one )?(hinge|handle|drawer|door|chair|sofa|tap|lock|cupboard door)\b/i;
-const WORK = /\b(previous|past|earlier|completed|recent|your) (work|works|projects?|designs?|homes)\b|\bportfolio\b|\bgallery\b|\b(show|send|share)( me)? (some )?(photos|pics|pictures|images|samples|designs|work)\b|\bsamples? of (your )?work\b/i;
+const WORK = /\b(previous|past|earlier|completed|recent|your) (work|works|projects?|designs?|homes)\b|\bportfolio\b|\bgallery\b|\b(show|send|share)( me)? (some )?(photos|pics|pictures|images|samples|designs|work)\b|\bsamples? of (your )?work\b|\bsend (me )?everything\b/i;
 const CREDENTIALS = /\bhow many (clients|customers|projects|homes|years|people)\b|\b(how much experience|years of experience|track record|how long have you been|how old is (your|the) company|since when)\b/i;
+const CONSULT = /\b(book|schedule|fix|arrange|set ?up)\b(?:\s+\w+){0,3}?\s+(consultation|meeting|appointment|site visit|visit|call)\b|\b(want|need) (a |the )?(consultation|site visit|meeting)\b/i;
 const RENTED = /\b(rented|on rent|tenant|renting|rental (flat|house|home|apartment)|leased)\b/i;
 const LETTING = /\b(rent (it )?out|give (it )?(on|for) rent|let out|rental income|to rent)\b/i;
 const FOR_SOMEONE = new RegExp(`\\b(?:for|on behalf of) (?:my )?(${FAMILY})(?:'s)?\\b|\\bmy (${FAMILY})(?:'s|s)? (?:flat|home|house|villa|apartment|place)\\b`, "i");
@@ -119,7 +121,7 @@ export function messageSituations(text: string, brandName: string): Situation[] 
     found.push({
       key: "wants-portfolio",
       note: `Asked to see previous work: "${said}"`,
-      line: `They want to see ${brandName}'s previous work. Share the one link from the knowledge base that fits them best (the page for their BHK only if they already told you their BHK, otherwise the portfolio, and the gallery if they ask again), and a matching post link if one fits. Write the link exactly as given, on its own. Offer a visit to the experience centre to see real room setups. Never say you will send photos, and never invent a link.`,
+      line: `They want to see ${brandName}'s previous work. Share the one link from the knowledge base that fits them best (the page for their BHK only if they already told you their BHK and the knowledge base has a page for that exact BHK, never a smaller one, otherwise the portfolio, and the gallery if they ask again), and a matching post link if one fits. Write the link exactly as given, on its own. Offer a visit to the experience centre to see real room setups. Never say you will send photos, and never invent a link.`,
       always: true,
     });
   }
@@ -129,6 +131,21 @@ export function messageSituations(text: string, brandName: string): Situation[] 
       note: `Asked about experience or track record: "${said}"`,
       line: "They asked about experience, track record or how many clients. Answer with the facts in the knowledge base only, like the year started and the number of completed projects, in one line. Never invent numbers, awards or famous clients.",
       always: true,
+    });
+  }
+  if (CONSULT.test(text)) {
+    found.push({
+      key: "book-consultation",
+      note: `Wants to book a consultation: "${said}"`,
+      line: "They want to book the free consultation. If they have not said when, ask which day and time suit them for the team's call, within working hours. When they give one, say it is noted for the team and that the team will call to confirm it. Never confirm a booked slot yourself. In a line, say what happens in it (the designer understands their needs, then a site visit and 3D designs) if the knowledge base covers that.",
+      always: true,
+    });
+  }
+  if (RENOVATING.test(text)) {
+    found.push({
+      key: "renovation",
+      note: `Renovating a home they already have: "${said}"`,
+      line: "They are renovating a home they already have, so it is ready: never ask about possession or whether it is ready. Talk like a renovation consultant: find out what is not working in the current home or what they most want to change, and share one useful renovation point, like dismantling the old work, doing it room by room so they can keep living there, or the team checking the old wiring and plumbing at the site visit.",
     });
   }
   if (TINY.test(text)) {

@@ -33,6 +33,8 @@ import {
   refusesNumber,
   swapNumber,
   naturalAcknowledgement,
+  fitBhkLinks,
+  questionAsked,
   dropAnsweredQuestions,
   looksEnglish,
   chatLanguageSample,
@@ -750,11 +752,18 @@ describe("ai validation", () => {
     expect(naturalAcknowledgement("noted sir\nand which area is the home in?", ["Got it sir."], "Ashoke")).toBe("Thanks Ashoke sir.\nand which area is the home in?");
     expect(naturalAcknowledgement("ok sir HSR Layout noted. Since it is an independent house, the team plans every floor. How many BHK?", [])).toBe("Since it is an independent house, the team plans every floor. How many BHK?");
     expect(naturalAcknowledgement("I've noted 4 PM for the team call. Anything else?", [])).toBe("I've noted 4 PM for the team call. Anything else?");
+    const kb = "Portfolio: https://www.thekarighars.com/interior-design-portfolio/ 4 BHK: https://www.thekarighars.com/4-bhk-interior-design/";
+    expect(fitBhkLinks("for 6 BHK work see https://www.thekarighars.com/4-bhk-interior-design/ sir", "6 BHK", kb)).toBe("for 6 BHK work see https://www.thekarighars.com/interior-design-portfolio/ sir");
+    expect(fitBhkLinks("see https://www.thekarighars.com/4-bhk-interior-design/", "4 BHK villa", kb)).toBe("see https://www.thekarighars.com/4-bhk-interior-design/");
+    const budgetQuestion = { id: "budget", label: "Roughly what interior budget do you have in mind?", kind: "text" as const, zohoField: null };
+    expect(questionAsked(budgetQuestion, "im Varun here...how can i help u with ur home interiors today?")).toBe(false);
+    expect(questionAsked(budgetQuestion, "Got it sir. What budget do u have in mind for this?")).toBe(true);
     expect(refusesNumber("i dont want to share my number")).toBe(true);
     expect(refusesNumber("I won’t give my phone number")).toBe(true);
     expect(refusesNumber("why do you need my number? will u spam me?")).toBe(false);
     expect(swapNumber("ok sir the team will call on +91 90620 80271.", "+919062080271", "+916383653279")).toBe("ok sir the team will call on +916383653279.");
     expect(swapNumber("noted 9062080271", "+919062080271", "+916383653279")).toBe("noted +916383653279");
+    expect(dropAnsweredQuestions("sure sir Which day and time suit u for the team's call? I will note it here.", [{ id: "phone", label: "Which number should the team call you on?", kind: "phone", zohoField: null }], ["phone"])).toBe("sure sir Which day and time suit u for the team's call? I will note it here.");
     expect(dropAnsweredQuestions("budget depends on size...team confirms it...full home ah illa sila rooms mattum ah?", [{ id: "full", label: "Is it the full home or selected rooms?", kind: "text", zohoField: null }], ["full"])).toBe("budget depends on size... team confirms it...");
     expect(absorbTranscript({ questions, messages: [{ author: "AI", body: "Since it is a 2 BHK, may I know your name?" }, { author: "PROSPECT", body: "91 6383653279" }], name: null, phoneE164: "+919061847240", answers: {} }).phoneE164).toBe("+916383653279");
     expect(deterministicIntent("stop messaging me").optOut).toBe(true);

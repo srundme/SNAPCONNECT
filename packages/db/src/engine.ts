@@ -43,6 +43,7 @@ import {
   scriptedReply,
   scriptQuestionFor,
   replyAsksFor,
+  questionAsked,
   chatLanguageSample,
   languageName,
   salesBriefing,
@@ -66,6 +67,7 @@ import {
   wrongPhoneIn,
   swapNumber,
   naturalAcknowledgement,
+  fitBhkLinks,
   validPhonesIn,
   dedupKey,
   type Channel,
@@ -1225,7 +1227,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       lead.crmState === "SYNCED"
         ? gapHours >= 72
           ? "Their details already went to the team earlier, and they are coming back days later. Welcome them back and do not restart the questions. Ask what they need now. If it is about a project already underway, that is for the team, so offer to have the team take it."
-          : "Their details already went to the team earlier. Do not collect them again."
+          : "Their details already went to the team earlier. Never ask again for a detail already collected."
         : "",
       dayOffLine(runtime.now(), agent.holidays, agent.workingHours),
       conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI")
@@ -1324,6 +1326,18 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       }
       for (const [id, value] of Object.entries(labelledAnswers(questions, freshText))) {
         if (!absorbed.answers[id]) absorbed.answers[id] = value;
+      }
+      const photo = [...prospectBodies].reverse().map((body) => body.match(/\(Sent a photo\. It shows: ([^)]+)\)/)?.[1]).find(Boolean);
+      for (const question of questions) {
+        const value = absorbed.answers[question.id] ?? "";
+        if (/\b(book|schedule|fix|arrange)\b.*\b(consultation|meeting|appointment|visit)\b/i.test(value)) {
+          if (recordedAnswers[question.id] && recordedAnswers[question.id] !== value) absorbed.answers[question.id] = recordedAnswers[question.id]!;
+          else delete absorbed.answers[question.id];
+          continue;
+        }
+        if (photo && value.length <= 40 && /\b(like|same as) (this|that|these|those)\b|^this one$/i.test(value)) {
+          absorbed.answers[question.id] = `${value} (their photo: ${photo})`.slice(0, 220);
+        }
       }
       for (const doubt of unrealisticAnswers(questions, absorbed.answers)) {
         const marker = `Number check: ${doubt.label} ${doubt.value}`;
@@ -1551,7 +1565,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           persona: workspace.agentPersona,
           knowledgeBase: workspace.knowledgeBase,
           settings: agent,
-          optionalDetails: complete && !complete.cold ? questions.filter((question) => complete.optional.includes(question.label)) : [],
+          optionalDetails: complete && !complete.cold
+            ? questions.filter((question) => complete.optional.includes(question.label) && !spoken.some((message) => message.author === "AI" && questionAsked(question, message.body)))
+            : [],
           checkPending: checkedIds.length > 0,
         })
       : null;
@@ -1776,16 +1792,23 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       || nextReplyPrompt(toSnapshot(await db.lead.findUniqueOrThrow({ where: { id: lead.id } })), rule.settings, prompts).prompt;
     const stillMissing = screen && !screen.ready && !screen.cold ? questions.filter((question) => screen.missing.includes(question.label)) : [];
     const pending = stillMissing.find((question) => !ignored(question)) ?? stillMissing[0];
+    const askedByThem = /\?/.test(latestUser)
+      || /^\s*(how|what|when|where|why|which|who|can|could|will|would|do|does|is|are|should|pls|please|send|share|show|tell|book)\b/i.test(latestUser)
+      || /\b(send|share|show|tell) me\b|\bmay i know\b|\bbook me\b/i.test(latestUser);
+    const extra = !pending && screen?.ready && !screen.cold && !askedByThem && !situationHandoff
+      ? questions.find((question) => screen.optional.includes(question.label) && !spoken.some((message) => message.author === "AI" && questionAsked(question, message.body)))
+      : undefined;
+    const target = pending ?? extra;
     const statement = validated.reply
       ? validated.reply.split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?")).join(" ").trim()
       : "";
     const echoesWrongNumber = Boolean(wrongNumber && validated.reply && validated.reply.replace(/\D/g, "").includes(wrongNumber.replace(/\D/g, "")));
     const composed = wrongNumber && phoneQuestion && (!validated.reply || echoesWrongNumber || !replyAsksFor(phoneQuestion, validated.reply))
       ? `Hmm, ${phoneProblem(wrongNumber)}. ${scriptQuestionFor(phoneQuestion, languageSample ? languageName(languageSample) : null)}`
-      : pending && validated.reply
-      ? replyAsksFor(pending, validated.reply) || asksSomething(validated.reply) || validated.reply.length >= 60 || raisesConcern(latestUser) || customerComplaint(latestUser) || Boolean(situationHandoff)
+      : target && validated.reply
+      ? questionAsked(target, validated.reply) || asksSomething(validated.reply) || (askedByThem && validated.reply.length >= 60) || raisesConcern(latestUser) || customerComplaint(latestUser) || Boolean(situationHandoff)
         ? validated.reply
-        : [statement, askQuestion(pending)].filter(Boolean).join(" ")
+        : [statement.replace(/[^.!?\s]$/, "$&."), askQuestion(target)].filter(Boolean).join(" ")
       : validated.reply ?? fallback;
     const firstWhatsAppReply = conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI");
     const earlierReplies = conversation.messages.filter((message) => message.author === "AI").map((message) => message.body);
@@ -1795,7 +1818,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const nextQuestion = questions.find((question) => question.id === checkedIds[0]) ?? nextDetail ?? pending;
     const kept = composed && answered.length ? dropAnsweredQuestions(composed, questions, answered) : composed;
     const unasked = composed && !situationHandoff && kept !== composed && asksSomething(composed) && !asksSomething(kept ?? "") && nextQuestion
-      ? [kept, askQuestion(nextQuestion)].filter(Boolean).join(" ")
+      ? [kept?.replace(/[^.!?\s]$/, "$&."), askQuestion(nextQuestion)].filter(Boolean).join(" ")
       : kept || composed;
     const numbered = unasked && numberPending && waNumber ? askSameNumber(unasked, waNumber) : unasked;
     const inLanguage = numbered && !languageSample ? dropIndicSentences(numbered) || numbered : numbered;
@@ -1804,9 +1827,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const greeted = greetedOnce && !languageSample && !situationHandoff ? naturalAcknowledgement(greetedOnce, earlierReplies, newName) : greetedOnce;
     const humanized = greeted ? applyReplySwitches(oneAddress(dropCannedLines(humanizeReply(greeted))), agent) || null : greeted;
     const asksIfBot = /\b(bot|robot|chat ?bot|ai|automated|real (person|human)|human)\b/i.test(latestUser) && /\?|\bare (you|u)\b/i.test(latestUser);
-    const owned = humanized && updatedLead.phoneE164 && updatedLead.whatsappE164 && updatedLead.phoneE164 !== updatedLead.whatsappE164
-      ? swapNumber(humanized, updatedLead.whatsappE164, updatedLead.phoneE164)
-      : humanized;
+    const homeType = questions.filter((question) => /bhk/i.test(question.label)).map((question) => recordedAnswers[question.id] ?? "").join(" ");
+    const linked = humanized ? fitBhkLinks(humanized, homeType, workspace.knowledgeBase ?? "") : humanized;
+    const owned = linked && updatedLead.phoneE164 && updatedLead.whatsappE164 && updatedLead.phoneE164 !== updatedLead.whatsappE164
+      ? swapNumber(linked, updatedLead.whatsappE164, updatedLead.phoneE164)
+      : linked;
     const honest = owned && asksIfBot && !/\b(ai|bot|automated)\b/i.test(owned)
       ? `Yes, I'm ${workspace.brandName}'s AI assistant. ${owned}`
       : owned;
