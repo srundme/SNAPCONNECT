@@ -81,6 +81,89 @@ function spokenPhone(digits: string): string {
   return national.length === 10 ? `<spell>${national.slice(0, 5)} ${national.slice(5)}</spell>` : `<spell>${national}</spell>`;
 }
 
+const ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
+const TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+const ORDINALS: Record<string, string> = { one: "first", two: "second", three: "third", five: "fifth", eight: "eighth", nine: "ninth", twelve: "twelfth" };
+
+function underHundred(value: number): string {
+  if (value < 20) return ONES[value]!;
+  return `${TENS[Math.floor(value / 10)]}${value % 10 ? ` ${ONES[value % 10]}` : ""}`;
+}
+
+/** A whole number in words, the Indian way: lakh and crore, not million. */
+export function numberWords(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return String(value);
+  if (value < 100) return underHundred(value);
+  const parts: string[] = [];
+  const steps: Array<[number, string]> = [[10_000_000, "crore"], [100_000, "lakh"], [1_000, "thousand"], [100, "hundred"]];
+  let rest = Math.floor(value);
+  for (const [size, name] of steps) {
+    if (rest >= size) {
+      parts.push(`${numberWords(Math.floor(rest / size))} ${name}`);
+      rest %= size;
+    }
+  }
+  if (rest) parts.push(underHundred(rest));
+  return parts.join(" ");
+}
+
+function decimalWords(raw: string): string {
+  const [whole, fraction] = raw.replace(/,/g, "").split(".");
+  const words = numberWords(Number(whole));
+  return fraction ? `${words} point ${[...fraction].map((digit) => ONES[Number(digit)]).join(" ")}` : words;
+}
+
+function ordinalWords(value: number): string {
+  const words = numberWords(value).split(" ");
+  const last = words.pop()!;
+  const ordinal = ORDINALS[last] ?? (last.endsWith("y") ? `${last.slice(0, -1)}ieth` : `${last}th`);
+  return [...words, ordinal].join(" ");
+}
+
+const ACRONYMS = new Set([
+  "BHK", "RK", "HSR", "BTM", "JP", "MG", "ITPL", "KR", "HBR", "ECC", "PDF", "AI", "ID", "TV", "AC", "EV", "OTP", "EMI", "GST", "MDF", "HDF",
+  "PVC", "UPVC", "LED", "UV", "CEO", "RERA", "USA", "UAE", "UK", "IST", "AM", "PM", "3D", "2D", "CAD", "SMS", "UPI", "NRI", "WFH",
+]);
+
+/** Shouted words would be spelled letter by letter; real acronyms stay spelled. */
+function calmCapitals(text: string): string {
+  return text.replace(/\b[A-Z][A-Z']{1,}\b/g, (word) => {
+    if (ACRONYMS.has(word)) return word;
+    if (word === "OK") return "okay";
+    return /[AEIOUY]/.test(word) ? word.toLowerCase() : word;
+  });
+}
+
+const LAKH_UNIT = "(?:l|lakhs?|lacs?|lhks?|lkhs?|lakh)";
+const CRORE_UNIT = "(?:cr|crores?)";
+
+/** Numbers, money and units written out, so the voice says "thirty lakhs" and not "thirty L". */
+export function spokenNumbers(text: string): string {
+  const amount = (raw: string, unit: "lakh" | "crore", plus = false) => {
+    const value = Number(raw.replace(/,/g, ""));
+    return `${decimalWords(raw)} ${unit}${value === 1 ? "" : "s"}${plus ? " plus" : ""}`;
+  };
+  return calmCapitals(text)
+    .replace(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:${LAKH_UNIT})?\\s*(?:-|to|–)\\s*(\\d+(?:\\.\\d+)?)\\s*${LAKH_UNIT}\\b(\\+)?`, "gi"),
+      (_, low: string, high: string, plus?: string) => `${decimalWords(low)} to ${amount(high, "lakh", Boolean(plus))}`)
+    .replace(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:-|to|–)\\s*(\\d+(?:\\.\\d+)?)\\s*${CRORE_UNIT}\\b(\\+)?`, "gi"),
+      (_, low: string, high: string, plus?: string) => `${decimalWords(low)} to ${amount(high, "crore", Boolean(plus))}`)
+    .replace(new RegExp(`(?:₹\\s?)?\\b(\\d+(?:\\.\\d+)?)\\s*${LAKH_UNIT}\\b(\\+)?`, "gi"), (_, raw: string, plus?: string) => amount(raw, "lakh", Boolean(plus)))
+    .replace(new RegExp(`(?:₹\\s?)?\\b(\\d+(?:\\.\\d+)?)\\s*${CRORE_UNIT}\\b(\\+)?`, "gi"), (_, raw: string, plus?: string) => amount(raw, "crore", Boolean(plus)))
+    .replace(/₹\s?(\d[\d,]*(?:\.\d+)?)/g, (_, raw: string) => `${decimalWords(raw)} rupees`)
+    .replace(/\b(\d+(?:\.\d+)?)\s*k\b/gi, (_, raw: string) => `${decimalWords(raw)} thousand`)
+    .replace(/\b(\d+)\s*-?\s*(BHK|RK)\b/gi, (_, raw: string, unit: string) => `${numberWords(Number(raw))} ${unit.toUpperCase()}`)
+    .replace(/\b(\d[\d,]*(?:\.\d+)?)\s*(?:sq\.?\s*ft\.?|sqft|square feet)/gi, (_, raw: string) => `${decimalWords(raw)} square feet`)
+    .replace(/\b(\d+(?:\.\d+)?)\s*(?:x|by|\*)\s*(\d+(?:\.\d+)?)\s*(ft|feet)?\b/gi, (_, a: string, b: string, unit?: string) => `${decimalWords(a)} by ${decimalWords(b)}${unit ? " feet" : ""}`)
+    .replace(/\b(\d{1,2}):(\d{2})\b/g, (_, hours: string, minutes: string) => `${numberWords(Number(hours))}${minutes === "00" ? "" : ` ${Number(minutes) < 10 ? `oh ${ONES[Number(minutes)]}` : numberWords(Number(minutes))}`}`)
+    .replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi, (_, raw: string) => ordinalWords(Number(raw)))
+    .replace(/\b(19|20)(\d{2})\b(?!\s*(?:rupees|square|sq))/g, (_, century: string, rest: string) => `${numberWords(Number(century))} ${rest === "00" ? "hundred" : Number(rest) < 10 ? `oh ${ONES[Number(rest)]}` : numberWords(Number(rest))}`)
+    .replace(/(\d+(?:\.\d+)?)\s*%/g, (_, raw: string) => `${decimalWords(raw)} percent`)
+    .replace(/\b\d[\d,]*(?:\.\d+)?\b/g, (raw) => decimalWords(raw))
+    .replace(/(\w)\+(?=\s|$|[.,!?])/g, "$1 plus")
+    .replace(/\b(ft|sq\.? ?ft)\b\.?/gi, (unit) => (/sq/i.test(unit) ? "square feet" : "feet"));
+}
+
 const LAUGH = /\b(?:(?:ha|ah)(?:\s*(?:ha|ah))+h?|he(?:\s*he)+|hihi+|lol+|lmao+|rofl)\b[!.]*/gi;
 
 function cleanSpeech(text: string): string {
@@ -92,6 +175,9 @@ function cleanSpeech(text: string): string {
     .replace(/\p{Extended_Pictographic}(\u200D\p{Extended_Pictographic}|\uFE0F)*/gu, "")
     .replace(/\[[^\]]*\]/g, "")
     .replace(/(?<![\d<])\+?(?:91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}(?!\d)/g, (match) => spokenPhone(match.replace(/\D/g, "")))
+    .split(/(<spell>[^<]*<\/spell>)/)
+    .map((part) => (part.startsWith("<spell>") ? part : spokenNumbers(part)))
+    .join("")
     .replace(/\s*\n+\s*/g, " ")
     .replace(/\u0002(?:[\s,]*\u0002)*/g, "[laughter]")
     .replace(/\[laughter\]\s*,\s*/g, "[laughter] ")

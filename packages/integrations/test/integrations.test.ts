@@ -342,7 +342,7 @@ describe("voice replies", () => {
     expect(speechScript("Haha sir, good one. So is it for your home?", { emotions: [], speed: 1, opener: "Oh," }))
       .toBe("[laughter] sir, good one. So is it for your home?");
     expect(speechScript("7000 sir? ha ha ha i think you meant 70", { emotions: [], speed: 1, opener: "" }))
-      .toBe("7000 sir? [laughter] i think you meant 70.");
+      .toBe("seven thousand sir? [laughter] i think you meant seventy.");
     expect(speechScript("lol ok sir", { emotions: [], speed: 1, opener: "" })).toBe("[laughter] ok sir.");
     expect(speechScript("That is a big space. What is the budget?", { emotions: [], speed: 1, opener: "Oh," }))
       .toBe("Oh, that is a big space. What is the budget?");
@@ -350,6 +350,19 @@ describe("voice replies", () => {
       .toBe("Super sir! Budget evlo?");
     expect(speechScript("**Details** here: https://x.test/a\nThanks", { emotions: [], speed: 1, opener: "" }))
       .toBe("Details here: the link Thanks.");
+  });
+
+  it("says numbers, money and units as words and does not spell shouted words", () => {
+    const say = (text: string) => speechScript(text, { emotions: [], speed: 1, opener: "" });
+    expect(say("Budget is 3L")).toBe("Budget is three lakhs.");
+    expect(say("under 20L, 20 to 30L, 30-50 lakhs or 50L+?")).toBe("under twenty lakhs, twenty to thirty lakhs, thirty to fifty lakhs or fifty lakhs plus?");
+    expect(say("around 1.5 cr for the villa")).toBe("around one point five crores for the villa.");
+    expect(say("a 3BHK of about 1,452 sq ft")).toBe("a three BHK of about one thousand four hundred fifty two square feet.");
+    expect(say("kitchen is 10 x 8.6 ft")).toBe("kitchen is ten by eight point six feet.");
+    expect(say("the team will call at 11:30 AM on the 2nd")).toBe("the team will call at eleven thirty AM on the second.");
+    expect(say("possession in March 2027, design fee ₹25,000")).toBe("possession in March twenty twenty seven, design fee twenty five thousand rupees.");
+    expect(say("NOTED sir, OK we do 3D designs for HSR flats")).toBe("noted sir, okay we do 3D designs for HSR flats.");
+    expect(say("call me on 9845012345 for 1 lakh")).toBe("call me on <spell>98450 12345</spell> for one lakh.");
   });
 
   it("tags each sentence's emotion inline, only where it changes and only in English", () => {
