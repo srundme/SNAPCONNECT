@@ -5,7 +5,11 @@ import {
   requestsTeamSwitch,
   customerComplaint,
   agreesToWhatsAppNumber,
+  refusesNumber,
   contextChecks,
+  labelledAnswers,
+  placeAnswer,
+  pricePush,
   messageSituations,
   abroadSituation,
   dayOffLine,
@@ -51,6 +55,7 @@ import {
   platformSystemRules,
   withAutomationDisclosure,
   dropRepeatGreeting,
+  repeatsEarlier,
   parsePhone,
   projectTypeFromText,
   replyEligibility,
@@ -59,6 +64,7 @@ import {
   surfaceSupport,
   validateAiOutput,
   wrongPhoneIn,
+  swapNumber,
   validPhonesIn,
   dedupKey,
   type Channel,
@@ -116,6 +122,8 @@ export type Runtime = {
   speak?: Speaker;
   publicBaseUrl?: string;
   replySettleMs?: number;
+  /** Finds a named apartment project on a map, to learn its locality. */
+  lookupPlace?: (query: string, city?: string) => Promise<{ name: string; locality: string | null; city: string | null; pincode: string | null; underConstruction: boolean } | null>;
   /** Waits like a person reading and typing. Left out in tests, so replies go straight away. */
   pause?: (ms: number) => Promise<void>;
 };
@@ -1243,13 +1251,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     };
     const lastAiAt = [...spoken].reverse().find((message) => message.author === "AI")?.createdAt;
     const prospectBodies = spoken.filter((message) => message.author === "PROSPECT").map((message) => message.body);
-    const freshText = spoken
-      .filter((message) => message.author === "PROSPECT" && (!lastAiAt || message.createdAt > lastAiAt))
-      .map((message) => message.body)
-      .join("\n");
+    const sinceReply = spoken.filter((message) => message.author === "PROSPECT" && (!lastAiAt || message.createdAt > lastAiAt)).map((message) => message.body);
+    const freshText = (sinceReply.length ? sinceReply : prospectBodies.slice(-1)).join("\n");
     let situationHandoff: string | null = null;
     for (const situation of customerComplaint(freshText) ? [] : messageSituations(freshText, workspace.brandName)) {
-      if (!(await noteOnce(`Situation: ${situation.key}`, situation.note))) continue;
+      if (!(await noteOnce(`Situation: ${situation.key}`, situation.note)) && !situation.always) continue;
       memoryLines.push(situation.line);
       situationHandoff ??= situation.handoff ?? null;
     }
@@ -1257,6 +1263,12 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     if (abroad) {
       await noteOnce(`Situation: ${abroad.key}`, abroad.note);
       memoryLines.push(abroad.line);
+    }
+    const phoneRegion = abroad?.country && abroad.country !== runtime.phoneRegion ? `${runtime.phoneRegion},${abroad.country}` : runtime.phoneRegion;
+    const push = pricePush(prospectBodies);
+    if (push) {
+      await noteOnce(`Situation: ${push.key}`, push.note);
+      memoryLines.push(push.line);
     }
     const prompts = resolveReplyPrompts(workspace.replyPrompts);
     const sourceMediaId = conversation.sourceMediaId ?? lead.sourceMediaId;
@@ -1295,10 +1307,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         name: conversation.contact.chosenName,
         phoneE164: lead.phoneE164,
         answers: recordedAnswers,
-        phoneRegion: runtime.phoneRegion,
+        phoneRegion,
         nameReadElsewhere: readsName,
       });
-      form = await readLeadForm(runtime, questions, conversation.messages);
+      form = await readLeadForm(runtime, questions, conversation.messages, phoneRegion);
       if (form) {
         formRead = true;
         absorbed = {
@@ -1308,6 +1320,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         };
       } else if (readsName) {
         absorbed.name = await latestName(runtime, conversation.messages, absorbed.name);
+      }
+      for (const [id, value] of Object.entries(labelledAnswers(questions, freshText))) {
+        if (!absorbed.answers[id]) absorbed.answers[id] = value;
       }
       for (const doubt of unrealisticAnswers(questions, absorbed.answers)) {
         const marker = `Number check: ${doubt.label} ${doubt.value}`;
@@ -1339,6 +1354,15 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         memoryLines.push(check.line);
         if (check.questionId) checkedIds.push(check.questionId);
       }
+      const placeText = placeAnswer(questions, absorbed.answers).slice(0, 120);
+      if (placeText && runtime.lookupPlace) {
+        const place = await runtime.lookupPlace(placeText, agent.serviceArea.split(/[,\n]+/)[0]?.trim() || undefined).catch(() => null);
+        if (place) {
+          const found = `${place.name} is in ${[place.locality, place.city, place.pincode].filter(Boolean).join(", ")} (OpenStreetMap).${place.underConstruction ? " The map marks it as under construction." : ""}`;
+          await noteOnce(`Map: ${placeText}`, found);
+          memoryLines.push(`A map lookup of their project found: ${found} If they have not said the locality, you may confirm it naturally once, like "that is in <locality> side, right?", and use the area to make your reply relevant. This is all you know about the project: never invent the builder, flat sizes, possession dates, amenities or prices.`);
+        }
+      }
       recordedName = absorbed.name;
       recordedPhone = absorbed.phoneE164;
       recordedAnswers = absorbed.answers;
@@ -1359,7 +1383,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     if (numberPending) {
       const latestText = [...spoken].reverse().find((message) => message.author === "PROSPECT")?.body ?? "";
       const lastAiText = spoken.filter((message) => message.author === "AI").slice(-3).map((message) => message.body).join("\n");
-      if (agreesToWhatsAppNumber(latestText, lastAiText)) {
+      if (spoken.some((message) => message.author === "PROSPECT" && refusesNumber(message.body))) {
+        numberPending = false;
+      } else if (agreesToWhatsAppNumber(latestText, lastAiText)) {
         await db.lead.update({ where: { id: lead.id }, data: { sameNumberConfirmed: true } });
         numberPending = false;
       } else if (spoken.some((message) => message.author === "AI" && asksSameNumberIn(message.body))) {
@@ -1395,13 +1421,13 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     if (editedTo && recordedPhone) {
       const typedPhones = conversation.messages
         .filter((message) => message.author === "PROSPECT")
-        .flatMap((message) => validPhonesIn(message.body, runtime.phoneRegion));
+        .flatMap((message) => validPhonesIn(message.body, phoneRegion));
       if (!typedPhones.includes(recordedPhone)) {
         recordedPhone = null;
         await db.lead.update({ where: { id: lead.id }, data: { phoneE164: null } });
       }
     }
-    const wrongInEdit = editedTo ? wrongPhoneIn(editedTo, runtime.phoneRegion) : null;
+    const wrongInEdit = editedTo ? wrongPhoneIn(editedTo, phoneRegion) : null;
     if (editedTo && lastSpoken?.author === "AI") {
       const detailsChanged = payload.phoneChanged === true
         || recordedName !== conversation.contact.chosenName
@@ -1449,12 +1475,13 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const complete = questions.length
       ? screenLead({ questions, answers: recordedAnswers, name: recordedName, phoneE164: screenPhone })
       : null;
-    const nextDetail = complete && !complete.ready && !complete.cold
-      ? questions.find((question) => complete.missing.includes(question.label))
-      : undefined;
+    const lastTwoAi = spoken.filter((message) => message.author === "AI").slice(-2).map((message) => message.body);
+    const ignored = (question: LeadQuestion) => lastTwoAi.length === 2 && lastTwoAi.every((body) => replyAsksFor(question, body));
+    const missingNow = complete && !complete.ready && !complete.cold ? questions.filter((question) => complete.missing.includes(question.label)) : [];
+    const nextDetail = missingNow.find((question) => !ignored(question)) ?? missingNow[0];
     const phoneQuestion = questions.find((question) => question.kind === "phone");
     const wrongNumber = phoneQuestion && !complete?.cold
-      ? wrongInEdit ?? wrongPhoneIn(latestProspect, runtime.phoneRegion, nextDetail?.kind === "phone" ? 6 : 8)
+      ? wrongInEdit ?? wrongPhoneIn(latestProspect, phoneRegion, nextDetail?.kind === "phone" ? 6 : 8)
       : null;
     const wrongNumberLine = wrongNumber
       ? `They typed ${wrongNumber} as their number, but that is not a real phone number (an Indian mobile number has exactly 10 digits, starts with 6, 7, 8 or 9, and is never a pattern like 9876543210, 1234567890 or 9999999999; a number from another country is welcome when it has the + and its country code and is a real number for that country). Do not say it is noted, saved or updated, and do not repeat it. Tell them briefly what is wrong: ${phoneProblem(wrongNumber)}. Then ask them to send it again. If you already asked before, say it differently this time, like a person would. Do not ask any other question.`
@@ -1625,11 +1652,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     const messages = new Map(recent.map((message) => [message.id, message.body]));
     const questionIds = parseLeadQuestions(workspace.leadQuestions).map((question) => question.id);
-    let validated = validateAiOutput(generated.output, messages, runtime.phoneRegion, questionIds);
+    let validated = validateAiOutput(generated.output, messages, phoneRegion, questionIds);
     if (validated.schemaError) {
       try {
         generated = await runtime.llm.generate({ ...request, system: `${request.system}\nReturn only the required JSON object.` });
-        validated = validateAiOutput(generated.output, messages, runtime.phoneRegion, questionIds);
+        validated = validateAiOutput(generated.output, messages, phoneRegion, questionIds);
       } catch {
         validated = { ...validated, schemaError: "Repair failed." };
       }
@@ -1640,13 +1667,32 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           ...request,
           system: `${request.system}\nYour last draft was written in Tamil, Hindi or Kannada typed in English letters. This chat is in English. Write the reply again in plain, simple English only, with the same meaning.`,
         });
-        const retried = validateAiOutput(english.output, messages, runtime.phoneRegion, questionIds);
+        const retried = validateAiOutput(english.output, messages, phoneRegion, questionIds);
         if (retried.reply && !retried.schemaError && !hasIndicSentence(retried.reply)) {
           generated = english;
           validated = retried;
         }
       } catch {
         // keep the first draft
+      }
+    }
+    const sentBefore = conversation.messages.filter((message) => message.author === "AI").map((message) => message.body);
+    if (validated.reply && sentBefore.length && repeatsEarlier(validated.reply, sentBefore)) {
+      try {
+        const again = await runtime.llm.generate({
+          ...request,
+          system: `${request.system}\nYour last draft only repeated what you already said earlier in this chat: "${validated.reply}". Write a fresh reply to their latest message instead. Respond to what they just said, and do not reuse any earlier sentence or idea.`,
+        });
+        const retried = validateAiOutput(again.output, messages, phoneRegion, questionIds);
+        if (retried.reply && !retried.schemaError && !repeatsEarlier(retried.reply, sentBefore)) {
+          generated = again;
+          validated = retried;
+        }
+      } catch {
+        // keep the first draft
+      }
+      if (validated.reply && repeatsEarlier(validated.reply, sentBefore)) {
+        validated = { ...validated, reply: null, replyRejectedReason: "it only repeated earlier replies" };
       }
     }
     const fresh = await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } });
@@ -1727,9 +1773,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     const fallback = scripted
       || nextReplyPrompt(toSnapshot(await db.lead.findUniqueOrThrow({ where: { id: lead.id } })), rule.settings, prompts).prompt;
-    const pending = screen && !screen.ready && !screen.cold
-      ? questions.find((question) => screen.missing.includes(question.label))
-      : undefined;
+    const stillMissing = screen && !screen.ready && !screen.cold ? questions.filter((question) => screen.missing.includes(question.label)) : [];
+    const pending = stillMissing.find((question) => !ignored(question)) ?? stillMissing[0];
     const statement = validated.reply
       ? validated.reply.split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?")).join(" ").trim()
       : "";
@@ -1755,11 +1800,20 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const inLanguage = numbered && !languageSample ? dropIndicSentences(numbered) || numbered : numbered;
     const greeted = inLanguage && earlierReplies.length ? dropRepeatGreeting(inLanguage) : inLanguage;
     const humanized = greeted ? applyReplySwitches(oneAddress(dropCannedLines(humanizeReply(greeted))), agent) || null : greeted;
-    const written = humanized && firstWhatsAppReply
-      ? withAutomationDisclosure(humanized, workspace.brandName, workspace.agentName)
+    const asksIfBot = /\b(bot|robot|chat ?bot|ai|automated|real (person|human)|human)\b/i.test(latestUser) && /\?|\bare (you|u)\b/i.test(latestUser);
+    const owned = humanized && updatedLead.phoneE164 && updatedLead.whatsappE164 && updatedLead.phoneE164 !== updatedLead.whatsappE164
+      ? swapNumber(humanized, updatedLead.whatsappE164, updatedLead.phoneE164)
       : humanized;
+    const honest = owned && asksIfBot && !/\b(ai|bot|automated)\b/i.test(owned)
+      ? `Yes, I'm ${workspace.brandName}'s AI assistant. ${owned}`
+      : owned;
+    const written = honest && firstWhatsAppReply
+      ? withAutomationDisclosure(honest, workspace.brandName, workspace.agentName)
+      : honest;
     const keepCase = [workspace.brandName, workspace.agentName ?? "", ...workspace.brandName.split(/\s+/)];
-    const bubbles = written ? humanBubbles(written, earlierReplies, keepCase, { casual: agent.casualTexting, split: agent.splitMessages }) : [];
+    const bubbles = written
+      ? humanBubbles(written, earlierReplies, keepCase, { casual: agent.casualTexting, split: agent.splitMessages, ...(asksIfBot ? { keep: /\b(ai|bot|automated|assistant)\b/i } : {}) })
+      : [];
     const reply = bubbles.length ? bubbles.join("\n") : null;
     const spokenReply = written ? dropRepeatedSentences(written.replace(/\s*\n+\s*/g, " "), earlierReplies) : null;
     const window = replyEligibility({
@@ -1858,6 +1912,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
             ? `Model failed, sent the scripted question: ${fallbackReason}`
             : validated.reply ? "Sent the model reply." : `Model reply was not sent (${validated.replyRejectedReason ?? "empty"}). The saved question was used.`,
           generated.diagnostics?.mode === "sarvam-plain" ? `Used the plain-text reply after: ${String((generated.diagnostics as Record<string, unknown>).failures ?? "").slice(0, 200)}` : "",
+          validated.reply && bubbles.join(" ").length < validated.reply.length / 2 ? `Most of the draft was cut. Draft: ${validated.reply.slice(0, 400)}` : "",
           ...validated.rejected.map((item) => item.reason),
         ].filter(Boolean).join("; ") || null,
       },
@@ -2156,6 +2211,7 @@ async function readLeadForm(
   runtime: Runtime,
   questions: ReturnType<typeof parseLeadQuestions>,
   messages: { author: string; body: string }[],
+  phoneRegion = runtime.phoneRegion,
 ): Promise<ReturnType<typeof acceptExtractedAnswers> | null> {
   if (!runtime.llm.extractAnswers) return null;
   const transcript = messages.map((message) => ({ author: message.author, body: withoutPhotoText(message.body) }));
@@ -2166,7 +2222,7 @@ async function readLeadForm(
       questions: questions.map((question) => ({ id: question.id, label: question.label, kind: question.kind, numeric: numericQuestion(question) })),
       transcript,
     });
-    return acceptExtractedAnswers({ questions, raw, prospectText, phoneRegion: runtime.phoneRegion });
+    return acceptExtractedAnswers({ questions, raw, prospectText, phoneRegion });
   } catch (error) {
     console.warn("Lead form reading failed, using the text rules.", error instanceof Error ? error.message : error);
     return null;

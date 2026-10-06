@@ -9,6 +9,8 @@ export type Situation = {
   line: string;
   /** When set, staff take the chat after this reply. */
   handoff?: string;
+  /** Applies every time it comes up, not only the first time. */
+  always?: boolean;
 };
 
 const FAMILY = "parents|father|mother|dad|daddy|mom|mummy|amma|appa|brother|sister|son|daughter|uncle|aunt|aunty|in[- ]?laws?|father[- ]in[- ]law|mother[- ]in[- ]law|friend|boss|client|relative|cousin|grandparents?";
@@ -20,6 +22,8 @@ const SPAM = /\b(crypto|bitcoin|forex|trading tips|loan (offer|approved)|click (
 const ABUSE = /\b(fuck\w*|f\*+k|bitch|bastard|asshole|motherf\w*|madarchod|behenchod|bhenchod|chutiya|chutiye|gandu|punda|thevidiya|bosadi\w*|randi)\b/i;
 const FLIRT = /\b(are you single|date me|go on a date|send (me )?your (pic|photo|selfie)\b(?!s)|i love you|you('re| are) (so )?(sexy|hot|cute|beautiful)|marry me|sexy|nude)\b/i;
 const TINY = /\b(only|just)\b[^.?!]{0,25}\b(curtains?|blinds?|one (chair|door|hinge|shelf|wall|cupboard|drawer)|a (chair|hinge|handle|lock|tap)|repair\w*|fix(ing)?|polish\w*|hinges?)\b|\b(repair|fix) (my |a |the |one )?(hinge|handle|drawer|door|chair|sofa|tap|lock|cupboard door)\b/i;
+const WORK = /\b(previous|past|earlier|completed|recent|your) (work|works|projects?|designs?|homes)\b|\bportfolio\b|\bgallery\b|\b(show|send|share)( me)? (some )?(photos|pics|pictures|images|samples|designs|work)\b|\bsamples? of (your )?work\b/i;
+const CREDENTIALS = /\bhow many (clients|customers|projects|homes|years|people)\b|\b(how much experience|years of experience|track record|how long have you been|how old is (your|the) company|since when)\b/i;
 const RENTED = /\b(rented|on rent|tenant|renting|rental (flat|house|home|apartment)|leased)\b/i;
 const LETTING = /\b(rent (it )?out|give (it )?(on|for) rent|let out|rental income|to rent)\b/i;
 const FOR_SOMEONE = new RegExp(`\\b(?:for|on behalf of) (?:my )?(${FAMILY})(?:'s)?\\b|\\bmy (${FAMILY})(?:'s|s)? (?:flat|home|house|villa|apartment|place)\\b`, "i");
@@ -111,6 +115,22 @@ export function messageSituations(text: string, brandName: string): Situation[] 
     });
     return found;
   }
+  if (WORK.test(text)) {
+    found.push({
+      key: "wants-portfolio",
+      note: `Asked to see previous work: "${said}"`,
+      line: `They want to see ${brandName}'s previous work. Share the one link from the knowledge base that fits them best (the page for their BHK only if they already told you their BHK, otherwise the portfolio, and the gallery if they ask again), and a matching post link if one fits. Write the link exactly as given, on its own. Offer a visit to the experience centre to see real room setups. Never say you will send photos, and never invent a link.`,
+      always: true,
+    });
+  }
+  if (CREDENTIALS.test(text)) {
+    found.push({
+      key: "credentials",
+      note: `Asked about experience or track record: "${said}"`,
+      line: "They asked about experience, track record or how many clients. Answer with the facts in the knowledge base only, like the year started and the number of completed projects, in one line. Never invent numbers, awards or famous clients.",
+      always: true,
+    });
+  }
   if (TINY.test(text)) {
     found.push({
       key: "small-job",
@@ -163,8 +183,22 @@ export function messageSituations(text: string, brandName: string): Situation[] 
   return found;
 }
 
+const PRICE = /\b(how much|price|pricing|cost|rate|approx\w*|ballpark|rough(ly)? (cost|idea|estimate)|estimate|quote|starting (price|from)|per sq ?ft|minimum|budget (range|kitna|evlo)|evlo aagum|kitna (lagega|hoga))\b/i;
+
+/** Asking the price again after hearing it depends: the same explanation again would read like a script. */
+export function pricePush(prospectTexts: string[]): Situation | null {
+  const asked = prospectTexts.filter((text) => PRICE.test(text));
+  if (asked.length < 2 || !PRICE.test(prospectTexts[prospectTexts.length - 1] ?? "")) return null;
+  return {
+    key: "price-push",
+    note: `Asked about price ${asked.length} times.`,
+    line: "They are asking about the price again. Do not repeat your earlier explanation or its words. Acknowledge plainly that they want a number, give one fresh honest reason it varies so much (for example the same 3 BHK can differ a lot by materials and how much storage and custom work they want), and offer the quickest way to a real estimate: a short call with the team or a visit to the experience centre. Still never quote a number.",
+    always: true,
+  };
+}
+
 /** Someone outside India, known from their WhatsApp number or from what they said. */
-export function abroadSituation(input: { phoneE164?: string | null; texts: string[]; now: Date }): Situation | null {
+export function abroadSituation(input: { phoneE164?: string | null; texts: string[]; now: Date }): (Situation & { country: string | null }) | null {
   const phone = input.phoneE164 ? parsePhoneNumberFromString(input.phoneE164) : undefined;
   const fromPhone = phone?.country && phone.country !== "IN" ? phone.country : null;
   const words = input.texts.join("\n");
@@ -178,6 +212,7 @@ export function abroadSituation(input: { phoneE164?: string | null; texts: strin
   const why = fromWords || place || nri ? "from what they said" : `from their ${phone?.countryCallingCode ? `+${phone.countryCallingCode} ` : ""}number`;
   const clock = zone ? ` It is about ${localTime(zone, input.now)} there now.` : " Ask which time zone they are in before suggesting a time.";
   return {
+    country,
     key: `abroad:${country ?? "unknown"}`,
     note: `Customer seems to be outside India (${where}, ${why}).${zone ? ` Local time now: ${localTime(zone, input.now)}.` : ""} Plan the call in their time zone.`,
     line: `They seem to live outside India, in ${where} (${why}). Many NRIs do interiors for a home in India from abroad, so if you do not know yet, ask where the home in India is.${clock} When a call time comes up, think in their local time, ask what suits them in their time zone and note it with the time zone. The team can coordinate remotely and will confirm a call or video call. A phone number from their country is fine if it has the country code.`,

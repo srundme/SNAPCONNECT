@@ -63,11 +63,25 @@ export function parsePhone(text: string | null | undefined, defaultRegion = "IN"
   const raw = (text ?? "").trim();
   if (!raw) return { kind: "absent" };
   if (DECLINED.test(raw) && !/\d{5,}/.test(raw)) return { kind: "declined", raw };
-  const parsed = parsePhoneNumberFromString(raw.replace(/^\s*00(?=[1-9])/, "+"), defaultRegion as "IN");
-  if (!parsed || !parsed.isValid()) return { kind: "invalid", raw };
+  const [primary = "IN", ...alsoFrom] = defaultRegion.split(",").map((region) => region.trim()).filter(Boolean);
+  const cleaned = raw.replace(/^\s*00(?=[1-9])/, "+").replace(/^\s*0(?=91[\s-]*[6-9](?:[\s-]*\d){9}\s*$)/, "+");
+  for (const region of [primary, ...alsoFrom]) {
+    const e164 = realNumber(cleaned, region);
+    if (e164) return { kind: "valid", e164, raw };
+  }
+  return { kind: "invalid", raw };
+}
+
+/**
+ * A valid, non-patterned number read with this region as the default. A second region is only
+ * tried when the person is known to be there, so a mistyped Indian number never passes as foreign.
+ */
+function realNumber(text: string, region: string): string | null {
+  const parsed = parsePhoneNumberFromString(text, region as "IN");
+  if (!parsed || !parsed.isValid()) return null;
   const national = String(parsed.nationalNumber);
-  if (parsed.country === "IN" ? !realIndianMobile(national) : patternedNumber(national)) return { kind: "invalid", raw };
-  return { kind: "valid", e164: parsed.number, raw };
+  if (parsed.country === "IN" ? !realIndianMobile(national) : patternedNumber(national)) return null;
+  return parsed.number;
 }
 
 /** Digits someone types to get past a form, in any country: one digit over and over, a short repeat, or a run like 12345678. */
@@ -98,6 +112,13 @@ function digitRuns(text: string, minDigits: number): string[] {
   return (text.match(/\+?\d[\d\s().-]{4,}\d/g) ?? [])
     .map((run) => run.trim())
     .filter((run) => run.replace(/\D/g, "").length >= minDigits);
+}
+
+export function swapNumber(text: string, oldE164: string, newE164: string): string {
+  const local = oldE164.replace(/\D/g, "").slice(-10);
+  if (local.length < 8) return text;
+  const pattern = new RegExp(`(?:\\+?\\d{1,3}[\\s-]?)?${local.split("").join("[\\s-]?")}(?!\\d)`, "g");
+  return text.replace(pattern, newE164);
 }
 
 export function wrongPhoneIn(text: string, defaultRegion = "IN", minDigits = 6): string | null {

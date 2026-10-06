@@ -3,7 +3,7 @@ import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { loadConfig, loadDotEnv } from "@snapsocial/config";
 import { connectionSender, getPrisma, processAvailableJobs, simulationRuntime } from "@snapsocial/db";
-import { cartesiaSpeaker, fixtureLlm, ollamaLlm, sarvamLlm, sarvamTranscriber, sarvamVision, whatsappMediaUrl } from "@snapsocial/integrations";
+import { cartesiaSpeaker, fixtureLlm, ollamaLlm, osmPlaceLookup, sarvamLlm, sarvamTranscriber, sarvamVision, whatsappMediaUrl } from "@snapsocial/integrations";
 
 loadDotEnv(process.cwd());
 
@@ -43,6 +43,7 @@ const runtime = simulationRuntime({
       }
     : {}),
   replySettleMs: 2500,
+  lookupPlace: osmPlaceLookup({ userAgent: `SnapServeSocial/1.0 (${config.APP_BASE_URL})` }),
   pause: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 });
 

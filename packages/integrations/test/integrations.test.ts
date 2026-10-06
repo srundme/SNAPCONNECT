@@ -8,6 +8,24 @@ import { assertPrivateOllamaUrl, readVoiceDirection, sarvamLlm, sarvamTranscribe
 import { zohoAdapter } from "../src/zoho";
 import { checkWhatsAppNumber, subscribeWhatsAppAccount, whatsappAdapter } from "../src/whatsapp";
 import { cartesiaSpeaker, speechLocale, speechScript, speechSentences } from "../src/cartesia";
+import { osmPlaceLookup } from "../src/places";
+
+describe("project lookup", () => {
+  const reply = (results: unknown[]) => (async () => new Response(JSON.stringify(results), { status: 200 })) as unknown as typeof fetch;
+
+  it("finds a named project and its locality, and ignores plain localities or other names", async () => {
+    const urls: string[] = [];
+    const fetcher = (async (url: string) => {
+      urls.push(url);
+      return new Response(JSON.stringify([{ name: "Godrej Splendour (u/c)", type: "construction", address: { suburb: "Belathur", postcode: "560067" } }]), { status: 200 });
+    }) as unknown as typeof fetch;
+    const place = await osmPlaceLookup({ userAgent: "test", fetcher })("my flat is in Godrej Splendour", "Bengaluru");
+    expect(place).toEqual({ name: "Godrej Splendour", locality: "Belathur", city: null, pincode: "560067", underConstruction: true });
+    expect(decodeURIComponent(urls[0]!)).toContain("q=Godrej Splendour, Bengaluru");
+    expect(await osmPlaceLookup({ userAgent: "test", fetcher: reply([{ name: "HSR Layout", type: "suburb" }]) })("HSR Layout")).toBeNull();
+    expect(await osmPlaceLookup({ userAgent: "test", fetcher: reply([{ name: "Brigade Gateway", type: "residential" }]) })("Prestige Shantiniketan")).toBeNull();
+  });
+});
 
 describe("integration guards", () => {
   it("encrypts credentials with an external key", () => {

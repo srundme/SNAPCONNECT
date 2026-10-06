@@ -20,6 +20,9 @@ import {
   screenLead,
   unrealisticAnswers,
   messageSituations,
+  labelledAnswers,
+  repeatsEarlier,
+  pricePush,
   abroadSituation,
   dayOffLine,
   openDays,
@@ -51,6 +54,11 @@ describe("no repeats and no re-asking", () => {
     expect(dropAnsweredQuestions("Noted. Which number should the team call you on?", questions, ["phone"])).toBe("Noted.");
     expect(dropAnsweredQuestions("Noted. Which area and which apartment is it in?", [...questions, { id: "type", label: "What kind of home is it, apartment, villa or independent house?", field: "Description", kind: "text", required: true }], ["scope", "type"]))
       .toBe("Noted. Which area and which apartment is it in?");
+  });
+
+  it("keeps the honest answer to 'are you a bot' even if it was said before", () => {
+    const earlier = ["hi this is Varun an automated assistant for The KariGhars"];
+    expect(humanBubbles("yes sir this is Varun an automated assistant for The KariGhars. the team are real people", earlier, [], { keep: /\bautomated\b/i }).join(" ")).toMatch(/automated/);
   });
 
   it("does not send a question it just asked in slightly different words", () => {
@@ -95,6 +103,19 @@ describe("common sense checks", () => {
     expect(keys({ place: "Whitefield, Bangalore" })).toEqual([]);
   });
 
+  it("captures a labelled budget or size even when another question was asked", () => {
+    expect(labelledAnswers(questions, "budget 8")).toEqual({ budget: "8" });
+    expect(labelledAnswers(questions, "my budget is around 25 lakhs")).toEqual({ budget: "25 lakhs" });
+    expect(labelledAnswers(questions, "budget evlo aagum?")).toEqual({});
+    expect(labelledAnswers(questions, "carpet area 1200 sq ft")).toEqual({ size: "1200 sq ft" });
+  });
+
+  it("does not resend a reply that only repeats earlier ones", () => {
+    const earlier = ["pricing depends on the home the scope and the materials so the team confirms it after understanding the requirement...may i know ur name?"];
+    expect(repeatsEarlier("Pricing depends on the home, the scope and the materials, so the team confirms it after understanding the requirement in the free consultation. May I know your name?", earlier)).toBe(true);
+    expect(repeatsEarlier("Godrej Splendour is a nice project. Is it the full home or selected rooms?", earlier)).toBe(false);
+  });
+
   it("reads budget shorthand instead of treating it as a joke", () => {
     expect(keys({ type: "3 BHK", scope: "Full home", budget: "15" })).toEqual(["budget-unit"]);
     expect(unrealisticAnswers(questions, { budget: "15" })).toEqual([]);
@@ -127,7 +148,10 @@ describe("real-world situations", () => {
     expect(messageSituations("Earn 5000 daily, click here", "The KariGhars")[0]?.handoff).toBeTruthy();
     expect(keys("are you single?")).toEqual(["flirt"]);
     expect(keys("need full home interiors for my 3 BHK")).toEqual([]);
-    expect(keys("can you send photos of your work?")).toEqual([]);
+    expect(keys("can you send photos of your work?")).toEqual(["wants-portfolio"]);
+    expect(keys("i want to see your previous work")).toEqual(["wants-portfolio"]);
+    expect(keys("how many clients have you worked with?")).toEqual(["credentials"]);
+    expect(keys("can i visit the experience centre?")).toEqual([]);
   });
 
   it("spots small jobs, rented homes, family enquiries and someone else's number", () => {
@@ -171,6 +195,14 @@ describe("international numbers", () => {
     expect(parsePhone("+971 50 123").kind).toBe("invalid");
     expect(wrongPhoneIn("my number +971 50 123", "IN", 6)).toBe("+97150123");
     expect(phoneProblem("+97150123")).toMatch(/country code/);
+    expect(parsePhone("971502847316").kind).toBe("invalid");
+    expect(parsePhone("971502847316", "IN,AE")).toMatchObject({ kind: "valid", e164: "+971502847316" });
+    expect(parsePhone("9845012345", "IN,AE")).toMatchObject({ kind: "valid", e164: "+919845012345" });
+    expect(pricePush(["how much for 3bhk?", "just tell me approx"])?.key).toBe("price-push");
+    expect(pricePush(["how much for 3bhk?", "ok 3bhk in HSR"])).toBeNull();
+    for (const indian of ["91 6383653279", "916383653279", "091 6383653279", "06383653279", "(91) 63836 53279"]) {
+      expect(parsePhone(indian), indian).toMatchObject({ kind: "valid", e164: "+916383653279" });
+    }
     expect(phoneProblem("971501234567")).toMatch(/country code/);
   });
 });
@@ -180,6 +212,9 @@ describe("WhatsApp number", () => {
     expect(askSameNumber("ok sir already with u makes things easier. Which number should the team call u on?", "+916383653279"))
       .toBe("ok sir already with u makes things easier. Shall the team call you on this same WhatsApp number, +916383653279?");
     expect(askSameNumber("Can I call on this WhatsApp number? Which number should we use?", "+916383653279")).toBe("Can I call on this WhatsApp number?");
+    const mentions = "sir I get that a number upfront would be easier but every project is different, may I know your name";
+    expect(askSameNumber(mentions, "+916383653279")).toBe(mentions);
+    expect(askSameNumber("May I know your contact number?", "+916383653279")).toMatch(/same WhatsApp number/);
   });
 
   it("knows when they agreed to the same number", () => {

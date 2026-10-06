@@ -442,10 +442,8 @@ export function absorbTranscript(input: {
         if (text.length <= 40) continue;
       }
     }
-    if (!phoneE164) {
-      const phone = parsePhone(text, input.phoneRegion ?? "IN");
-      if (phone.kind === "valid") phoneE164 = phone.e164;
-    }
+    const phone = parsePhone(text, input.phoneRegion ?? "IN");
+    if (phone.kind === "valid") phoneE164 = phone.e164;
     for (const question of input.questions) {
       const askedThis = lastAi.includes(scriptQuestion(question)) || askedAbout(question, lastAi);
       if (question.kind === "name" && !name && !input.nameReadElsewhere) name = cleanName(nameFrom(text, askedThis && plain), text);
@@ -701,6 +699,8 @@ const HINGLISH_QUESTIONS: Record<string, string> = {
   demo: "Demo dekhna chahoge?",
 };
 
+/** Asking for their number, not just mentioning one, like "a number upfront would be easier". */
+const ASKS_FOR_NUMBER = /\b(your|ur|which|what|best|share|send|give|type|drop|alternate|another|different)\b(?:\W+\w+){0,3}?\W+(number|phone|mobile|contact)\b|\b(number|phone|mobile)\b[^.?!]{0,20}\?/i;
 const SAME_NUMBER_ASKED = /\bsame\b[^.?!]*\b(number|whatsapp)\b|\bthis\s+(whatsapp\s+)?number\b|\bwhatsapp number\b/i;
 
 export function asksSameNumberIn(text: string): boolean {
@@ -730,7 +730,7 @@ export function askSameNumber(reply: string, phoneE164: string): string {
     .map((line) => line
       .split(/(?<=[.!?])\s+/)
       .map((sentence) => {
-        const asksNumber = (sentence.includes("?") || ASKING.test(sentence)) && /\b(number|phone|mobile|contact)\b/i.test(sentence) && !SAME_NUMBER_ASKED.test(sentence);
+        const asksNumber = (sentence.includes("?") || ASKING.test(sentence)) && ASKS_FOR_NUMBER.test(sentence) && !SAME_NUMBER_ASKED.test(sentence);
         if (!asksNumber && !SAME_NUMBER_ASKED.test(sentence)) return sentence;
         if (asked) return "";
         asked = true;
@@ -754,6 +754,11 @@ function askScore(question: LeadQuestion, sentence: string): number {
  * Removes questions about details they already gave. A question counts as the one it matches best,
  * so "which area and apartment" is the area question even though home type mentions apartments.
  */
+export function refusesNumber(text: string): boolean {
+  return /\b(?:don'?t|do not|won'?t|will not|not going to|can'?t|cannot)\s+(?:want to\s+|wanna\s+)?(?:share|give|send)\b[^.?!]*\b(?:number|no\.?|contact|phone|mobile)\b|\bno (?:phone|number|calls?)\b|\bdon'?t call\b/i
+    .test(text.replace(/[‘’`]/g, "'"));
+}
+
 export function dropAnsweredQuestions(reply: string, questions: LeadQuestion[], answeredIds: string[]): string {
   const answered = new Set(answeredIds);
   if (!answered.size) return reply;
@@ -767,7 +772,7 @@ export function dropAnsweredQuestions(reply: string, questions: LeadQuestion[], 
   };
   return reply
     .split(/\n+/)
-    .map((line) => line.split(/(?<=[.!?])\s+/).filter((sentence) => !repeatsAnswer(sentence)).join(" ").trim())
+    .map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((sentence) => !repeatsAnswer(sentence)).join(" ").trim())
     .filter(Boolean)
     .join("\n");
 }

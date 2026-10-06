@@ -235,6 +235,20 @@ function casualKey(sentence: string): string {
   return sentenceKey(casualText(sentence));
 }
 
+function repeatTest(earlier: string[], keep?: RegExp): (sentence: string) => boolean {
+  const earlierSentences = earlier.flatMap((body) => body.split(/\.{2,}|(?<=[.!?।])\s+|\n+/));
+  const said = new Set(earlierSentences.map(casualKey).filter((key) => key.length >= 12));
+  const recentWords = earlier.slice(-3).flatMap((body) => body.split(/\.{2,}|(?<=[.!?।])\s+|\n+/)).map(wordSet).filter((words) => words.size >= 5);
+  return (part) => !keep?.test(part) && (said.has(casualKey(part)) || nearlySame(wordSet(part), recentWords));
+}
+
+/** Every sentence of the draft was already sent in this chat, so sending it would read like a broken record. */
+export function repeatsEarlier(text: string, earlier: string[]): boolean {
+  const sentences = replyBubbles(text).flatMap(sentencesOf);
+  const repeat = repeatTest(earlier);
+  return sentences.length > 0 && sentences.every(repeat);
+}
+
 /**
  * Turns a written reply into the casual messages to send: split like a person would, sentences
  * Varun already sent dropped, then typed the casual way. If every sentence is a repeat, nothing is dropped.
@@ -243,13 +257,10 @@ export function humanBubbles(
   text: string,
   earlier: string[],
   keepCase: string[] = [],
-  options: { casual?: boolean; split?: boolean } = {},
+  options: { casual?: boolean; split?: boolean; keep?: RegExp } = {},
 ): string[] {
   const casual = options.casual ?? true;
-  const earlierSentences = earlier.flatMap((body) => body.split(/\.{2,}|(?<=[.!?।])\s+|\n+/));
-  const said = new Set(earlierSentences.map(casualKey).filter((key) => key.length >= 12));
-  const recentWords = earlier.slice(-3).flatMap((body) => body.split(/\.{2,}|(?<=[.!?।])\s+|\n+/)).map(wordSet).filter((words) => words.size >= 5);
-  const repeat = (part: string) => said.has(casualKey(part)) || nearlySame(wordSet(part), recentWords);
+  const repeat = repeatTest(earlier, options.keep);
   const split = replyBubbles(text).map(sentencesOf);
   const fresh = split.map((parts) => parts.filter((part) => !repeat(part)));
   const chosen = fresh.some((parts) => parts.length) ? fresh : split;

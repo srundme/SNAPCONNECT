@@ -35,6 +35,23 @@ const CITIES = [
   "goa", "panaji", "bhubaneswar", "patna", "ranchi", "guwahati", "dehradun", "dubai", "abu dhabi", "singapore", "london", "usa",
 ];
 
+/** "budget 8" or "carpet area 1200 sq ft": a labelled answer, even when that question was not the one just asked. */
+export function labelledAnswers(questions: Question[], text: string): Record<string, string> {
+  const found: Record<string, string> = {};
+  const budget = text.match(/\bbudget(?:\s*(?:is|of|:|-|around|about|approx\w*|max\w*|roughly))*\s*((?:rs\.?|₹|inr)?\s*\d[\d,.]*\s*(?:lakhs?|lacs?|l|crores?|cr|k|thousand)?)\b/i);
+  const budgetId = questionFor(questions, BUDGET)?.id;
+  if (budget && budgetId) found[budgetId] = budget[1]!.trim();
+  const size = text.match(/\b(?:carpet|built[- ]?up|super built[- ]?up|area|size)\s*(?:area)?(?:\s*(?:is|of|:|-|around|about|approx\w*|roughly))*\s*(\d[\d,.]*\s*(?:sq\.?\s*(?:ft|feet|m|mt|mtrs?|meters?|metres?|yards?|yds?)|square\s*\w+|sqft|sft|sqm|cents?|guntas?)?)/i);
+  const sizeId = questionFor(questions, SIZE)?.id;
+  if (size && sizeId) found[sizeId] = size[1]!.trim();
+  return found;
+}
+
+/** Their answer to where the home is, which may name the apartment project. */
+export function placeAnswer(questions: Question[], answers: Record<string, string>): string {
+  return answerFor(questions, answers, PLACE);
+}
+
 function questionFor(questions: Question[], pattern: RegExp): Question | undefined {
   return questions.find((item) => pattern.test(item.label));
 }
@@ -97,7 +114,7 @@ function budgetShorthand(
     return {
       key: `budget-unit:${bare}`,
       note: `Budget "${text}" has no unit; most likely ${bare} lakh.`,
-      line: `They said "${text}" for the budget with no unit. For home interiors that almost surely means ${bare} lakh. Confirm it lightly in a few words, like "${bare} lakh, right?", and never laugh at it.`,
+      line: `They said "${text}" for the budget with no unit. For home interiors that almost surely means ${bare} lakh, never crore. Confirm it lightly in a few words, like "${bare} lakh, right?", and never laugh at it.`,
     };
   }
   if (budget >= 1_000 && budget < 100_000 && home.fullHome) {
