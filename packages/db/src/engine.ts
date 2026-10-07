@@ -1911,7 +1911,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const askedIn = (question: LeadQuestion, body: string) => questionAsked(question, body) || plainText(body).includes(plainText(askQuestion(question)));
     const timesAsked = (question: LeadQuestion) => spoken.filter((message) => message.author === "AI" && askedIn(question, message.body)).length;
     const justAnsweredPart = (question: LeadQuestion) => Boolean(homeKind && /\bbhk\b/i.test(question.label) && freshText.toLowerCase().includes(homeKind));
-    const askLimit = (question: LeadQuestion) => (question.kind === "phone" || /\bbhk\b/i.test(question.label) ? 2 : 1);
+    const askLimit = (_question: LeadQuestion) => 2;
     const justAsked = (question: LeadQuestion) => timesAsked(question) >= askLimit(question) || (!justAnsweredPart(question) && lastTwoAi.some((body) => askedIn(question, body)));
     const optionalNext = complete && !complete.cold
       ? questions.find((question) => complete.optional.includes(question.label) && !spoken.some((message) => message.author === "AI" && questionAsked(question, message.body)))
@@ -2306,6 +2306,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
             ...questions.map((question) => question.label),
             ...(planText ? [planText] : []),
             ...(waNumber ? [sameNumberQuestion(waNumber)] : []),
+            ...earlierReplies.flatMap((body) => body.split(/(?<=[.!?])\s+|\n+|(?<=\.\.)(?=[^\s.])/)).filter((sentence) => isQuestionSentence(sentence)),
           ],
           chat: spoken.slice(-8).map((message) => `${message.author === "PROSPECT" ? "Customer" : "You"}: ${message.body}`).join("\n"),
           languageLine,
