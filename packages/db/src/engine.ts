@@ -1911,7 +1911,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const askedIn = (question: LeadQuestion, body: string) => questionAsked(question, body) || plainText(body).includes(plainText(askQuestion(question)));
     const timesAsked = (question: LeadQuestion) => spoken.filter((message) => message.author === "AI" && askedIn(question, message.body)).length;
     const justAnsweredPart = (question: LeadQuestion) => Boolean(homeKind && /\bbhk\b/i.test(question.label) && freshText.toLowerCase().includes(homeKind));
-    const justAsked = (question: LeadQuestion) => timesAsked(question) >= 3 || (!justAnsweredPart(question) && lastTwoAi.some((body) => askedIn(question, body)));
+    const askLimit = (question: LeadQuestion) => (question.kind === "phone" || /\bbhk\b/i.test(question.label) ? 2 : 1);
+    const justAsked = (question: LeadQuestion) => timesAsked(question) >= askLimit(question) || (!justAnsweredPart(question) && lastTwoAi.some((body) => askedIn(question, body)));
     const optionalNext = complete && !complete.cold
       ? questions.find((question) => complete.optional.includes(question.label) && !spoken.some((message) => message.author === "AI" && questionAsked(question, message.body)))
       : undefined;
@@ -2293,7 +2294,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       || plainText(sentence).includes(plainText(askQuestion(question)))
       || (/\bbhk\b/i.test(question.label) && /\bbhk\b/i.test(sentence)));
     const unnagged = unasked && recentlyAsked.length
-      ? unasked.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !nagging(part)).join(" ").trim()).filter(Boolean).join("\n") || unasked
+      ? unasked.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !nagging(part)).join(" ").trim()).filter(Boolean).join("\n")
+        || (target && !recentlyAsked.includes(target) ? askQuestion(target) : unasked)
       : unasked;
     const askedNumber = unnagged && numberPending && waNumber ? askSameNumber(unnagged, waNumber) : unnagged;
     const numbered = askedNumber
