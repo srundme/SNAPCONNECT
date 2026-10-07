@@ -27,6 +27,7 @@ import {
   asksSameNumberIn,
   type LeadQuestion,
   dropAnsweredQuestions,
+  dropEchoes,
   sameNumberQuestion,
   dropIndicSentences,
   hasIndicSentence,
@@ -295,6 +296,9 @@ export async function processAvailableJobs(db: Db, runtime: Runtime, limit = 25)
     });
     if (claimed.count !== 1) continue;
     let outcome: "done" | "requeue" | "failed" = "failed";
+    const alive = setInterval(() => {
+      void db.outboxJob.updateMany({ where: { id: job.id, status: "PROCESSING" }, data: { updatedAt: new Date() } }).catch(() => undefined);
+    }, 30_000);
     try {
       outcome = await processJob(db, job, runtime);
     } catch (error) {
@@ -304,6 +308,8 @@ export async function processAvailableJobs(db: Db, runtime: Runtime, limit = 25)
         data: { status: "FAILED", lastError: error instanceof Error ? error.message.slice(0, 500) : "Processing failed" },
       });
       continue;
+    } finally {
+      clearInterval(alive);
     }
     if (outcome === "requeue") continue;
     await db.outboxJob.update({
@@ -313,6 +319,24 @@ export async function processAvailableJobs(db: Db, runtime: Runtime, limit = 25)
     processed += 1;
   }
   return processed;
+}
+
+export async function recoverStaleJobs(db: Db, now: Date, staleMs = 120_000): Promise<number> {
+  const cutoff = new Date(now.getTime() - staleMs);
+  const failed = await db.outboxJob.updateMany({
+    where: { status: "PROCESSING", updatedAt: { lt: cutoff }, attempts: { gte: 2 } },
+    data: { status: "FAILED", lastError: "Worker stopped while processing" },
+  });
+  const requeued = await db.outboxJob.updateMany({
+    where: { status: "PROCESSING", updatedAt: { lt: cutoff } },
+    data: { status: "PENDING", availableAt: now, attempts: { increment: 1 } },
+  });
+  await db.$executeRaw`
+    UPDATE "InferenceLease" SET "holder" = NULL, "expiresAt" = NULL
+    WHERE "id" = 'global' AND "holder" IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM "OutboxJob" WHERE "id" = "InferenceLease"."holder" AND "status" = 'PROCESSING')
+  `;
+  return failed.count + requeued.count;
 }
 
 async function processJob(db: Db, job: JobRecord, runtime: Runtime): Promise<"done" | "requeue" | "failed"> {
@@ -2227,7 +2251,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : addsPlan && composed
         ? [withoutOptional(composed), planText].filter(Boolean).join("\n")
         : composed;
-    const kept = focused && answered.length ? dropAnsweredQuestions(focused, questions, answered) : focused;
+    const unechoed = focused ? dropEchoes(focused, freshText) : focused;
+    const kept = unechoed && answered.length ? dropAnsweredQuestions(unechoed, questions, answered) : unechoed;
     const unasked = focused && !situationHandoff && kept !== focused && asksSomething(focused) && !asksSomething(kept ?? "") && nextQuestion
       ? [kept?.replace(/[^.!?\s]$/, "$&."), askQuestion(nextQuestion)].filter(Boolean).join(" ")
       : kept || focused;

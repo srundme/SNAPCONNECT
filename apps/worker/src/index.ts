@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { loadConfig, loadDotEnv } from "@snapsocial/config";
-import { connectionSender, getPrisma, processAvailableJobs, simulationRuntime } from "@snapsocial/db";
+import { connectionSender, getPrisma, processAvailableJobs, recoverStaleJobs, simulationRuntime } from "@snapsocial/db";
 import { bestPlaceLookup, cartesiaSpeaker, fixtureLlm, googlePlaceLookup, ollamaLlm, osmPlaceLookup, sarvamDocumentReader, sarvamLlm, sarvamTranscriber, sarvamVision, whatsappMediaUrl } from "@snapsocial/integrations";
 
 loadDotEnv(process.cwd());
@@ -72,6 +72,7 @@ async function tick() {
     where: { status: "DISPATCHED", updatedAt: { lt: new Date(Date.now() - 120_000) } },
     data: { status: "PENDING" },
   });
+  await recoverStaleJobs(db, new Date());
   try {
     if (redis.status === "wait") await redis.connect();
     const pending = await db.outboxJob.findMany({ where: { status: "PENDING", availableAt: { lte: new Date() } }, take: 20, select: { id: true } });

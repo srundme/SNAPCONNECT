@@ -404,6 +404,9 @@ describe("voice replies", () => {
     expect(speechScript("7000 sir? ha ha ha i think you meant 70", { emotions: [], speed: 1, opener: "" }))
       .toBe("seven thousand sir? [laughter] i think you meant seventy.");
     expect(speechScript("lol ok sir", { emotions: [], speed: 1, opener: "" })).toBe("[laughter] ok sir.");
+    expect(speechScript("Hahaa sir good one 😂", { emotions: [], speed: 1, opener: "" })).toBe("[laughter] sir good one [laughter]");
+    expect(speechScript("haaa haa nice one sir, so which area?", { emotions: [], speed: 1, opener: "" })).toBe("[laughter] nice one sir, so which area?");
+    expect(speechScript("Aha, got it sir", { emotions: [], speed: 1, opener: "" })).toBe("Aha, got it sir.");
     expect(speechScript("That is a big space. What is the budget?", { emotions: [], speed: 1, opener: "Oh," }))
       .toBe("Oh, that is a big space. What is the budget?");
     expect(speechScript("Super sir! Budget evlo?", { emotions: [], speed: 1, opener: "Ah," }))

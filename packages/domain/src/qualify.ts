@@ -557,6 +557,30 @@ function spokenByThem(text: string): string {
   return text.replace(/\(Sent a photo\. It shows: [\s\S]*?\)/g, " ").replace(/\(Sent a document[\s\S]*?\)/g, " ");
 }
 
+const SAME_PLACE: Array<RegExp> = [/^(bangalore|bengaluru|banglore|bangaluru|bengalore|blr)$/, /^(mumbai|bombay)$/, /^(chennai|madras)$/, /^(gurgaon|gurugram)$/, /^(kolkata|calcutta)$/];
+
+function editDistance(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) next[j] = Math.min(row[j]! + 1, next[j - 1]! + 1, row[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length]!;
+}
+
+/** A long word counts as theirs when they typed it, misspelt it slightly (banglore), or used another name for the same city. */
+function typedLongWord(word: string, said: string): boolean {
+  const typed = squeeze(said.normalize("NFKC"));
+  const wanted = squeeze(word);
+  if (typed.includes(wanted)) return true;
+  const typedWords = typed.split(/[^\p{L}\p{N}]+/u).filter((item) => item.length >= 4);
+  const alias = SAME_PLACE.find((pattern) => pattern.test(wanted));
+  if (alias && typedWords.some((item) => alias.test(item))) return true;
+  const allowed = wanted.length >= 10 ? 2 : 1;
+  return typedWords.some((item) => item[0] === wanted[0] && Math.abs(item.length - wanted.length) <= allowed && editDistance(item, wanted) <= allowed);
+}
+
 /**
  * An answer is theirs when it uses their words. A short rewording is kept when every long word
  * is still one they used, so "under construction" can stand for "still in construction".
@@ -564,9 +588,11 @@ function spokenByThem(text: string): string {
  */
 function answerIsTheirs(value: string, said: string): boolean {
   if (wordsWereTyped(value, said, 1)) return true;
-  if (!wordsWereTyped(value, said, 0.5)) return false;
+  const words = value.normalize("NFKC").split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 1);
   const typed = squeeze(said.normalize("NFKC"));
-  return value.normalize("NFKC").split(/[^\p{L}\p{N}]+/u).filter((word) => word.length >= 6).every((word) => typed.includes(squeeze(word)));
+  const theirs = (word: string) => typed.includes(squeeze(word)) || (word.length >= 6 && typedLongWord(word, said));
+  if (!words.length || words.filter(theirs).length / words.length < 0.5) return false;
+  return words.filter((word) => word.length >= 6).every((word) => typedLongWord(word, said));
 }
 
 export function acceptExtractedAnswers(input: {
@@ -836,6 +862,30 @@ export function dropAnsweredQuestions(reply: string, questions: LeadQuestion[], 
     .map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((sentence) => !repeatsAnswer(sentence)).join(" ").trim())
     .filter(Boolean)
     .join("\n");
+}
+
+const ECHO_FILLER = new Set(["ok", "okay", "oh", "sir", "mam", "bro", "ji", "got", "it", "its", "it's", "noted", "nice", "good", "great", "sure", "alright", "so", "that", "sounds", "is", "a", "the", "for", "you", "u", "ur", "your", "then", "right", "cool", "fine", "perfect", "lovely", "super", "in"]);
+
+/**
+ * Removes a line that only says their answer back, like "ok sir Puravankara Purva Meraki" or
+ * "whole flat sounds good sir". A line with anything of its own, or a question, stays.
+ */
+export function dropEchoes(reply: string, latest: string): string {
+  const said = new Set(latest.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  if (!said.size) return reply;
+  const echoes = (sentence: string) => {
+    if (sentence.includes("?")) return false;
+    const words = sentence.toLowerCase().split(/[^\p{L}\p{N}']+/u).filter(Boolean);
+    if (words.some((word) => word === "thanks" || word === "thank")) return false;
+    const own = words.filter((word) => !ECHO_FILLER.has(word));
+    return own.length > 0 && own.every((word) => said.has(word.replace(/'s$/, "")));
+  };
+  const kept = reply
+    .split(/\n+/)
+    .map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((sentence) => !echoes(sentence)).join(" ").trim())
+    .filter(Boolean)
+    .join("\n");
+  return kept || reply;
 }
 
 export function replyAsksFor(question: LeadQuestion, reply: string): boolean {

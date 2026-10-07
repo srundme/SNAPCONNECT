@@ -164,7 +164,7 @@ export function spokenNumbers(text: string): string {
     .replace(/\b(ft|sq\.? ?ft)\b\.?/gi, (unit) => (/sq/i.test(unit) ? "square feet" : "feet"));
 }
 
-const LAUGH = /\b(?:(?:ha|ah)(?:\s*(?:ha|ah))+h?|he(?:\s*he)+|hihi+|lol+|lmao+|rofl)\b[!.]*/gi;
+const LAUGH = /\b(?:(?:h+a+|a+h+)(?:\s*(?:h+a+|a+h+))+h*|h+e+(?:\s*h+e+)+|hihi+|lol+|lmao+|rofl)\b[!.]*|[😂🤣😆]+/giu;
 
 function cleanSpeech(text: string): string {
   const script = text

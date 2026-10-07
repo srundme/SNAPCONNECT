@@ -37,6 +37,7 @@ import {
   fitBhkLinks,
   questionAsked,
   dropAnsweredQuestions,
+  dropEchoes,
   looksEnglish,
   chatLanguageSample,
   languageName,
@@ -1034,6 +1035,24 @@ describe("lead form read by the model", () => {
     expect(meant.answers.possession).toBe("under construction");
     expect(meant.answers.place).toBeUndefined();
     expect(meant.name).toBeNull();
+    const respelt = acceptExtractedAnswers({
+      questions,
+      raw: { place: "HSR Layout, Bangalore, Puravankara Purva Meraki" },
+      prospectText: "In banglore HSR LAYOUT\nIt is puravankara purva meraki project",
+    });
+    expect(respelt.answers.place).toBe("HSR Layout, Bangalore, Puravankara Purva Meraki");
+    const otherCity = acceptExtractedAnswers({ questions, raw: { place: "Bengaluru, Whitefield" }, prospectText: "In banglore whitefeild" });
+    expect(otherCity.answers.place).toBe("Bengaluru, Whitefield");
+    const elsewhere = acceptExtractedAnswers({ questions, raw: { place: "HSR Layout, Prestige Lakeside" }, prospectText: "In banglore HSR LAYOUT" });
+    expect(elsewhere.answers.place).toBeUndefined();
+  });
+
+  it("drops a line that only says their answer back", () => {
+    expect(dropEchoes("ok sir Puravankara Purva Meraki\ngot it...may i know ur name?", "It is puravankara purva meraki project")).toBe("got it... may i know ur name?");
+    expect(dropEchoes("whole flat sounds good sir\nany possession date yet?", "Whole flat")).toBe("any possession date yet?");
+    expect(dropEchoes("thanks karthik sir\nwhich area is it?", "I'm karthik")).toBe("thanks karthik sir\nwhich area is it?");
+    expect(dropEchoes("good sir HSR Layout is a solid area", "In banglore HSR LAYOUT")).toBe("good sir HSR Layout is a solid area");
+    expect(dropEchoes("whole flat sounds good sir", "Whole flat")).toBe("whole flat sounds good sir");
   });
 
   it("reads a bare BHK number as BHK, and never treats an email question as a number", () => {
