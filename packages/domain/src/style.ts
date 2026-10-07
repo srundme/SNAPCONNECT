@@ -40,6 +40,15 @@ export function bareBudget(text: string): number | null {
   return Number.isFinite(value) && value >= 1 && value < 100 ? value : null;
 }
 
+/** A budget range written without a unit, like "20 to 30" or "20-30", which in Indian home interiors means lakhs. */
+export function bareBudgetRange(text: string): { low: number; high: number } | null {
+  const match = text.trim().match(/^(?:around |about |between |approx\w* |budget )*(\d+(?:\.\d+)?)\s*(?:-|–|to|se|and|muthal|till)\s*(\d+(?:\.\d+)?)\s*(?:only|max\w*|range)?$/i);
+  if (!match) return null;
+  const low = Number(match[1]);
+  const high = Number(match[2]);
+  return low >= 1 && high > low && high < 1_000 ? { low, high } : null;
+}
+
 const SIZE_UNITS: Array<{ pattern: RegExp; unit: string; factor: number; plot?: boolean }> = [
   { pattern: /\b(?:sq\.?\s*m(?:eters?|etres?|trs?|t)?|sqm|square\s*met(?:er|re)s?|m2)\b|m²/i, unit: "sq m", factor: 10.764 },
   { pattern: /\b(?:sq\.?\s*y(?:ar)?ds?|square\s*yards?|gaj|gajam)\b/i, unit: "sq yards", factor: 9 },
@@ -70,7 +79,7 @@ export function unrealisticAnswers(
   return questions.flatMap((question) => {
     const raw = String(answers[question.id] ?? "");
     if (/budget|price|spend|cost/i.test(question.label)) {
-      if (bareBudget(raw) !== null) return [];
+      if (bareBudget(raw) !== null || bareBudgetRange(raw)) return [];
       const rupees = rupeesIn(raw);
       return rupees && (rupees < 10_000 || rupees > 5_000_000_000) ? [{ id: question.id, label: question.label, value: rupees }] : [];
     }

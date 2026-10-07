@@ -97,6 +97,8 @@ import {
   readingMs,
   typingMs,
   unrealisticAnswers,
+  bareBudget,
+  bareBudgetRange,
   dropCannedLines,
   oneAddress,
   mediaNote,
@@ -1698,6 +1700,13 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           absorbed.answers[question.id] = `${value} (their photo: ${photo})`.slice(0, 220);
         }
       }
+      for (const question of questions.filter((item) => /budget/i.test(item.label) && /\d\s*(?:l|lakhs?|lacs?)\b/i.test(item.label))) {
+        const value = absorbed.answers[question.id] ?? "";
+        const range = bareBudgetRange(value);
+        const single = range ? null : bareBudget(value);
+        if (range) absorbed.answers[question.id] = `${range.low} to ${range.high} lakh`;
+        else if (single !== null) absorbed.answers[question.id] = `${single} lakh`;
+      }
       for (const doubt of unrealisticAnswers(questions, absorbed.answers)) {
         const marker = `Number check: ${doubt.label} ${doubt.value}`;
         const asked = await db.message.findFirst({
@@ -1721,7 +1730,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
             createdAt: runtime.now(),
           },
         });
-        memoryLines.push(`They said their ${doubt.label.toLowerCase()} is ${doubt.value.toLocaleString("en-IN")}, which is not realistic for this enquiry. It is almost surely a joke or a slip. Do not record it, never say noted and never repeat it back as fact. React like a person who got the joke: ${agent.laughter ? "start your reply with a short haha, then" : "with a light touch,"} ask for the real number.`);
+        memoryLines.push(/budget|price|spend|cost/i.test(doubt.label)
+          ? `They said their ${doubt.label.toLowerCase()} is ${doubt.value.toLocaleString("en-IN")}, which does not look like a real interior budget. It may be a typo or a missing unit. Do not record it and never laugh at a budget: politely check what they meant in a few words.`
+          : `They said their ${doubt.label.toLowerCase()} is ${doubt.value.toLocaleString("en-IN")}, which is not realistic for this enquiry. It is almost surely a joke or a slip. Do not record it, never say noted and never repeat it back as fact. React like a person who got the joke: ${agent.laughter ? "start your reply with a short haha, then" : "with a light touch,"} ask for the real number.`);
       }
       for (const check of contextChecks({ questions, answers: absorbed.answers, now: runtime.now(), serviceArea: agent.serviceArea })) {
         if (!(await noteOnce(`Check: ${check.key}`, check.note))) continue;

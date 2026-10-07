@@ -614,6 +614,7 @@ export function acceptExtractedAnswers(input: {
     const value = input.raw[question.id];
     const text = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
     if (!text || /^(null|none|unknown|n\/a|not provided)$/i.test(text)) continue;
+    if (question.kind === "text" && /^(?:no|nope|nah|not necessarily|not really|not now|not yet|not needed|later|maybe later|i don'?t have(?: it)?|don'?t have(?: it)?|nothing|skip)(?: (?:right now|now|sir|mam|bro|for now|yet))*[.!]?$/i.test(text)) continue;
     const spoken = spokenByThem(input.prospectText);
     if (question.kind === "text" && /^not sure yet$/i.test(text)) {
       if (/\b(don'?t|dont|dnt|do not|no|not|nahi|illa|theriyala)\b.{0,25}\b(know|idea|sure|decided|decide|told|pata|maloom|fixed|confirm\w*)\b|\bnot (?:yet )?decided\b|\bno idea\b|\bundecided\b|\bpata nahi\b/i.test(spoken)) {

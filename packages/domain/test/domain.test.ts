@@ -38,6 +38,7 @@ import {
   questionAsked,
   dropAnsweredQuestions,
   dropEchoes,
+  bareBudgetRange,
   looksEnglish,
   chatLanguageSample,
   languageName,
@@ -1045,6 +1046,18 @@ describe("lead form read by the model", () => {
     expect(otherCity.answers.place).toBe("Bengaluru, Whitefield");
     const elsewhere = acceptExtractedAnswers({ questions, raw: { place: "HSR Layout, Prestige Lakeside" }, prospectText: "In banglore HSR LAYOUT" });
     expect(elsewhere.answers.place).toBeUndefined();
+  });
+
+  it("reads a bare budget range as lakhs and never takes a refusal as an answer", () => {
+    const budget = [{ id: "budget", label: "Roughly what interior budget do you have in mind: under 20L, 20 to 30L, 30 to 50L or 50L+?" }];
+    expect(unrealisticAnswers(budget, { budget: "20 to 30" })).toEqual([]);
+    expect(unrealisticAnswers(budget, { budget: "20-30" })).toEqual([]);
+    expect(unrealisticAnswers(budget, { budget: "500 rupees" }).map((item) => item.id)).toEqual(["budget"]);
+    expect(bareBudgetRange("20 to 30")).toEqual({ low: 20, high: 30 });
+    expect(bareBudgetRange("4 BHK")).toBeNull();
+    const style = [{ id: "style", label: "Any style you love or must-haves?", kind: "text" as const, zohoField: null }];
+    expect(acceptExtractedAnswers({ questions: style, raw: { style: "Not necessarily right now" }, prospectText: "Not necessarily right now" }).answers).toEqual({});
+    expect(acceptExtractedAnswers({ questions: style, raw: { style: "no pooja space" }, prospectText: "no pooja space" }).answers).toEqual({ style: "no pooja space" });
   });
 
   it("drops a line that only says their answer back", () => {
