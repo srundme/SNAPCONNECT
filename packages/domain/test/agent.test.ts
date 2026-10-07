@@ -434,6 +434,8 @@ describe("must-have and nice-to-have questions", () => {
     expect(brief).toContain("Experience centre: Tuesday to Sunday");
     expect(brief).toContain("- Never promise a discount.");
     expect(brief).toContain("Never write haha");
+    expect(brief).toContain("A joke, a funny line or a playful tease: enjoy it");
+    expect(brief).not.toContain("Start with haha");
     expect(brief).toContain("Never call them sir");
     expect(brief).toContain("Nice to have");
     expect(brief).toContain("walnut walk-in wardrobe");
@@ -455,6 +457,7 @@ describe("must-have and nice-to-have questions", () => {
     });
     expect(designer).toContain("General design knowledge");
     expect(designer).toContain("Parallel kitchens suit long narrow spaces.");
+    expect(designer).toContain("A joke, a funny line or a playful tease: laugh like a friend who got it. Start with haha");
     expect(kannada).toMatch(/Kanglish/);
     expect(kannada).not.toMatch(/Sollunga|pannuvanga|Batao/);
   });
