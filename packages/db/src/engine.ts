@@ -321,6 +321,25 @@ export async function processAvailableJobs(db: Db, runtime: Runtime, limit = 25)
   return processed;
 }
 
+/** Reads messages that arrived while a reply was being written, so a reply to an older message is not sent on top of them. */
+async function takeArrivedMessages(db: Db, runtime: Runtime): Promise<void> {
+  const waiting = await db.outboxJob.findMany({
+    where: { type: "PROCESS_EVENT", status: { in: ["PENDING", "DISPATCHED"] } },
+    orderBy: { createdAt: "asc" },
+    take: 10,
+  });
+  for (const job of waiting) {
+    const claimed = await db.outboxJob.updateMany({ where: { id: job.id, status: { in: ["PENDING", "DISPATCHED"] } }, data: { status: "PROCESSING" } });
+    if (claimed.count !== 1) continue;
+    const outcome = await processJob(db, job, runtime);
+    if (outcome === "requeue") continue;
+    await db.outboxJob.update({
+      where: { id: job.id },
+      data: { status: outcome === "failed" ? "FAILED" : "COMPLETED", lastError: outcome === "failed" ? "Processing failed" : null },
+    });
+  }
+}
+
 export async function recoverStaleJobs(db: Db, now: Date, staleMs = 120_000): Promise<number> {
   const cutoff = new Date(now.getTime() - staleMs);
   const failed = await db.outboxJob.updateMany({
@@ -1886,7 +1905,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? questions.find((question) => complete.optional.includes(question.label) && !spoken.some((message) => message.author === "AI" && questionAsked(question, message.body)))
       : undefined;
     const modelNext = form?.next ? questions.find((question) => question.id === form?.next) : undefined;
-    const modelPick = modelNext && !ignored(modelNext) && !justAsked(modelNext)
+    const homeTypeMissing = missingNow.find((question) => /\bbhk\b/i.test(question.label) && !ignored(question) && !justAsked(question));
+    const skipsHomeType = Boolean(modelNext && homeTypeMissing && modelNext !== homeTypeMissing && questions.indexOf(modelNext) > questions.indexOf(homeTypeMissing));
+    const modelPick = modelNext && !skipsHomeType && !ignored(modelNext) && !justAsked(modelNext)
       && (missingNow.includes(modelNext) || (!missingNow.length && Boolean(optionalNext) && complete?.optional.includes(modelNext.label)))
       ? modelNext
       : undefined;
@@ -2251,7 +2272,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : addsPlan && composed
         ? [withoutOptional(composed), planText].filter(Boolean).join("\n")
         : composed;
-    const unechoed = focused ? dropEchoes(focused, freshText) : focused;
+    const unechoed = focused ? dropEchoes(focused, prospectBodies.join("\n")) : focused;
     const kept = unechoed && answered.length ? dropAnsweredQuestions(unechoed, questions, answered) : unechoed;
     const unasked = focused && !situationHandoff && kept !== focused && asksSomething(focused) && !asksSomething(kept ?? "") && nextQuestion
       ? [kept?.replace(/[^.!?\s]$/, "$&."), askQuestion(nextQuestion)].filter(Boolean).join(" ")
@@ -2357,8 +2378,14 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         }
       };
       let voiceSent = false;
+      let overtaken = false;
       if (clip && spokenReply) {
         if (agent.typingDelay) await runtime.pause?.(Math.max(0, typingMs(spokenReply) - generated.latencyMs));
+        await takeArrivedMessages(db, runtime);
+        const current = await db.conversation.findUnique({ where: { id: conversation.id }, select: { revision: true, owner: true } });
+        overtaken = !current || current.revision !== expectedRevision || current.owner !== "AI";
+      }
+      if (clip && spokenReply && !overtaken) {
         const result = await runtime.send({
           connection: sendConnection(connection),
           purpose: "text",
@@ -2373,9 +2400,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           console.warn(`Voice reply was not accepted, sending text instead: ${result.error}`);
         }
       }
-      if (!voiceSent) {
+      if (!voiceSent && !overtaken) {
         for (const [index, bubble] of bubbles.entries()) {
           if (agent.typingDelay) await runtime.pause?.(index === 0 ? Math.max(0, typingMs(bubble) - generated.latencyMs) : typingMs(bubble));
+          await takeArrivedMessages(db, runtime);
           const current = await db.conversation.findUnique({ where: { id: conversation.id }, select: { revision: true, owner: true } });
           if (!current || current.revision !== expectedRevision || current.owner !== "AI") break;
           const result = await runtime.send({

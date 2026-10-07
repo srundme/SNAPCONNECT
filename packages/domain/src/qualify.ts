@@ -864,7 +864,7 @@ export function dropAnsweredQuestions(reply: string, questions: LeadQuestion[], 
     .join("\n");
 }
 
-const ECHO_FILLER = new Set(["ok", "okay", "oh", "sir", "mam", "bro", "ji", "got", "it", "its", "it's", "noted", "nice", "good", "great", "sure", "alright", "so", "that", "sounds", "is", "a", "the", "for", "you", "u", "ur", "your", "then", "right", "cool", "fine", "perfect", "lovely", "super", "in"]);
+const ECHO_FILLER = new Set(["ok", "okay", "oh", "sir", "mam", "bro", "ji", "got", "it", "its", "it's", "noted", "nice", "good", "great", "sure", "alright", "so", "that", "sounds", "is", "a", "the", "for", "you", "u", "ur", "your", "then", "right", "cool", "fine", "perfect", "lovely", "super", "in", "at", "of", "and"]);
 
 /**
  * Removes a line that only says their answer back, like "ok sir Puravankara Purva Meraki" or

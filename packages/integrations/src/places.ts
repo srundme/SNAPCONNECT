@@ -189,7 +189,10 @@ export function googlePlaceLookup(options: { apiKey: string; fetcher?: typeof fe
 export function bestPlaceLookup(google: PlaceLookup | null, osm: PlaceLookup): PlaceLookup {
   if (!google) return osm;
   return async (query, city) => {
-    const fromGoogle = await google(query, city).catch(() => undefined);
+    const fromGoogle = await google(query, city).catch((error: unknown) => {
+      console.warn(`Google Maps project check failed, trying OpenStreetMap: ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    });
     if (fromGoogle && !("missing" in fromGoogle)) return fromGoogle;
     const fromOsm = await osm(query, city).catch(() => null);
     return fromOsm && !("missing" in fromOsm) ? fromOsm : fromGoogle ?? null;

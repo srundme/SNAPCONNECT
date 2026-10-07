@@ -1053,6 +1053,7 @@ describe("lead form read by the model", () => {
     expect(dropEchoes("thanks karthik sir\nwhich area is it?", "I'm karthik")).toBe("thanks karthik sir\nwhich area is it?");
     expect(dropEchoes("good sir HSR Layout is a solid area", "In banglore HSR LAYOUT")).toBe("good sir HSR Layout is a solid area");
     expect(dropEchoes("whole flat sounds good sir", "Whole flat")).toBe("whole flat sounds good sir");
+    expect(dropEchoes("got it sir full home at Casagrande Casablanca\nis the home ready?", "I'm karthikeyan\nCasagrande casablanca\nFull home")).toBe("is the home ready?");
   });
 
   it("reads a bare BHK number as BHK, and never treats an email question as a number", () => {
