@@ -97,7 +97,7 @@ describe("documents", () => {
 import { zohoAdapter } from "../src/zoho";
 import { checkWhatsAppNumber, subscribeWhatsAppAccount, whatsappAdapter } from "../src/whatsapp";
 import { cartesiaSpeaker, speechLocale, speechScript, speechSentences } from "../src/cartesia";
-import { bestPlaceLookup, googlePlaceLookup, osmPlaceLookup } from "../src/places";
+import { bestPlaceLookup, bravePlaceLookup, googlePlaceLookup, osmPlaceLookup } from "../src/places";
 
 describe("project lookup", () => {
   const reply = (results: unknown[]) => (async () => new Response(JSON.stringify(results), { status: 200 })) as unknown as typeof fetch;
@@ -148,6 +148,20 @@ describe("project lookup", () => {
     expect(await google([elsewhere]).lookup("Prestige Lakeside Habitat", "Bengaluru")).toEqual({ missing: "Prestige Lakeside Habitat", source: "Google Maps" });
     const area = { displayName: { text: "HSR Layout" }, formattedAddress: "HSR Layout, Bengaluru", types: ["sublocality_level_1", "sublocality", "political"] };
     expect(await google([area]).lookup("HSR Layout", "Bengaluru")).toBeNull();
+  });
+
+  it("reads the home type from a web result that names the project", async () => {
+    const hits = (results: unknown[]) => bravePlaceLookup({
+      apiKey: "test",
+      fetcher: (async () => new Response(JSON.stringify({ web: { results } }), { status: 200 })) as unknown as typeof fetch,
+    });
+    const casagrand = await hits([
+      { title: "Casagrand Casablanca | Luxury Flats in Mallasandra, Kanakapura Road", description: "2, 3 and 4 BHK apartments and 5 BHK floor villas in Bengaluru. Ongoing project." },
+      { title: "Some other Casagrand project", description: "Villas in Whitefield" },
+    ])("Casagrande Casablanca", "Bengaluru");
+    expect(casagrand).toMatchObject({ name: "Casagrand Casablanca", kind: "apartment", locality: "Kanakapura Road", city: "Bengaluru", underConstruction: true, source: "Web search" });
+    expect(await hits([{ title: "Brigade Woods", description: "Apartments in Bengaluru" }])("Brigade Utopia", "Bengaluru")).toEqual({ missing: "Brigade Utopia", source: "Web search" });
+    expect(await hits([])("HSR Layout", "Bengaluru")).toBeNull();
   });
 
   it("falls back to OpenStreetMap when Google finds nothing", async () => {

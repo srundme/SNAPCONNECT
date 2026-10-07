@@ -57,6 +57,7 @@ export const envSchema = z.object({
   SARVAM_API_KEY: optional,
   CARTESIA_API_KEY: optional,
   GOOGLE_PLACES_API_KEY: optional,
+  BRAVE_SEARCH_API_KEY: optional,
   CARTESIA_VOICE_ID: optional,
   CARTESIA_MODEL: z.string().default("sonic-3.6"),
   LLM_MODEL: z.string().default("qwen3.5:2b"),

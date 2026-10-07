@@ -6,11 +6,11 @@ export type PlaceInfo = {
   underConstruction: boolean;
   kind?: "apartment" | "villa" | null;
   address?: string | null;
-  source?: "Google Maps" | "OpenStreetMap";
+  source?: "Google Maps" | "OpenStreetMap" | "Web search";
 };
 
 /** A place they named that looks like a project but could not be found, so the team can check it. */
-export type PlaceMissing = { missing: string; source: "Google Maps" };
+export type PlaceMissing = { missing: string; source: "Google Maps" | "Web search" };
 
 export type PlaceLookup = (query: string, city?: string) => Promise<PlaceInfo | PlaceMissing | null>;
 
@@ -185,16 +185,103 @@ export function googlePlaceLookup(options: { apiKey: string; fetcher?: typeof fe
   }
 }
 
-/** Google Maps first when there is a key, OpenStreetMap when Google finds nothing or fails. */
-export function bestPlaceLookup(google: PlaceLookup | null, osm: PlaceLookup): PlaceLookup {
-  if (!google) return osm;
+type BraveHit = { title?: string; description?: string };
+
+function projectTitle(title: string, segment: string): string {
+  const head = title.split(/\s+[|\-–—]\s+/)[0]?.trim() || title.trim();
+  return nameInside(head, segment) ? head : segment;
+}
+
+function kindFromSearch(text: string): "apartment" | "villa" | null {
+  const apartments = (text.match(/\b(?:apartments?|flats?|high-?rise)\b/gi) ?? []).length;
+  const villas = (text.match(/\b(?:villas?|row ?houses?|bungalows?)\b/gi) ?? []).length;
+  if (apartments === 0 && villas === 0) return null;
+  if (villas > apartments && !/\bfloor villas?\b/i.test(text)) return "villa";
+  return apartments > 0 ? "apartment" : "villa";
+}
+
+function localityFromSearch(text: string): string | null {
+  const road = text.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s+Road\b/);
+  if (road && !/^(main|cross|outer|inner|ring)$/i.test(road[1]!)) return `${road[1]} Road`;
+  const placed = text.match(/\b(?:in|at)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})(?=,)/);
+  if (placed && !/bengaluru|bangalore/i.test(placed[1]!)) return placed[1]!;
+  return null;
+}
+
+/**
+ * Reads public web results for a project name. A result counts only when it contains the
+ * project's own name, and only the home type and area written there are kept.
+ */
+export function bravePlaceLookup(options: { apiKey: string; fetcher?: typeof fetch; timeoutMs?: number; baseUrl?: string }): PlaceLookup {
+  const fetcher = options.fetcher ?? fetch;
+  const baseUrl = options.baseUrl ?? "https://api.search.brave.com/res/v1/web/search";
+  const cache = new Map<string, PlaceInfo | PlaceMissing | null>();
   return async (query, city) => {
-    const fromGoogle = await google(query, city).catch((error: unknown) => {
-      console.warn(`Google Maps project check failed, trying OpenStreetMap: ${error instanceof Error ? error.message : String(error)}`);
-      return undefined;
-    });
+    const key = `${query.toLowerCase()}|${city ?? ""}`;
+    if (cache.has(key)) return cache.get(key)!;
+    const found = await search(query, city);
+    if (cache.size > 2_000) cache.clear();
+    cache.set(key, found);
+    return found;
+  };
+
+  async function search(query: string, city?: string): Promise<PlaceInfo | PlaceMissing | null> {
+    let unmatched: string | null = null;
+    for (const segment of projectSegments(query)) {
+      if (nameWords(segment).length < 2) continue;
+      const textQuery = city && !segment.toLowerCase().includes(city.toLowerCase()) ? `${segment} ${city}` : segment;
+      const response = await fetcher(`${baseUrl}?q=${encodeURIComponent(textQuery)}&count=8&country=IN&search_lang=en`, {
+        headers: { Accept: "application/json", "X-Subscription-Token": options.apiKey },
+        signal: AbortSignal.timeout(options.timeoutMs ?? 6_000),
+      });
+      if (!response.ok) throw new Error(`Web search lookup failed with ${response.status}.`);
+      const results = ((await response.json()) as { web?: { results?: BraveHit[] } }).web?.results ?? [];
+      const hits = results.filter((item) => {
+        const text = `${item.title ?? ""} ${item.description ?? ""}`;
+        return nameInside(text, segment) && !NOT_THE_HOMES.test(item.title ?? "");
+      });
+      if (!hits.length) {
+        unmatched ??= segment;
+        continue;
+      }
+      const written = hits.map((item) => `${item.title ?? ""}. ${item.description ?? ""}`).join(" ");
+      const locality = localityFromSearch(written);
+      const foundCity = /\b(?:bengaluru|bangalore)\b/i.test(written) ? "Bengaluru" : null;
+      return {
+        name: projectTitle(hits[0]?.title ?? segment, segment),
+        locality,
+        city: foundCity,
+        pincode: written.match(/\b(560\d{3})\b/)?.[1] ?? null,
+        underConstruction: /\bunder construction\b|\bongoing project\b/i.test(written),
+        kind: kindFromSearch(written),
+        address: [locality, foundCity].filter(Boolean).join(", ") || null,
+        source: "Web search",
+      };
+    }
+    return unmatched ? { missing: unmatched, source: "Web search" } : null;
+  }
+}
+
+/** Google Maps first, then web search, then OpenStreetMap. The first real project match wins. */
+export function bestPlaceLookup(google: PlaceLookup | null, osm: PlaceLookup, web: PlaceLookup | null = null): PlaceLookup {
+  return async (query, city) => {
+    const fromGoogle = google
+      ? await google(query, city).catch((error: unknown) => {
+          console.warn(`Google Maps project check failed, trying the next source: ${error instanceof Error ? error.message : String(error)}`);
+          return undefined;
+        })
+      : undefined;
     if (fromGoogle && !("missing" in fromGoogle)) return fromGoogle;
+    const fromWeb = web
+      ? await web(query, city).catch((error: unknown) => {
+          console.warn(`Web search project check failed, trying OpenStreetMap: ${error instanceof Error ? error.message : String(error)}`);
+          return undefined;
+        })
+      : undefined;
+    if (fromWeb && !("missing" in fromWeb) && fromWeb.kind) return fromWeb;
     const fromOsm = await osm(query, city).catch(() => null);
-    return fromOsm && !("missing" in fromOsm) ? fromOsm : fromGoogle ?? null;
+    if (fromOsm && !("missing" in fromOsm)) return fromOsm;
+    if (fromWeb && !("missing" in fromWeb)) return fromWeb;
+    return (fromWeb && "missing" in fromWeb ? fromWeb : null) ?? (fromGoogle && "missing" in fromGoogle ? fromGoogle : null) ?? null;
   };
 }

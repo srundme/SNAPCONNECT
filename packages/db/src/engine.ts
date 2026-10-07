@@ -1743,9 +1743,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         const livesThere = Object.values(absorbed.answers).some((value) => /^ready\b|\b(living|staying|already (ready|with me|have))\b/i.test(value));
         const kindNote = found.kind ? ` (${found.kind} project)` : "";
         const where = [found.locality, found.city, found.pincode].filter(Boolean).join(", ");
-        const seen = `${found.name}${kindNote} is in ${where} (${found.source ?? "map"}).${found.underConstruction && !livesThere ? " The map marks it as under construction." : ""}`;
-        await noteOnce(`Project check: ${placeText.toLowerCase()}`, `Found on ${found.source ?? "the map"}: ${found.name}${kindNote}, ${found.address ?? where}`);
-        memoryLines.push(`A map lookup of their project found: ${seen} If they have not said the locality, you may confirm it naturally once, like "that is in <locality> side, right?", and use the area to make your reply relevant. This is all you know about the project: never invent the builder, flat sizes, possession dates, amenities or prices.`);
+        const seen = `${found.name}${kindNote} is in ${where} (${found.source ?? "a lookup"}).${found.underConstruction && !livesThere ? " It is marked as under construction." : ""}`;
+        await noteOnce(`Project check: ${placeText.toLowerCase()}`, `Found on ${found.source ?? "a lookup"}: ${found.name}${kindNote}, ${found.address ?? where}`);
+        memoryLines.push(`A lookup of their project found: ${seen} If they have not said the locality, you may confirm it naturally once, like "that is in <locality> side, right?", and use the area to make your reply relevant. This is all you know about the project: never invent the builder, flat sizes, possession dates, amenities or prices.`);
       } else if (place && "missing" in place) {
         await noteOnce(`Project check: ${placeText.toLowerCase()}`, `"${place.missing}" was not found on ${place.source}. Confirm the project name on the call.`);
       }
