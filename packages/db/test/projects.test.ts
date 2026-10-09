@@ -21,6 +21,14 @@ describeDb("project memory", () => {
     await db.$disconnect();
   });
 
+  it("never keeps a search hit that does not match what they typed", async () => {
+    const typed = `Concord apartments ${Date.now()}, Electronic City`;
+    const listing = async () => ({ name: "Villas for Sale", locality: "Kanakapura Road", city: "Bengaluru", pincode: null, underConstruction: false, kind: "villa" as const, source: "Brave Search" as const });
+    const result = await lookupProject(db, listing, typed, "Bengaluru", { allowSearch: true, now: new Date() });
+    expect(result && "missing" in result).toBe(true);
+    expect(await knownProject(db, typed, "Bengaluru")).toBeNull();
+  });
+
   it("searches a project once and remembers it", async () => {
     const name = `Test Towers ${Date.now()}`;
     let searches = 0;
