@@ -1579,6 +1579,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       return await promptedReply(db, runtime, { payload, expectedRevision, conversation, workspace, connection, lead });
     }
     const spoken = conversation.messages.filter((message) => (message.author === "PROSPECT" || message.author === "AI") && message.body.trim());
+    // Claude writes the reply from the system prompt and the facts code gathers. No reply text in code, and every
+    // customer message gets an answer (even "ok thank you"), so Varun always has the last word. Spam stops still apply.
+    if (runtime.claude && parseAgentSettings(workspace.agentSettings).brain !== "off" && !(await chatIsFlooding(db, workspace.id, conversation, spoken, runtime))) {
+      return await brainReply(db, runtime, { payload, expectedRevision, conversation, workspace, connection, lead });
+    }
     const lastSpoken = spoken[spoken.length - 1];
     if ((lead.crmState === "SYNCED" || lead.crmState === "NEEDS_ATTENTION" || lead.qualification === "QUALIFIED") && lastSpoken?.author === "PROSPECT" && spoken[spoken.length - 2]?.author === "AI" && CLOSING_ACK.test(lastSpoken.body.trim())) {
       await db.aiRun.create({
@@ -1626,10 +1631,6 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         data: { workspaceId: workspace.id, conversationId, model: runtime.llm.model, simulated: runtime.llm.mode === "fixture", latencyMs: 0, valid: true, diagnostic: `No reply: ${spamStop === "broadcast" ? "same message from many senders" : "message flood"}.` },
       });
       return "done";
-    }
-    // Claude writes the reply from the system prompt and the facts code gathers. No reply text in code.
-    if (runtime.claude && parseAgentSettings(workspace.agentSettings).brain !== "off") {
-      return await brainReply(db, runtime, { payload, expectedRevision, conversation, workspace, connection, lead });
     }
     const recent = spoken.slice(-MEMORY_WINDOW);
     const prospectTimes = spoken.filter((message) => message.author === "PROSPECT").map((message) => message.createdAt.getTime());
@@ -4283,6 +4284,22 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   }
   await refreshMemory(db, runtime, conversation.contact, spoken);
   return "done";
+}
+
+/** The spam stop's test (a burst Varun is not answering, a recent flood pause, one promo text from many chats), read only. */
+async function chatIsFlooding(db: Db, workspaceId: string, conversation: { messages: Array<{ author: string; body: string; createdAt: Date }> }, spoken: Array<{ author: string; body: string; createdAt: Date }>, runtime: Runtime): Promise<boolean> {
+  const nowMs = runtime.now().getTime();
+  const burst = spoken.filter((message) => message.author === "PROSPECT" && nowMs - message.createdAt.getTime() < 10 * 60_000 && !/^\(Sent (?:a |an )?(?:photo|voice|document|attachment|video|sticker)/i.test(message.body)).length;
+  const replied = spoken.filter((message) => message.author === "AI" && nowMs - message.createdAt.getTime() < 10 * 60_000).length;
+  if (burst >= 15 && replied < burst / 2) return true;
+  const floodNote = conversation.messages.filter((message) => message.author === "SYSTEM" && message.body.startsWith("Situation: flood")).at(-1);
+  if (floodNote && nowMs - floodNote.createdAt.getTime() < 30 * 60_000) return true;
+  const latest = [...spoken].reverse().find((message) => message.author === "PROSPECT")?.body.trim() ?? "";
+  if (latest.length >= 20 && /https?:\/\/|www\.|\b(offer|discount|earn|click|join|subscribe|loan|crypto|bitcoin|investment|followers|promotion|deal|lottery|winner)\b/i.test(latest)) {
+    const chats = await db.message.groupBy({ by: ["conversationId"], where: { workspaceId, author: "PROSPECT", body: latest, createdAt: { gte: new Date(nowMs - 2 * 3_600_000) } } }).then((rows) => rows.length).catch(() => 0);
+    if (chats >= 5) return true;
+  }
+  return false;
 }
 
 /** The firm's never-rules, checked on Claude's words: a price figure, a work duration, or a booking claim. */

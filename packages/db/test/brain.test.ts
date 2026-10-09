@@ -121,5 +121,10 @@ describeDb("Claude brain: facts in, words out", () => {
     await say("Experience centre, tomorrow 4 pm", [reply(["Noted, tomorrow at 4 PM. Our team will call you to confirm."], { offer_choice: "experience_centre", slot: "tomorrow 4 pm" })]);
     expect(await db.teamAlert.count({ where: { conversationId: conversation.id, kind: "meeting" } })).toBe(1);
     expect(await db.teamAlert.count({ where: { conversationId: conversation.id, kind: "slot" } })).toBe(1);
+
+    // Varun always has the last word: a closing "thank you" gets a reply.
+    await db.lead.updateMany({ where: { contactId: contact.id }, data: { crmState: "SYNCED", qualification: "QUALIFIED" } });
+    const closing = await say("Okay thank you", [reply(["You are welcome sir. Our team will be in touch tomorrow."])]);
+    expect(closing.length).toBe(1);
   });
 });
