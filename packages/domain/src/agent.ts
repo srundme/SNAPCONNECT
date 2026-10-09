@@ -43,6 +43,8 @@ export type AgentSettings = {
   completedProjects: string;
   /** "live": Claude writes every reply (needs ANTHROPIC_API_KEY). "off": the older coded pipeline. */
   brain: "live" | "off";
+  /** The owner's own version of Varun's system prompt; empty means the built-in default. */
+  brainPrompt: string;
 };
 
 export const defaultAgentSettings: AgentSettings = {
@@ -79,6 +81,7 @@ export const defaultAgentSettings: AgentSettings = {
   summaryTemplate: "",
   completedProjects: "",
   brain: "live",
+  brainPrompt: "",
 };
 
 const TOGGLES = [
@@ -146,6 +149,7 @@ export function parseAgentSettings(value: unknown): AgentSettings {
   if (typeof record.summaryTemplate === "string") settings.summaryTemplate = record.summaryTemplate.trim().replace(/[^a-z0-9_]/gi, "").slice(0, 80);
   if (typeof record.completedProjects === "string") settings.completedProjects = record.completedProjects.trim().slice(0, 20000);
   if (record.brain === "off" || record.brain === "live") settings.brain = record.brain;
+  if (typeof record.brainPrompt === "string") settings.brainPrompt = record.brainPrompt.replace(/\r\n/g, "\n").trim().slice(0, 40000);
   return settings;
 }
 

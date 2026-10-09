@@ -1,4 +1,4 @@
-import { agentToggles, defaultZohoField, externalLeadKeyField, MAX_LEAD_QUESTIONS, parseAgentSettings, parseLeadQuestions } from "@snapsocial/domain";
+import { VARUN_PROMPT, agentToggles, defaultZohoField, externalLeadKeyField, MAX_LEAD_QUESTIONS, parseAgentSettings, parseLeadQuestions } from "@snapsocial/domain";
 import { getPrisma } from "@snapsocial/db";
 import { AgentForm } from "@/components/lead-formation";
 import { Empty, Notice, PageTitle } from "@/components/ui";
@@ -53,6 +53,8 @@ export default async function AiPage({ searchParams }: { searchParams: Promise<{
               summaryNumbers: settings.summaryNumbers,
               summaryTemplate: settings.summaryTemplate,
               completedProjects: settings.completedProjects,
+              brainPrompt: settings.brainPrompt.trim() || VARUN_PROMPT,
+              brainPromptCustom: Boolean(settings.brainPrompt.trim()),
               toggles: Object.fromEntries(agentToggles.map((key) => [key, settings[key]])),
             }}
             questions={questions.map((question) => ({ label: question.label, zohoField: question.zohoField ?? defaultZohoField(question), required: question.required }))}

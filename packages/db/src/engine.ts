@@ -4056,7 +4056,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   const knowledge = knowledgeBlock({ knowledgeBase: workspace.knowledgeBase, services: workspace.services, agent });
   const ask = async (facts: string, fix?: string) => claude.json<BrainAnswer>({
     system: [
-      { type: "text", text: `${VARUN_PROMPT}\n\n${knowledge}`, cache_control: { type: "ephemeral" } },
+      { type: "text", text: `${agent.brainPrompt.trim() || VARUN_PROMPT}\n\n${knowledge}`, cache_control: { type: "ephemeral" } },
       { type: "text", text: `# FACTS (written by our systems for this turn)\n${facts}${fix ? `\n\n# Your previous draft broke these rules; write it again\n${fix}` : ""}` },
     ],
     messages: turns,

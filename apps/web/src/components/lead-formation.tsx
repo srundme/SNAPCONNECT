@@ -53,6 +53,8 @@ export type AgentFormSettings = {
   summaryNumbers: string;
   summaryTemplate: string;
   completedProjects: string;
+  brainPrompt: string;
+  brainPromptCustom: boolean;
   toggles: Record<string, boolean>;
 };
 
@@ -183,6 +185,26 @@ export function AgentForm({
   return (
     <form className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]" action={action}>
       <div className="grid gap-4">
+        <Section
+          title="Varun's instructions"
+          detail="Everything Varun does in a chat comes from these instructions: what to ask and in what order, how to talk, the firm's rules and how to handle each situation. Claude writes every reply from them. Below these, the system adds the knowledge base, materials, warranty, completed homes and the facts for each message, so they do not need to be repeated here."
+        >
+          <div className="grid gap-3 p-5">
+            <label>
+              Instructions
+              <textarea name="brainPrompt" rows={24} maxLength={40000} defaultValue={settings.brainPrompt} spellCheck={false} className="font-mono text-[13px] leading-5" />
+            </label>
+            <p className="text-[12px] text-[var(--color-muted)]">
+              {settings.brainPromptCustom ? "Your own version is in use." : "The built-in default is in use; it improves as we fix things."} Saved changes apply from the next customer message.
+            </p>
+            {settings.brainPromptCustom ? (
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" name="resetBrainPrompt" className="h-4 w-4" />
+                Go back to the default instructions
+              </label>
+            ) : null}
+          </div>
+        </Section>
         <Panel>
           <div className="border-b border-[var(--color-line)] px-5 py-4">
             <h2 className="text-[17px] font-semibold tracking-tight">1. Who replies</h2>

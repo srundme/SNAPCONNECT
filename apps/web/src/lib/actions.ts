@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { hashPassword } from "better-auth/crypto";
-import {
+import { VARUN_PROMPT,
   agentTextLimits,
   agentToggles,
   can,
@@ -339,6 +339,10 @@ export async function saveAiSettings(formData: FormData) {
   settings.alertTemplateLanguage = formData.has("alertTemplateLanguage") ? String(formData.get("alertTemplateLanguage") ?? "") : saved.alertTemplateLanguage;
   settings.summaryNumbers = formData.has("summaryNumbers") ? String(formData.get("summaryNumbers") ?? "").replace(/\r\n/g, "\n") : saved.summaryNumbers;
   settings.summaryTemplate = formData.has("summaryTemplate") ? String(formData.get("summaryTemplate") ?? "") : saved.summaryTemplate;
+  // Varun's instructions: saved only when they differ from the built-in default, so default updates still reach them.
+  const promptText = String(formData.get("brainPrompt") ?? "").replace(/\r\n/g, "\n").trim();
+  settings.brainPrompt = formData.get("resetBrainPrompt") === "on" || !formData.has("brainPrompt") || promptText === VARUN_PROMPT.trim() ? (formData.has("brainPrompt") ? "" : saved.brainPrompt) : promptText;
+  settings.brain = saved.brain;
   settings.completedProjects = formData.has("completedProjects") ? String(formData.get("completedProjects") ?? "").replace(/\r\n/g, "\n") : saved.completedProjects;
   for (const key of agentToggles) settings[key] = formData.get(`toggle:${key}`) === "on";
   for (const [key, limit] of Object.entries(agentTextLimits)) settings[key] = String(formData.get(key) ?? "").trim().slice(0, limit);
