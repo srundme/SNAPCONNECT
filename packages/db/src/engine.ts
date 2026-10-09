@@ -4184,7 +4184,10 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       answer = await ask(factsFor(extra, found), broken.join("\n"));
       diagnostics.push(`Rule check: ${broken.join("; ")}`);
       const still = ruleBreaks(answer.bubbles, ruleContext);
-      if (still.length) {
+      // Style slips (two questions, a bit long) are sent after the rewrite; only a firm rule broken twice goes to the team.
+      const styleOnly = still.every((rule) => /^It (?:asks more than one question|is too long)/.test(rule));
+      if (still.length && styleOnly) diagnostics.push(`Sent with a style slip: ${still.join("; ")}`);
+      if (still.length && !styleOnly) {
         diagnostics.push(`Still broken: ${still.join("; ")}`);
         await handoff(db, conversation.id, lead.id, `Claude's reply broke a rule twice: ${broken.join("; ")}`.slice(0, 200));
         await alertTeam("person", `🙋 ${name ?? "A customer"}: Varun could not write a safe reply. Please take this chat.`);
@@ -4252,6 +4255,8 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   // A slot is noted when it names a time, once per time.
   if (answer.slot && time && !followUp && !slotNotes.some((body) => body.includes(`(${time.clock} ${time.day}`))) {
     await note(`Slot: ${answer.slot}${time ? ` (${time.clock} ${time.day}${time.inside ? "" : `, ${time.why}`})` : ""}`);
+    // The visit time Zoho gets: the latest one asked for inside working hours.
+    if (time.inside) await note(`Visit at: ${time.at}`);
     await alertTeam("slot", `🗓️ ${who} asked for ${answer.slot}. Please confirm with them.`);
   }
   if (answer.flag) await alertTeam("flag", `⚠️ ${who}: ${answer.flag.slice(0, 160)}`);
@@ -4503,6 +4508,15 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
     const leadAgent = parseAgentSettings(lead.workspace.agentSettings);
     if (!record.Company && leadAgent.zohoCompanyFallback) record.Company = leadAgent.zohoCompanyFallback;
     if (lead.rating && lead.rating !== "UNRATED" && leadAgent.zohoRatingField) record[leadAgent.zohoRatingField] = lead.rating;
+    // The visit or consultation time they asked for (the latest one), for the team to confirm.
+    const [visitNote, offerNote] = await Promise.all(["Visit at: ", "Offer answer: "].map((prefix) => db.message.findFirst({
+      where: { author: "SYSTEM", body: { startsWith: prefix }, conversation: { contactId: { in: [lead.contactId, ...siblings.map((item) => item.contactId)] } } },
+      orderBy: { createdAt: "desc" },
+      select: { body: true },
+    })));
+    const visitAt = visitNote?.body.slice("Visit at: ".length).trim() ?? "";
+    const visitKind = offerNote?.body.includes("consultation") ? "Consultation call" : "Experience centre visit";
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00\+05:30$/.test(visitAt) && leadAgent.zohoVisitField) record[leadAgent.zohoVisitField] = visitAt;
     const concern = nameConcern(lead.contact.chosenName, lead.channel === "WHATSAPP" ? [] : [lead.contact.displayName, lead.contact.username]);
     const projectChecks = await db.message.findMany({
       where: { author: "SYSTEM", body: { startsWith: "Project check: " }, createdAt: { gte: lead.createdAt }, conversation: { contactId: lead.contactId, channel: lead.channel } },
@@ -4516,6 +4530,7 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
       ...placed.lines,
       ...(projectCheck ? [`Project check: ${projectCheck.body.split(" | ").slice(1).join(" | ")}`] : []),
       ...(lead.timeframeRaw ? [`Preferred call time: ${lead.timeframeRaw}`] : []),
+      ...(visitAt ? [`${visitKind} requested: ${new Date(visitAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" })} (please confirm with them)`] : []),
       ...(concern
         ? [concern.kind === "public_figure"
             ? `Name check: "${concern.name}" is the name of ${concern.who}. Self-reported, please confirm on the call.`

@@ -46,6 +46,7 @@ export default async function AiPage({ searchParams }: { searchParams: Promise<{
               zohoCompanyFallback: settings.zohoCompanyFallback,
               hotBudgetLakhs: settings.hotBudgetLakhs,
               zohoRatingField: settings.zohoRatingField,
+              zohoVisitField: settings.zohoVisitField,
               followUpHours: settings.followUpHours,
               alertNumbers: settings.alertNumbers,
               alertTemplate: settings.alertTemplate,

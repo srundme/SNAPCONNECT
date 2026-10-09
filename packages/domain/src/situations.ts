@@ -525,7 +525,7 @@ export function openHours(workingHours: string): { open: number; close: number }
   return { open: at(match[1]!, match[2], match[3]!), close: at(match[4]!, match[5], match[6]!) };
 }
 
-type RequestedTime = { clock: string; day: string; inside: boolean; why: string };
+type RequestedTime = { clock: string; day: string; inside: boolean; why: string; /** India time, like "2026-10-13T16:00:00+05:30". */ at: string };
 
 /** The time they asked for, worked out in code: the model gets "in next 1 hr" and working-hour checks wrong. */
 export function requestedTime(text: string, now: Date, workingHours: string): RequestedTime | null {
@@ -562,9 +562,11 @@ export function requestedTime(text: string, now: Date, workingHours: string): Re
   const dayWord = addDays === 0 ? "today" : addDays === 1 ? "tomorrow" : day;
   const open = openDays(workingHours);
   const clock = clockLabel(minutes);
-  if (open && !open.has(day)) return { clock, day: dayWord, inside: false, why: `${day} is the team's weekly off` };
-  if (minutes < hours.open || minutes >= hours.close) return { clock, day: dayWord, inside: false, why: `it is outside working hours (${clockLabel(hours.open)} to ${clockLabel(hours.close)})` };
-  return { clock, day: dayWord, inside: true, why: "" };
+  const date = new Date(india.getTime() + addDays * 86_400_000).toISOString().slice(0, 10);
+  const at = `${date}T${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}:00+05:30`;
+  if (open && !open.has(day)) return { clock, day: dayWord, at, inside: false, why: `${day} is the team's weekly off` };
+  if (minutes < hours.open || minutes >= hours.close) return { clock, day: dayWord, at, inside: false, why: `it is outside working hours (${clockLabel(hours.open)} to ${clockLabel(hours.close)})` };
+  return { clock, day: dayWord, at, inside: true, why: "" };
 }
 
 /** The next open time to offer when they want a consultation but have not named one. */

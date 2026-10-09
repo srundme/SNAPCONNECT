@@ -252,7 +252,7 @@ describe("common sense checks", () => {
     const hours = "Tuesday to Sunday, 10 AM to 7 PM";
     const tuesdayAfternoon = new Date("2026-10-06T07:36:00Z");
     const nextHour = requestedTime("May be in next 1 hr", tuesdayAfternoon, hours);
-    expect(nextHour).toEqual({ clock: "2:06 PM", day: "today", inside: true, why: "" });
+    expect(nextHour).toMatchObject({ clock: "2:06 PM", day: "today", inside: true, why: "" });
     expect(requestedTimeLine(nextHour!)).toMatch(/INSIDE working hours/);
     expect(requestedTimeReply(nextHour!, "sorry sir 1 PM is already past working hours")).toBe("2:06 PM today works, I've noted it here for the team to confirm.");
     expect(requestedTimeReply(nextHour!, "sure sir noted for 2 PM")).toBeNull();

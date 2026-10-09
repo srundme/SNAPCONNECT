@@ -46,6 +46,7 @@ export type AgentFormSettings = {
   zohoCompanyFallback: string;
   hotBudgetLakhs: number;
   zohoRatingField: string;
+  zohoVisitField: string;
   followUpHours: number[];
   alertNumbers: string;
   alertTemplate: string;
@@ -428,6 +429,11 @@ export function AgentForm({
               <input name="zohoRatingField" maxLength={80} defaultValue={settings.zohoRatingField} spellCheck={false} placeholder="Lead_Rating" />
             </label>
             <p className="text-[12px] leading-5 text-[var(--color-muted)]">Optional API name of a text or picklist field with HOT and JUNK. The rating always goes in the Description too.</p>
+            <label>
+              Zoho field for the visit date and time
+              <input name="zohoVisitField" maxLength={80} defaultValue={settings.zohoVisitField} spellCheck={false} placeholder="Experience_Centre_Visit" />
+            </label>
+            <p className="text-[12px] leading-5 text-[var(--color-muted)]">Optional API name of a Date/Time field. The experience centre visit or consultation time the customer asked for goes there, and always in the Description too.</p>
           </div>
         </Panel>
         <button className="border-transparent bg-[var(--color-accent)] text-white hover:bg-[#745722]" type="submit">Save agent</button>

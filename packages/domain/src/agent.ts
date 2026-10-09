@@ -25,6 +25,8 @@ export type AgentSettings = {
   zohoCompanyFallback: string;
   hotBudgetLakhs: number;
   zohoRatingField: string;
+  /** Optional Zoho field (API name) for the experience centre visit or consultation date and time. */
+  zohoVisitField: string;
   /** The material specification, one entry per area. Not on the Agent page form, so saving keeps it. */
   materials: MaterialEntry[];
   warranty: WarrantyTerms | null;
@@ -73,6 +75,7 @@ export const defaultAgentSettings: AgentSettings = {
   zohoCompanyFallback: "",
   hotBudgetLakhs: 0,
   zohoRatingField: "",
+  zohoVisitField: "",
   materials: [],
   warranty: null,
   projectAliases: "",
@@ -115,6 +118,7 @@ const TEXTS = {
   designKnowledge: 20000,
   zohoCompanyFallback: 80,
   zohoRatingField: 80,
+  zohoVisitField: 80,
 } as const satisfies Partial<Record<keyof AgentSettings, number>>;
 
 type AgentText = keyof typeof TEXTS;
