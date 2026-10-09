@@ -241,7 +241,7 @@ export function messageSituations(text: string, brandName: string): Situation[] 
     found.push({
       key: "inclusions",
       note: `Asked what the price includes: "${said}"`,
-      line: "They asked what the price includes. Never give a figure. Say: 'The budget will be quoted by our team after understanding your requirement, the scope and the materials you choose.' Do not invent a list of inclusions, appliances or a per sq ft rate.",
+      line: "They asked what the price includes. Never give a figure. Say: 'We will share the exact budget after understanding your requirement, the scope and the materials you choose.' Do not invent a list of inclusions, appliances or a per sq ft rate.",
       always: true,
     });
   }
@@ -445,6 +445,21 @@ function nextOpenLabel(now: Date, days: Set<string>, start: number, holidays = "
 }
 
 /** Whether the team can call at this moment. The model gets this wrong if it only sees a clock and a hours string. */
+/**
+ * Experience centre timing said the way a person at the centre would, from right now:
+ * "we're open today till 7 PM" instead of reading out the weekly hours.
+ */
+export function visitNowLine(now: Date, workingHours: string, holidays = ""): string | null {
+  const status = officeNow(now, workingHours, holidays);
+  if (status.kind === "unknown") return null;
+  const week = workingHours.replace(/,?\s*monday closed\.?/i, "").trim();
+  if (status.kind === "open") return `we're open today till ${status.closeLabel}, and you can visit any day ${week}`;
+  if (status.kind === "before") return `we open today at ${status.openLabel}, and you can visit any day ${week}`;
+  const next = status.next === "tomorrow" ? "tomorrow" : `on ${status.next}`;
+  if (status.kind === "off") return `we're closed today, so you can visit ${next} from ${status.openLabel}, any day ${week}`;
+  return `we're closed for today, so you can visit ${next} from ${status.openLabel}, any day ${week}`;
+}
+
 export function officeNow(now: Date, workingHours: string, holidays = ""): OfficeNow {
   const hours = openHours(workingHours);
   const days = openDays(workingHours);

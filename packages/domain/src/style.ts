@@ -176,6 +176,30 @@ export function maleHindi(text: string): string {
     .replace(/\b(?!lungi\b)(\p{L}{2,})ungi\b/giu, "$1unga");
 }
 
+/** Varun speaks for The KariGhars, so the firm is "we", not "the team" or "they". */
+export function weVoice(text: string): string {
+  const be: Record<string, string> = { is: "are", has: "have", was: "were" };
+  return text
+    .replace(/\bfor (?:the|our) team who will\b/gi, "and we will")
+    .replace(/\b(?:the|our) team (will|can|would|shall|is|are|has|have|was|were|'ll)\b/gi, (match, verb: string) => {
+      const word = be[verb.toLowerCase()] ?? verb.toLowerCase();
+      const we = /^[A-Z]/.test(match) ? "We" : "we";
+      return word === "'ll" ? `${we}'ll` : `${we} ${word}`;
+    })
+    .replace(/\bthey(?:'ll| will) (confirm|call|share|check|get back)\b/gi, (match, verb: string) => `${/^[A-Z]/.test(match) ? "We" : "we"} will ${verb}`)
+    .replace(/\b(?:can|could|shall) (?:the|our) team (reach|call|contact)\b/gi, (match, verb: string) => `${match.split(" ")[0]} we ${verb}`);
+}
+
+/** "Tomorrow is Saturday sir so that works" reads like a bot; people just accept the day. */
+export function dropDayAnnouncement(text: string): string {
+  const kept = text
+    .split(/\n+/)
+    .map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !/^(?:so\s+|and\s+)?(?:today|tomorrow)\s+(?:is|will be)\s+(?:a\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(part.trim())).join(" ").trim())
+    .filter(Boolean)
+    .join("\n");
+  return kept || text;
+}
+
 /** The knowledge base without its price lines: prices are never told to customers, so the model never sees them. */
 export function withoutPrices(text: string): string {
   return text
@@ -206,10 +230,10 @@ export function dropUnaskedPrice(text: string): string {
 
 /** Removes a promised callback the customer did not ask for. Keeps the rest of the reply. */
 export function dropUnaskedCallback(text: string, proceeding: boolean): string {
-  if (proceeding || !/\bteam will call\b/i.test(text)) return text;
+  if (proceeding || !/\b(?:team|we) will call\b/i.test(text)) return text;
   const kept = text
     .split(/\n+/)
-    .map((line) => sentencesOf(line).filter((sentence) => !/\bteam will call\b/i.test(sentence)).join(" "))
+    .map((line) => sentencesOf(line).filter((sentence) => !/\b(?:team|we) will call\b/i.test(sentence)).join(" "))
     .filter(Boolean)
     .join("\n");
   return kept || text;

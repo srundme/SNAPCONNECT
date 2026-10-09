@@ -106,6 +106,9 @@ import {
   phoneProblem,
   dropRepeatedSentences,
   fullWords,
+  weVoice,
+  dropDayAnnouncement,
+  visitNowLine,
   UNLISTED_DETAIL,
   maleHindi,
   hindiEndings,
@@ -2066,7 +2069,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     } else if (onlyHello) {
       memoryLines.push(`They are only saying hello or checking this is ${workspace.brandName}. Welcome them. Say you are ${workspace.agentName ?? "the assistant"}, the AI assistant for ${workspace.brandName}, and ask how you can help with their home. Do not mention a price. Do not ask for their name, number, or home details yet.`);
     } else if (askingPrice(freshText) && !readyToProceed(freshText)) {
-      memoryLines.push(`They asked the price or budget. Never give any price, lakh figure, starting price, range or estimate. ${spoken.some((message) => message.author === "AI" && /quoted by our team/i.test(message.body)) ? "You already said the team quotes it. In fresh words, say what shapes the cost for their home (size, scope, the materials and finishes they pick), and that the free consultation or an experience centre visit is where they get their exact quote." : `Say: "${QUOTE_LINE}"`} Then carry on with the chat.`);
+      memoryLines.push(`They asked the price or budget. Never give any price, lakh figure, starting price, range or estimate. ${spoken.some((message) => message.author === "AI" && /quoted by our team|share the exact budget/i.test(message.body)) ? "You already said we share the exact budget after understanding their needs. In fresh words, say what shapes the cost for their home (size, scope, the materials and finishes they pick), and that the free consultation or an experience centre visit is where they get their exact quote." : `Say: "${QUOTE_LINE}"`} Then carry on with the chat.`);
     } else {
       memoryLines.push("They did not ask the price. Never mention a price, a lakh figure, a starting price, a quote or hidden costs. Welcome what they just said in a few warm words, then ask only the next detail.");
     }
@@ -2207,6 +2210,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     if (/\b(where|location|address|located|map)\b/i.test(freshText) && /\b(experience|cent(?:re|er)|showroom|visit)\b/i.test(freshText)) {
       memoryLines.push("They asked where the experience centre is. The knowledge base does not give its street address, so never invent one: say it is in Bengaluru and that you are sharing the experience centre page. The link is added for you.");
+    }
+    const visitTalk = choseVisit || /\b(experience cent(?:re|er)|showroom|visit|open|timing|timings|hours)\b/i.test(freshText);
+    const visitNow = visitTalk ? visitNowLine(runtime.now(), agent.workingHours, agent.holidays) : null;
+    if (visitNow) {
+      memoryLines.push(`When you mention when they can visit the experience centre, say it from today, in these words or very close: "${visitNow}". Never just read out the weekly hours like a notice board.`);
     }
     if (!offerConsultation && !(needsTime && askedForTime) && needsTime && choseVisit) {
       memoryLines.push("They want to visit the experience centre and have not named a time. Ask which day and time suits them inside working hours. Do not invent a time. Say the team will confirm it. Do not say the visit is booked.");
@@ -2656,7 +2664,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         : written;
     const closed = withTeamClose(settled, {
       due: Boolean(proceeding && !holdScript && !chasingCall && complete?.ready && !nextDetail && !complete?.cold && recordedPhone
-        && !spoken.some((message) => message.author === "AI" && /\bteam will call\b/i.test(message.body))),
+        && !spoken.some((message) => message.author === "AI" && /\b(?:team|we) will call\b/i.test(message.body))),
       phone: recordedPhone,
       photosLater: prospectBodies.some((body) => /\b(i'?ll|i will|will)\s+share\b|\bnothing handy\b/i.test(body)),
       room: prospectBodies.some((body) => /\b(just|only)\b/i.test(body) && /\bkitchen\b/i.test(body))
@@ -2706,9 +2714,14 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const pricedOut = offered ? dropUnaskedPrice(offered) : offered;
     // No designer, 3D, layout or site visit talk unless they asked about it.
     const undesigned = pricedOut && !asksAboutDesign(freshText) ? dropDesignTalk(pricedOut) || pricedOut : pricedOut;
-    const unpriced = undesigned && materialsNote && !UNLISTED_DETAIL.test(freshText) ? dropDeferral(undesigned) : undesigned;
-    const quotedBefore = spoken.some((message) => message.author === "AI" && /quoted by our team/i.test(message.body));
-    const heldBase = askingPrice(freshText) && !quotedBefore && !/\bquoted by our team\b/i.test(unpriced ?? "")
+    const undeferred = undesigned && materialsNote && !UNLISTED_DETAIL.test(freshText) ? dropDeferral(undesigned) : undesigned;
+    // "The experience centre is open Tuesday to Sunday…" reads like a notice; say it from today instead.
+    const presentHours = undeferred && visitNow
+      ? undeferred.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).map((part) => !isQuestionSentence(part) && /\b(?:tuesday|monday)\s+to\s+(?:sunday|saturday)\b/i.test(part) && /\b\d{1,2}\s*(?:am|pm)\b/i.test(part) ? `${visitNow}.` : part).join(" ").trim()).join("\n")
+      : undeferred;
+    const unpriced = presentHours ? weVoice(dropDayAnnouncement(presentHours)) : presentHours;
+    const quotedBefore = spoken.some((message) => message.author === "AI" && /quoted by our team|share the exact budget/i.test(message.body));
+    const heldBase = askingPrice(freshText) && !quotedBefore && !/\b(?:quoted by our team|share the exact budget)\b/i.test(unpriced ?? "")
       ? [unpriced, QUOTE_LINE].filter(Boolean).join("\n")
       : unpriced;
     // 8. They said only "house": ask the type once. The BHK is never asked again.
@@ -2745,7 +2758,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         : believable;
     const consultAsk = VISIT_OFFER;
     const confirmSaid = /\bconfirm/i.test(welcomed ?? "");
-    const timeAsk = `${choseVisit ? "which day and time would you like to visit?" : "which day and time suits you for the consultation?"}${confirmSaid ? "" : " the team will confirm it."}`;
+    const timeAsk = `${choseVisit ? "which day and time would you like to visit?" : "which day and time suits you for the consultation?"}${confirmSaid ? "" : " we will confirm it."}`;
     const withConsult = waited
       ? waited
       : offerConsultation
@@ -3010,7 +3023,7 @@ async function writeOpening(
         `What ${workspace.brandName} does: ${workspace.services}`,
         workspace.knowledgeBase ? `Knowledge base (the only facts you may use):\n${withoutPrices(workspace.knowledgeBase).slice(0, 12000)}` : "",
         agent.rules ? `Team rules:\n${agent.rules}` : "",
-        "Pricing: never give any price, lakh figure or starting price. If they ask, say the budget will be quoted by our team after understanding the requirement, the scope and the materials.",
+        "Pricing: never give any price, lakh figure or starting price. If they ask, say we will share the exact budget after understanding the requirement, the scope and the materials.",
         sample
           ? `They commented in ${languageName(sample)}, like "${sample}". Write the whole message, the question too, in exactly that language and style.`
           : "Write the whole message, the question too, in the language and style of their comment: plain English for an English comment; Tamil, Hindi or another Indian language typed in English letters (Tanglish, Hinglish) when they wrote that way.",
@@ -3859,7 +3872,7 @@ async function signalTyping(db: Db, runtime: Runtime, conversation: { id: string
 }
 
 function withTeamClose(text: string | null, input: { due: boolean; phone: string | null; photosLater: boolean; room: string | null }): string | null {
-  if (!input.due || !input.phone || (text && /\bteam will call\b/i.test(text))) return text;
+  if (!input.due || !input.phone || (text && /\b(?:team|we) will call\b/i.test(text))) return text;
   const call = `the team will call u on ${input.phone}`;
   const pictures = input.photosLater
     ? ` the team will take ${input.room ? `the ${input.room}` : "it"} up when the pictures come`
@@ -3876,7 +3889,7 @@ function dropPlanMentions(text: string): string {
 const VISIT_OFFER = "Shall I book a free consultation for you, or would you like to visit our experience centre?";
 const TYPE_ASK = "Is it an apartment, villa or independent house?";
 // Prices are never revealed: the team quotes after seeing the home.
-const QUOTE_LINE = "The budget will be quoted by our team after understanding your requirement, the scope and the materials you choose.";
+const QUOTE_LINE = "We will share the exact budget after understanding your requirement, the scope and the materials you choose.";
 const PLAN_BUILDER_TEMPLATE = "Do you have the floor plan from the builder? A photo or PDF is fine, the designer can start planning the layout before possession.";
 const PLAN_READY_TEMPLATE = "Can you share the floor plan of your home? Even a phone picture of it works, the designer can start planning from it.";
 const PLAN_RENOVATION_TEMPLATE = "Could you share a few photos of the home? Phone pictures are fine, the designer can see what is there now.";

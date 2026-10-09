@@ -94,7 +94,7 @@ describe("prices are never told to customers", () => {
       knowledgeBase: "- 3 BHK: starting from ₹35 lakh.",
     } as never);
     expect(prompt).not.toMatch(/₹35|site visit and 3D|designer goes through/);
-    expect(prompt).toMatch(/quoted by our team/);
+    expect(prompt).toMatch(/share the exact budget/);
   });
 });
 
@@ -156,5 +156,20 @@ describe("Varun speaks Hindi as a man", () => {
     expect(maleHindi("main kar sakti hu")).toBe("main kar sakta hu");
     expect(maleHindi("main bhejungi details")).toBe("main bhejunga details");
     expect(maleHindi("Main team se check karta hoon")).toBe("Main team se check karta hoon");
+  });
+});
+
+describe("Varun speaks for KariGhars as we", () => {
+  it("says we instead of the team, drops day announcements, and gives visit hours from today", async () => {
+    const { weVoice, dropDayAnnouncement, visitNowLine } = await import("../src/index");
+    expect(weVoice("The team will confirm the slot")).toBe("We will confirm the slot");
+    expect(weVoice("I have noted it here for the team who will confirm the slot with you")).toBe("I have noted it here and we will confirm the slot with you");
+    expect(weVoice("Shall the team call you on this same WhatsApp number?")).toBe("Shall we call you on this same WhatsApp number?");
+    expect(weVoice("our team is available Tuesday to Sunday")).toBe("we are available Tuesday to Sunday");
+    expect(dropDayAnnouncement("Tomorrow is Saturday sir so that works. What time suits you?")).toBe("What time suits you?");
+    const hours = "Tuesday to Sunday, 10 AM to 7 PM, Monday closed";
+    expect(visitNowLine(new Date("2026-10-09T05:00:00Z"), hours)).toBe("we're open today till 7 PM, and you can visit any day Tuesday to Sunday, 10 AM to 7 PM");
+    expect(visitNowLine(new Date("2026-10-09T14:30:00Z"), hours)).toMatch(/^we're closed for today, so you can visit tomorrow from 10 AM/);
+    expect(visitNowLine(new Date("2026-10-12T06:00:00Z"), hours)).toMatch(/^we're closed today, so you can visit tomorrow from 10 AM/);
   });
 });
