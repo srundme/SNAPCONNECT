@@ -136,3 +136,10 @@ export function profilePersonName(displayName: string | null | undefined, userna
   };
   return read(displayName) ?? read(username);
 }
+
+/** Just the first name from a profile, when it looks like a real given name: "Gopi" from "Gopi N", null for "Kn". */
+export function profileFirstName(displayName: string | null | undefined, username: string | null | undefined): string | null {
+  const full = profilePersonName(displayName, username);
+  const first = full?.split(/\s+/)[0] ?? "";
+  return first.length >= 3 && /[aeiouy]/i.test(first) && !/^(mr|mrs|ms|dr|sri|shri)$/i.test(first) ? first : null;
+}

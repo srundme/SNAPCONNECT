@@ -106,6 +106,8 @@ import {
   phoneProblem,
   dropRepeatedSentences,
   fullWords,
+  areaOnly,
+  profileFirstName,
   zohoReady,
   completedInProperty,
   parseCompletedProjects,
@@ -1790,7 +1792,13 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         // "Thanisandra" after "Puravankara": search the two together, then confirm what was found.
         absorbed.answers[placeQuestionEarly.id] = `${builderNoted} ${placeNow}`;
       }
-      const placeText = builderNamed ? "" : placeAnswer(questions, absorbed.answers).slice(0, 120);
+      // Only an area ("Electronic City"): keep it, never search it as a project, and ask once which property.
+      const placeAfter = placeQuestionEarly ? (absorbed.answers[placeQuestionEarly.id] ?? "").trim() : "";
+      const areaNamed = !builderNamed && placeAfter && !(builderNoted && askedWhichProperty) ? areaOnly(placeAfter) : null;
+      if (areaNamed && !spoken.some((message) => message.author === "AI" && /\bwhich property is it\b/i.test(message.body))) {
+        projectAsk = `Which property is it in ${areaNamed}?`;
+      }
+      const placeText = builderNamed || areaNamed ? "" : placeAnswer(questions, absorbed.answers).slice(0, 120);
       const ownLand = ownLandHome(prospectBodies.join("\n"));
       // The team's own short forms first, then a remembered or fresh lookup: never on follow-ups, at most 3 names a chat.
       const projectQuery = placeText ? applyProjectAliases(placeText, agent.projectAliases) : "";
@@ -2098,7 +2106,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         if (/budget/i.test(question.label) && priceShock(absorbed.answers[question.id] ?? "")) delete absorbed.answers[question.id];
       }
       // "Shall I note your name as Riteesh Shetty?" answered yes: that is their name.
-      const offeredName = lastAsk.match(/\bshall I note your name as ([^?]+)\?/i)?.[1]?.trim();
+      const offeredName = lastAsk.match(/\b(?:shall I note your name as|am I chatting with) ([^?]+)\?/i)?.[1]?.trim();
       if (offeredName && /^(?:yes|yeah|ya|yep|yup|sure|ok(?:ay)?|correct|right|haan|ha|aama|ji|please|yes please|that'?s (?:me|right|correct))\b/i.test(freshText.trim()) && !/\b(?:no|not|wrong)\b/i.test(freshText)) {
         absorbed.name = offeredName;
       }
@@ -2931,11 +2939,13 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       && !spoken.some((message) => message.author === "AI" && /\bindependent house\b/i.test(message.body));
     // Instagram or Facebook: when the profile carries a real name, confirm it instead of asking for it.
     const profileName = conversation.channel !== "WHATSAPP" && !recordedName && nextDetail?.kind === "name"
-      && !spoken.some((message) => message.author === "AI" && /\bshall I note your name as\b/i.test(message.body))
+      && !spoken.some((message) => message.author === "AI" && /\b(?:shall I note your name as|am I chatting with)\b/i.test(message.body))
       ? profilePersonName(conversation.contact.displayName, conversation.contact.username)
       : null;
     const personal = profileName && runtime.llm.addressFor ? await runtime.llm.addressFor(profileName).then((word) => word !== "bro").catch(() => false) : false;
-    const nameAsk = profileName && personal ? `Shall I note your name as ${profileName}?` : null;
+    // Only the first name, asked the way a person would: "Am I chatting with Gopi?"
+    const firstName = profileName ? profileFirstName(conversation.contact.displayName, conversation.contact.username) : null;
+    const nameAsk = firstName && personal ? `Am I chatting with ${firstName}?` : null;
     // Possibly the same person on another channel (name, project, size), with no phone or email to prove it:
     // staff see a suggestion, and on a strong one Varun asks once, without revealing anything from the other chat.
     const askedSpokenBefore = spoken.some((message) => message.author === "AI" && SPOKEN_BEFORE.test(message.body));
@@ -2991,7 +3001,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     // Fixed lines (call wait, small home, commercial, rooms only, not now) are already exact and are not re-read.
     const cannedReply = Boolean(waited || smallHome || commercial || roomsOnly || pausing)
       // Exact questions the next turn is matched against must reach the customer word for word.
-      || Boolean(draft && /\b(did you mean|have we spoken before on|shall I note your name as|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time)\b/i.test(draft));
+      || Boolean(draft && /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time)\b/i.test(draft));
     const review = nudge === 0 && draft && validated.reply && !cannedReply
       ? await reviewReply(runtime, { customer: freshText, draft, earlier: earlierReplies.slice(-2), askingPrice: askingPrice(freshText), language: languageSample ? languageName(languageSample) : "English" })
       : null;
@@ -3200,49 +3210,54 @@ async function commentIsLead(
  * lead question. Null when the model cannot write it, so the account's default message goes instead.
  */
 /**
- * A quick second read of a reply before it is sent. Only a real problem gets a rewrite; the rewrite goes
- * through the same price, designer-talk and "we" rules, and keeps the question the draft was asking.
+ * A quick second read of a reply before it is sent. The question at the end was chosen by code and is never
+ * touched: only the lead-in before it may be rewritten, with no new questions or facts, and the result goes
+ * through the same cleanup as every reply.
  */
-async function reviewReply(
+export async function reviewReply(
   runtime: Runtime,
   input: { customer: string; draft: string; earlier: string[]; askingPrice: boolean; language: string },
 ): Promise<{ fixed: string; problem: string } | null> {
   if (!runtime.llm.complete) return null;
+  const parts = input.draft.split(/\n+|(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).map((part) => part.trim()).filter(Boolean);
+  const questions = parts.filter((part) => isQuestionSentence(part));
+  const lead = parts.filter((part) => !isQuestionSentence(part)).join(" ");
+  if (!lead) return null;
   try {
     const raw = await runtime.llm.complete({
-      system: "You check one WhatsApp reply from Varun, the AI sales assistant of The KariGhars (luxury full-home interiors, Bengaluru), before it is sent. Answer with JSON only: {\"ok\":true} or {\"ok\":false,\"problem\":\"<a few words>\",\"fixed\":\"<the corrected reply>\"}.",
+      system: "You check the opening words of one WhatsApp reply from Varun, the AI sales assistant of The KariGhars (luxury full-home interiors, Bengaluru). The question after it was chosen by the system and is not yours to judge. Answer with JSON only: {\"ok\":true} or {\"ok\":false,\"problem\":\"<a few words>\",\"lead\":\"<the corrected opening words, no question>\"}.",
       messages: [{
         role: "user",
         content: [
           `Customer's latest message: "${input.customer.slice(0, 600)}"`,
           input.earlier.length ? `Varun's previous replies:\n${input.earlier.map((body) => `- ${body.replace(/\s+/g, " ").slice(0, 300)}`).join("\n")}` : "",
-          `Draft reply:\n${input.draft.slice(0, 900)}`,
+          `Opening words to check: "${lead.slice(0, 700)}"`,
+          questions.length ? `The system's question that follows (keep it, do not repeat it): "${questions.join(" ")}"` : "",
           "",
-          "Mark ok=false only for a real problem:",
-          "- it does not answer what the customer just asked or said;",
-          "- it repeats a sentence or question from Varun's previous replies;",
-          "- it is off-topic, or only comments on or praises their answer;",
-          "- it promises a booking, a call time, a date, a discount or anything the company did not confirm;",
-          `- it gives a price, a lakh figure or a starting price${input.askingPrice ? " (they asked the price: the reply must say the team shares the exact budget after understanding the requirement, scope and materials)" : ""};`,
-          "- it talks about designers, 3D designs, layouts or site visits;",
-          "- it uses short forms like u, ur, pls or im.",
-          `If you fix it: same meaning and facts, ${input.language}, casual and warm, at most three short lines, and keep the same question at the end if the draft asked one. Never add new facts.`,
+          "Mark ok=false only when the opening words:",
+          "- answer something the customer did not say, or ignore a direct question they asked;",
+          "- repeat a sentence from Varun's previous replies word for word;",
+          "- comment on or praise their answer (\"sounds spacious\", \"lovely project\"), or say something odd or untrue;",
+          "- promise a booking, a call time, a date, a discount, or next steps the company did not confirm;",
+          `- give a price, a lakh figure or a starting price${input.askingPrice ? " (they asked the price: say we share the exact budget after understanding the requirement, scope and materials)" : ""};`,
+          "- talk about designers, 3D designs, layouts or site visits, or use short forms like u, ur, pls, im.",
+          `A fix is a short acknowledgement or a direct answer to what they asked, in ${input.language}, warm and plain, one or two short sentences, with NO question and no new facts. If nothing is needed before the question, return an empty lead.`,
         ].filter(Boolean).join("\n"),
       }],
       temperature: 0,
-      maxTokens: 400,
+      maxTokens: 300,
       timeoutMs: 8_000,
     });
     const json = raw.match(/\{[\s\S]*\}/)?.[0];
     if (!json) return null;
-    const verdict = JSON.parse(json) as { ok?: boolean; problem?: string; fixed?: string };
-    if (verdict.ok !== false || !verdict.fixed?.trim() || verdict.fixed.length > 700) return null;
-    let fixed = verdict.fixed.trim();
-    fixed = dropDesignTalk(fixed) || fixed;
-    if (!input.askingPrice) fixed = dropUnaskedPrice(fixed) || fixed;
-    fixed = weVoice(fixed);
-    const question = input.draft.split(/\n+|(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).map((part) => part.trim()).filter((part) => isQuestionSentence(part)).at(-1);
-    if (question && !fixed.includes("?")) fixed = `${fixed}\n${question}`;
+    const verdict = JSON.parse(json) as { ok?: boolean; problem?: string; lead?: string };
+    if (verdict.ok !== false || typeof verdict.lead !== "string" || verdict.lead.length > 400) return null;
+    let newLead = verdict.lead.trim().split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?") && !isQuestionSentence(part)).join(" ");
+    newLead = dropEmptyPraise(dropDesignTalk(newLead) || newLead);
+    if (!input.askingPrice) newLead = dropUnaskedPrice(newLead);
+    newLead = weVoice(newLead).trim();
+    const fixed = [newLead, ...questions].filter(Boolean).join("\n");
+    if (!fixed) return null;
     return { fixed, problem: String(verdict.problem ?? "needed a fix").slice(0, 160) };
   } catch {
     return null;
@@ -3287,7 +3302,7 @@ async function writeOpening(
   const guessedAddress = agent.addressSirMam && input.name && runtime.llm.addressFor ? await runtime.llm.addressFor(input.name).catch(() => null) : null;
   const address = guessedAddress === "bro" ? null : guessedAddress;
   // Their profile carries a real name: the opener confirms it instead of asking for it.
-  const profile = first?.kind === "name" ? profilePersonName(null, input.name) : null;
+  const profile = first?.kind === "name" ? profileFirstName(null, input.name) : null;
   const confirmName = profile && runtime.llm.addressFor
     ? await runtime.llm.addressFor(profile).then((word) => word !== "bro").catch(() => false)
     : false;
@@ -3318,7 +3333,7 @@ async function writeOpening(
           "2. If the comment asks something (in any language), answer exactly that in one short sentence using only the knowledge base, never quoting a price (follow the pricing rule). If it only says hi, praises the post or says they are interested, thank them for reaching out in a few plain words. This sentence asks nothing.",
           `Only say what their comment actually says. Never claim they praised, appreciated or asked about something they did not write. If they name something ${workspace.brandName} does not offer (like an integration, an app or a product), do not repeat it back as if it were our work; just thank them and talk about home interiors.`,
           confirmName && profile
-            ? `3. End with exactly this question: "Shall I note your name as ${profile}?"`
+            ? `3. End with exactly this question: "Am I chatting with ${profile}?"`
             : first
             ? `3. End with one natural question, in the same language as the rest, asking for: ${first.label} That is only the topic: do not copy its words.`
             : "3. End by asking how you can help, in the same language as the rest.",

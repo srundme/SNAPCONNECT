@@ -234,3 +234,16 @@ describe("ready for Zoho", () => {
     expect(zohoReady({ questions, answers, name: "Gopi N", phoneE164: "+919845011111" })).toBe(true);
   });
 });
+
+describe("an area is not a property", () => {
+  it("spots an area without a property, and a builder misspelt", async () => {
+    const { areaOnly, builderOnly } = await import("../src/index");
+    expect(areaOnly("My apartment is in Electronic City Banglore")).toBe("Electronic City");
+    expect(areaOnly("HSR Layout")).toBe("HSR Layout");
+    expect(areaOnly("Whitefield")).toBe("Whitefield");
+    expect(areaOnly("Sobha City")).toBeNull();
+    expect(areaOnly("Prestige Falcon City")).toBeNull();
+    expect(areaOnly("Concorde Manhattans")).toBeNull();
+    expect(builderOnly("Concord project")).toBe("Concorde");
+  });
+});

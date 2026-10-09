@@ -117,7 +117,7 @@ type GooglePlace = {
 const AREA_TYPES = new Set(["locality", "sublocality", "sublocality_level_1", "sublocality_level_2", "sublocality_level_3", "neighborhood", "route", "political", "administrative_area_level_3", "postal_code"]);
 const APARTMENT_TYPES = new Set(["apartment_building", "apartment_complex", "condominium_complex"]);
 const NAME_FILLER = new Set(["the", "and", "apartment", "apartments", "apts", "apt", "flat", "flats", "villa", "villas", "phase", "block", "tower", "towers", "wing", "bangalore", "bengaluru", "layout", "road", "main", "cross", "sector", "stage", "nagar", "near", "opp", "india", "karnataka"]);
-const NOT_THE_HOMES = /\b(sales|site|corporate|head) office\b|\boffice\b|\bexperience (?:cent(?:re|er)|zone)\b|\bshowroom\b|\bmodel (?:flat|villa|apartment)\b|\bhospital\b|\bschool\b|\bmall\b|\bhotel\b|\bpg\b/i;
+const NOT_THE_HOMES = /\b(?:residential |upcoming |new |ongoing |completed |all )?projects\b|\bprojects (?:in|by)\b|\bbuilders? in\b|\b(sales|site|corporate|head) office\b|\boffice\b|\bexperience (?:cent(?:re|er)|zone)\b|\bshowroom\b|\bmodel (?:flat|villa|apartment)\b|\bhospital\b|\bschool\b|\bmall\b|\bhotel\b|\bpg\b/i;
 function nameWords(value: string): string[] {
   return value.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length >= 2 && !NAME_FILLER.has(word));
 }
