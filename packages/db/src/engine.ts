@@ -106,6 +106,7 @@ import {
   phoneProblem,
   dropRepeatedSentences,
   fullWords,
+  builderOnly,
   weVoice,
   dropDayAnnouncement,
   visitNowLine,
@@ -1721,10 +1722,25 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         } else if (/^(?:no|nope|nah|nahi|illa|not|wrong)\b/i.test(freshText.trim())) {
           projectRejected = true;
           if (!/\d|[a-z]{4,}\s+[a-z]{4,}/i.test(freshText.replace(/^(?:no|nope|nah|nahi|illa|not|wrong)\b[\s,.]*/i, ""))) delete absorbed.answers[placeQuestionEarly.id];
-          memoryLines.push("They said it is not the project you suggested. Do not suggest it again. If they have not given the name another way, ask for the full project name in a few words.");
+          memoryLines.push("They said it is not the project you suggested. Do not suggest it again. If they have not given the name another way, ask for the full property name in a few words.");
         }
       }
-      const placeText = placeAnswer(questions, absorbed.answers).slice(0, 120);
+      // Only a builder ("Puravankara"): no search and no guess. Ask once which of their properties, and where.
+      const builderNoted = conversation.messages.find((message) => message.author === "SYSTEM" && message.body.startsWith("Builder only:"))?.body.match(/^Builder only: ([^|]+)/)?.[1]?.trim() ?? null;
+      const placeNow = placeQuestionEarly ? (absorbed.answers[placeQuestionEarly.id] ?? "").trim() : "";
+      const builderNamed = placeNow ? builderOnly(placeNow) : null;
+      const askedWhichProperty = spoken.some((message) => message.author === "AI" && /\bwhich [a-z ]+ property\b/i.test(message.body));
+      if (builderNamed && placeQuestionEarly) {
+        await noteOnce(`Builder only: ${builderNamed}`, "They named the builder but not the property or area.");
+        if (!askedWhichProperty) {
+          delete absorbed.answers[placeQuestionEarly.id];
+          projectAsk = `Which ${builderNamed} property is it, and in which area?`;
+        }
+      } else if (builderNoted && placeQuestionEarly && placeNow && !new RegExp(`\\b${builderNoted}\\b`, "i").test(placeNow) && askedWhichProperty && !offeredProject) {
+        // "Thanisandra" after "Puravankara": search the two together, then confirm what was found.
+        absorbed.answers[placeQuestionEarly.id] = `${builderNoted} ${placeNow}`;
+      }
+      const placeText = builderNamed ? "" : placeAnswer(questions, absorbed.answers).slice(0, 120);
       const ownLand = ownLandHome(prospectBodies.join("\n"));
       // The team's own short forms first, then a remembered or fresh lookup: never on follow-ups, at most 3 names a chat.
       const projectQuery = placeText ? applyProjectAliases(placeText, agent.projectAliases) : "";
@@ -1812,7 +1828,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         }
       }
       // A short form, a spelling fix or a one-word name is confirmed once before it is trusted.
-      if (found?.confirm && placeQuestionEarly && !offeredProject
+      const builderAndArea = Boolean(found && placeText && builderOnly(found.locality ? placeText.replace(new RegExp(found.locality.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), " ") : placeText));
+      if ((found?.confirm || builderAndArea) && found && placeQuestionEarly && !offeredProject
         && !spoken.some((message) => message.author === "AI" && /\bdid you mean\b/i.test(message.body) && message.body.toLowerCase().includes(found.name.toLowerCase()))) {
         const typed = found.shortForm ?? found.correctedFrom ?? (absorbed.answers[placeQuestionEarly.id] ?? "").trim();
         projectAsk = `${found.shortForm ? `By ${typed}, did` : "Did"} you mean ${found.name}${found.locality ? ` in ${found.locality}` : ""}?`;

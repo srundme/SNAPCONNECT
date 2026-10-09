@@ -208,6 +208,34 @@ const PLACE_FIX = /\b(actually|sorry|i meant|not that|wrong project|it(?:'s| is)
 const NAME_OR_CONTACT = /\bmy name\b|\bcall me\b|\b(?:i am|i'm|im)\s+(?!in\b)|\bmy (?:no\.?|number|phone|mobile|email|e-?mail)\b|@|^\+?\d[\d\s-]{8,}$/i;
 
 /** A name, phone or email correction, which must not be saved as where the home is. */
+// Bengaluru developers and their brands. A builder alone is not a property: "Puravankara" has dozens.
+const BUILDER_NAMES: Array<[RegExp, string]> = [
+  [/\bpuravankara\b/i, "Puravankara"], [/\bpurva\b/i, "Purva"], [/\bprovident\b/i, "Provident"],
+  [/\bprestige\b/i, "Prestige"], [/\bsobha\b/i, "Sobha"], [/\bbrigade\b/i, "Brigade"], [/\bgodrej\b/i, "Godrej"],
+  [/\bembassy\b/i, "Embassy"], [/\bsalarpuria\b/i, "Salarpuria"], [/\bsattva\b/i, "Sattva"], [/\bmantri\b/i, "Mantri"],
+  [/\bshriram\b/i, "Shriram"], [/\bassetz\b/i, "Assetz"], [/\badarsh\b/i, "Adarsh"], [/\bconcorde\b/i, "Concorde"],
+  [/\btotal environment\b/i, "Total Environment"], [/\bsumadhura\b/i, "Sumadhura"], [/\bvaswani\b/i, "Vaswani"],
+  [/\bnitesh\b/i, "Nitesh"], [/\bmahindra\b/i, "Mahindra"], [/\btata housing\b/i, "Tata Housing"], [/\bdlf\b/i, "DLF"],
+  [/\bsnn\b/i, "SNN"], [/\bcasagrand\b/i, "Casagrand"], [/\bbhartiya\b/i, "Bhartiya"], [/\bmana\b/i, "Mana"],
+  [/\bsterling\b/i, "Sterling"], [/\bkolte\s*patil\b/i, "Kolte Patil"], [/\blodha\b/i, "Lodha"], [/\bbirla\b/i, "Birla"],
+];
+
+/**
+ * The developer's name with nothing that picks one of their properties: "Puravankara",
+ * "Prestige at Bangalore", "it's a Sobha flat". Returns the builder, or null when a property is named.
+ */
+export function builderOnly(text: string): string | null {
+  const plain = text.replace(/^\(Replied to:[\s\S]*?\)\s*/, "").trim();
+  const builder = BUILDER_NAMES.find(([pattern]) => pattern.test(plain));
+  if (!builder) return null;
+  const rest = plain
+    .replace(builder[0], " ")
+    .replace(/\b(bengaluru|bangalore|banglore|blr|in|at|it'?s|its|a|an|the|my|our|flat|flats|home|house|apartment|apartments|villa|villas|project|property|builder|group|developers?|projects|from|by|is|sir|mam|ji|only|one|ok|yes)\b/gi, " ")
+    .replace(/[^a-z0-9]+/gi, " ")
+    .trim();
+  return rest ? null : builder[1];
+}
+
 export function notAPlaceSentence(text: string): boolean {
   return NAME_OR_CONTACT.test(text.replace(/^\(Replied to:[\s\S]*?\)\s*/, "").trim());
 }

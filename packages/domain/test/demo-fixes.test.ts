@@ -175,3 +175,16 @@ describe("Varun speaks for KariGhars as we", () => {
     expect(visitNowLine(new Date("2026-10-12T06:00:00Z"), hours)).toMatch(/^we're closed today, so you can visit tomorrow from 10 AM/);
   });
 });
+
+describe("a builder is not a property", () => {
+  it("spots a builder named without the property", async () => {
+    const { builderOnly } = await import("../src/index");
+    expect(builderOnly("Puravankara")).toBe("Puravankara");
+    expect(builderOnly("Puravankara at banglore")).toBe("Puravankara");
+    expect(builderOnly("it's a Prestige flat")).toBe("Prestige");
+    expect(builderOnly("Prestige Lakeside Habitat")).toBeNull();
+    expect(builderOnly("Purva Atmosphere, Thanisandra")).toBeNull();
+    expect(builderOnly("Sobha, Whitefield")).toBeNull();
+    expect(builderOnly("Concorde Manhattans")).toBeNull();
+  });
+});
