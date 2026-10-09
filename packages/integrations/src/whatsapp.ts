@@ -64,6 +64,26 @@ export function whatsappAdapter(options: { baseUrl: string; version: string; fet
         }),
       );
     },
+    async sendTemplate(input) {
+      return classifyFetch(() =>
+        fetchImpl(`${base.origin}/${options.version}/${input.accountId}/messages`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${input.token}`, "content-type": "application/json" },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: input.recipientId,
+            type: "template",
+            template: {
+              name: input.name,
+              language: { code: input.language },
+              ...(input.params.length ? { components: [{ type: "body", parameters: input.params.map((text) => ({ type: "text", text: text.slice(0, 1000) })) }] } : {}),
+            },
+          }),
+          signal: AbortSignal.timeout(15_000),
+        }),
+      );
+    },
     async sendAudio(input) {
       return classifyFetch(() =>
         fetchImpl(`${base.origin}/${options.version}/${input.accountId}/messages`, {

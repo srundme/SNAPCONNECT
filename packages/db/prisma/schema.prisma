@@ -701,3 +701,34 @@ model ProjectLookup {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+/// A moment the sales team should act on now: a HOT lead, a visit request, someone asking for a person.
+model TeamAlert {
+  id             String    @id @default(uuid())
+  workspaceId    String
+  conversationId String
+  kind           String
+  text           String
+  deliveredTo    String?
+  readAt         DateTime?
+  readBy         String?
+  createdAt      DateTime  @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([conversationId, kind])
+}
+
+/// A staff member marked one of the assistant's replies as wrong, with the reason. Feeds the weekly fix list.
+model ReplyFeedback {
+  id             String   @id @default(uuid())
+  workspaceId    String
+  conversationId String
+  messageId      String
+  userId         String
+  reason         String
+  note           String?
+  createdAt      DateTime @default(now())
+
+  @@unique([messageId, userId])
+  @@index([workspaceId, createdAt])
+}

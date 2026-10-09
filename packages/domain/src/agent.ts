@@ -30,6 +30,11 @@ export type AgentSettings = {
   warranty: WarrantyTerms | null;
   /** The team's project short forms, one per line: "APR = Adarsh Palm Retreat". */
   projectAliases: string;
+  /** Who gets instant alerts, one per line: "Gopi: +91 98450 11111". */
+  alertNumbers: string;
+  /** A Meta-approved WhatsApp template for alerts (one body variable), so they arrive any time. Empty = plain text. */
+  alertTemplate: string;
+  alertTemplateLanguage: string;
 };
 
 export const defaultAgentSettings: AgentSettings = {
@@ -59,6 +64,9 @@ export const defaultAgentSettings: AgentSettings = {
   materials: [],
   warranty: null,
   projectAliases: "",
+  alertNumbers: "",
+  alertTemplate: "",
+  alertTemplateLanguage: "en",
 };
 
 const TOGGLES = [
@@ -119,6 +127,9 @@ export function parseAgentSettings(value: unknown): AgentSettings {
   settings.materials = parseMaterials(record.materials);
   settings.warranty = parseWarranty(record.warranty);
   if (typeof record.projectAliases === "string") settings.projectAliases = record.projectAliases.trim().slice(0, 4000);
+  if (typeof record.alertNumbers === "string") settings.alertNumbers = record.alertNumbers.trim().slice(0, 2000);
+  if (typeof record.alertTemplate === "string") settings.alertTemplate = record.alertTemplate.trim().replace(/[^a-z0-9_]/gi, "").slice(0, 80);
+  if (typeof record.alertTemplateLanguage === "string" && record.alertTemplateLanguage.trim()) settings.alertTemplateLanguage = record.alertTemplateLanguage.trim().slice(0, 10);
   return settings;
 }
 

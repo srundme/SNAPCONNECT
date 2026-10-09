@@ -46,9 +46,10 @@ const runtime = simulationRuntime({
   ...(config.CARTESIA_API_KEY && config.CARTESIA_VOICE_ID
     ? {
         speak: cartesiaSpeaker({ apiKey: config.CARTESIA_API_KEY, voiceId: config.CARTESIA_VOICE_ID, model: config.CARTESIA_MODEL }),
-        publicBaseUrl: config.APP_BASE_URL,
       }
     : {}),
+  // Voice clip links and the "open chat" link in team alerts.
+  publicBaseUrl: config.APP_BASE_URL,
   replySettleMs: 2500,
   lookupPlace: config.BRAVE_SEARCH_API_KEY
     ? bravePlaceLookup({ apiKey: config.BRAVE_SEARCH_API_KEY })

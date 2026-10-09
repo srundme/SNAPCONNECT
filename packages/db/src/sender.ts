@@ -45,6 +45,16 @@ export function connectionSender(options: {
         token,
       });
     }
+    if (input.template && adapter.sendTemplate) {
+      return adapter.sendTemplate({
+        accountId: connection.externalAccountId,
+        recipientId: input.recipientId,
+        token,
+        name: input.template.name,
+        language: input.template.language,
+        params: input.template.params,
+      });
+    }
     if (input.audioUrl) {
       return adapter.sendAudio({
         accountId: connection.externalAccountId,

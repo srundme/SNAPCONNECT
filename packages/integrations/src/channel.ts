@@ -19,6 +19,8 @@ export type ChannelAdapter = {
   sendAudio(input: { recipientId: string; audioUrl: string; token: string; accountId: string; replyToMessageId?: string | null }): Promise<SendResult>;
   /** Shows the platform typing label in the customer's chat while a reply is being written. */
   showTyping(input: { recipientId: string; messageId: string | null; token: string; accountId: string }): Promise<SendResult>;
+  /** A Meta-approved template, the only message WhatsApp delivers outside the 24-hour window. WhatsApp only. */
+  sendTemplate?(input: { recipientId: string; token: string; accountId: string; name: string; language: string; params: string[] }): Promise<SendResult>;
   diagnose(input: { token: string | null; scopes: string[]; subscribed: boolean }): Promise<DiagnosticCheck[]>;
 };
 

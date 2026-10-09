@@ -146,6 +146,7 @@ import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulation
 import { randomBytes } from "node:crypto";
 import type { Db } from "./client";
 import { applyProjectAliases, lookupProject } from "./projects";
+import { raiseAlert, type AlertKind } from "./alerts";
 import { linkByPhoneOrEmail, linkContacts, mergePersonLeads, personContactIds, personLeads, primaryOf, rejectMatch, suggestMatches } from "./people";
 import type { Prisma } from "./generated/prisma/client";
 
@@ -159,7 +160,9 @@ export type SendConnection = {
 
 export type SendInput = {
   connection: SendConnection;
-  purpose: "opening" | "text" | "typing";
+  purpose: "opening" | "text" | "typing" | "alert";
+  /** For alerts to the team: a Meta-approved WhatsApp template, when one is set up. */
+  template?: { name: string; language: string; params: string[] };
   commentId?: string;
   recipientId?: string;
   text: string;
@@ -1506,6 +1509,14 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const workspace = await db.workspace.findUniqueOrThrow({ where: { id: conversation.workspaceId } });
     const connection = await db.channelConnection.findUniqueOrThrow({ where: { id: conversation.connectionId } });
     const lead = await db.lead.findFirstOrThrow({ where: { contactId: conversation.contactId, archivedAt: null } });
+    // Moments the sales team should act on now. An alert never holds up or breaks the reply.
+    const alertTeam = (kind: AlertKind, text: string) =>
+      raiseAlert(db, runtime, { workspaceId: workspace.id, conversationId, kind, text }).catch((error: unknown) => console.warn(`Team alert failed: ${error instanceof Error ? error.message : String(error)}`));
+    const whoIs = (name: string | null, answers: Record<string, string>) => {
+      const parsed = parseLeadQuestions(workspace.leadQuestions);
+      const pick = (pattern: RegExp) => { const question = parsed.find((item) => pattern.test(item.label)); return question ? answers[question.id] : undefined; };
+      return [name ?? conversation.contact.displayName ?? conversation.contact.username ?? "A customer", pick(/\bbhk\b/i), pick(/\b(where is the home|which area|location)\b/i), pick(/possession/i)].filter(Boolean).join(" · ") + ` (${channelLabel(conversation.channel)})`;
+    };
     if (conversation.revision !== expectedRevision || conversation.owner !== "AI" || conversation.contact.optedOutAt || connection.automationPaused || workspace.automationPaused) {
       await db.aiRun.create({
         data: {
@@ -2294,6 +2305,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     const offerAnswers = [...conversation.messages.filter((message) => message.author === "SYSTEM" && message.body.startsWith("Offer answer:")).map((message) => message.body), ...(freshOfferAnswer ? [`Offer answer: ${freshOfferAnswer}`] : [])];
     const choseVisit = offerAnswers.some((body) => body.startsWith("Offer answer: experience"));
+    if (freshOfferAnswer === "consultation" || freshOfferAnswer === "experience") {
+      await alertTeam("meeting", `📅 ${whoIs(recordedName, recordedAnswers)} wants ${freshOfferAnswer === "experience" ? "to visit the experience centre" : "a free consultation"}`);
+    }
     const consultationAsked = spoken.some((message) => message.author === "AI" && /\b(consultation|experience cent(?:re|er))\b/i.test(message.body));
     const aboutConsultation = (index: number) => /\b(consultation|experience cent(?:re|er))\b/i.test([...spoken.slice(0, index)].reverse().find((message) => message.author === "AI")?.body ?? "");
     // A plain "yes" after the offer, or the model reading their answer as one of the two options.
@@ -2303,6 +2317,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const consultationDeclined = spoken.some((message, index) => message.author === "PROSPECT" && aboutConsultation(index) && /^(?:no+|nope|nah|not now|no thanks|later)(?:\s+(?:sir|mam|ji))?\.?$/i.test(message.body.trim()))
       || offerAnswers.some((body) => body.startsWith("Offer answer: not_now"));
     const offerConsultation = Boolean(complete?.ready && !complete.cold && !holdScript && !proceeding && !agreedConsultation && !consultationAsked && !consultationDeclined);
+    // They named a day and time for the consultation or visit: the team confirms it, so tell them now.
+    const slot = (agreedConsultation || proceeding) ? requestedTime(freshText, runtime.now(), agent.workingHours) : null;
+    if (slot) {
+      await alertTeam("slot", `🗓️ ${whoIs(recordedName, recordedAnswers)} asked for ${slot.day} ${slot.clock}${slot.inside ? "" : ` (${slot.why})`}. Please confirm with them.`);
+    }
     const needsTime = Boolean(complete?.ready && !complete.cold && !holdScript && (proceeding || agreedConsultation) && !consultationDeclined && !prospectBodies.some((body) => requestedTime(body, runtime.now(), agent.workingHours)));
     const askedForTime = spoken.some((message) => message.author === "AI" && /\b(?:what|which) time\b/i.test(message.body));
     if (consultationAsked && !offerConsultation && !needsTime && !/\bconsultation\b/i.test(freshText)) {
@@ -2574,6 +2593,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const teamSwitch = requestsTeamSwitch(latestUser);
     if (teamSwitch) {
       await handoff(db, conversation.id, lead.id, "Prospect asked to switch to the team.");
+      await alertTeam("person", `🙋 ${whoIs(conversation.contact.chosenName, answerRecord(lead.answers))} asked to talk to a person`);
       if (!validated.schemaError) {
         const participant = await db.contactIdentity.findFirst({
           where: { contactId: conversation.contactId, identityType: "MESSAGING_PARTICIPANT", channel: conversation.channel },
@@ -2624,6 +2644,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       const rated = rateLead({ questions, answers: answerRecord(updatedLead.answers), hotBudgetLakhs: agent.hotBudgetLakhs });
       if (rated.rating !== updatedLead.rating || rated.reason !== updatedLead.ratingReason) {
         await db.lead.update({ where: { id: lead.id }, data: { rating: rated.rating, ratingReason: rated.reason } });
+      }
+      if (rated.rating === "HOT" && updatedLead.rating !== "HOT") {
+        await alertTeam("hot", `🔥 HOT lead: ${whoIs(updatedLead.contact.chosenName, answerRecord(updatedLead.answers))}`);
       }
     }
     const rule = leadRule(workspace);
@@ -2900,9 +2923,18 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           ? welcomed.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !(isQuestionSentence(part) && /\b(consultation|book(?:ing)? (?:that|it|one)|go ahead)\b/i.test(part))).join(" ").trim()).filter(Boolean).join("\n") || welcomed
           : welcomed;
     const nudge = Number(payload.followUp ?? 0);
+    const draft = withConsult && agentGreeted ? dropCallingThemAgent(withConsult, workspace.agentName) : withConsult;
+    // A second read of the draft before it goes out: does it answer them, is it repetitive, off-topic or a promise?
+    // Fixed lines (call wait, small home, commercial, rooms only, not now) are already exact and are not re-read.
+    const cannedReply = Boolean(waited || smallHome || commercial || roomsOnly || pausing)
+      // Exact questions the next turn is matched against must reach the customer word for word.
+      || Boolean(draft && /\b(did you mean|have we spoken before on|shall I note your name as|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time)\b/i.test(draft));
+    const review = nudge === 0 && draft && validated.reply && !cannedReply
+      ? await reviewReply(runtime, { customer: freshText, draft, earlier: earlierReplies.slice(-2), askingPrice: askingPrice(freshText), language: languageSample ? languageName(languageSample) : "English" })
+      : null;
     const addressed = nudge > 0
       ? followUpReply(nudge, agent.followUpHours.length)
-      : withConsult && agentGreeted ? dropCallingThemAgent(withConsult, workspace.agentName) : withConsult;
+      : review?.fixed ?? draft;
     const bubbleOptions = { casual: agent.casualTexting, split: agent.splitMessages, ...(keep ? { keep } : {}) };
     const freshBubbles = addressed ? humanBubbles(addressed, earlierReplies, keepCase, bubbleOptions) : [];
     // When every sentence repeats an earlier reply, a repeat still beats leaving the customer unanswered. Follow-ups can stay quiet.
@@ -3030,11 +3062,13 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           generated.diagnostics?.mode === "sarvam-plain" ? `Used the plain-text reply after: ${String((generated.diagnostics as Record<string, unknown>).failures ?? "").slice(0, 200)}` : "",
           validated.reply && bubbles.join(" ").length < validated.reply.length / 2 ? `Most of the draft was cut. Draft: ${validated.reply.slice(0, 400)}` : "",
           ...validated.rejected.map((item) => item.reason),
+          review ? `Second check rewrote the reply: ${review.problem}` : "",
         ].filter(Boolean).join("; ") || null,
       },
     });
     if (customerComplaint(latestUser) || situationHandoff) {
       await handoff(db, conversation.id, lead.id, situationHandoff ?? "Customer complaint. Staff should take this chat.");
+      await alertTeam(situationHandoff ? "person" : "complaint", `${situationHandoff ? "🙋" : "⚠️"} ${whoIs(conversation.contact.chosenName, answerRecord(lead.answers))}: ${(situationHandoff ?? "complaint, needs a person now").slice(0, 140)}`);
       await refreshMemory(db, runtime, conversation.contact, spoken);
       return "done";
     }
@@ -3102,6 +3136,56 @@ async function commentIsLead(
  * comment. The code fixes what it does: greet, answer the comment if it asks something, ask the first
  * lead question. Null when the model cannot write it, so the account's default message goes instead.
  */
+/**
+ * A quick second read of a reply before it is sent. Only a real problem gets a rewrite; the rewrite goes
+ * through the same price, designer-talk and "we" rules, and keeps the question the draft was asking.
+ */
+async function reviewReply(
+  runtime: Runtime,
+  input: { customer: string; draft: string; earlier: string[]; askingPrice: boolean; language: string },
+): Promise<{ fixed: string; problem: string } | null> {
+  if (!runtime.llm.complete) return null;
+  try {
+    const raw = await runtime.llm.complete({
+      system: "You check one WhatsApp reply from Varun, the AI sales assistant of The KariGhars (luxury full-home interiors, Bengaluru), before it is sent. Answer with JSON only: {\"ok\":true} or {\"ok\":false,\"problem\":\"<a few words>\",\"fixed\":\"<the corrected reply>\"}.",
+      messages: [{
+        role: "user",
+        content: [
+          `Customer's latest message: "${input.customer.slice(0, 600)}"`,
+          input.earlier.length ? `Varun's previous replies:\n${input.earlier.map((body) => `- ${body.replace(/\s+/g, " ").slice(0, 300)}`).join("\n")}` : "",
+          `Draft reply:\n${input.draft.slice(0, 900)}`,
+          "",
+          "Mark ok=false only for a real problem:",
+          "- it does not answer what the customer just asked or said;",
+          "- it repeats a sentence or question from Varun's previous replies;",
+          "- it is off-topic, or only comments on or praises their answer;",
+          "- it promises a booking, a call time, a date, a discount or anything the company did not confirm;",
+          `- it gives a price, a lakh figure or a starting price${input.askingPrice ? " (they asked the price: the reply must say the team shares the exact budget after understanding the requirement, scope and materials)" : ""};`,
+          "- it talks about designers, 3D designs, layouts or site visits;",
+          "- it uses short forms like u, ur, pls or im.",
+          `If you fix it: same meaning and facts, ${input.language}, casual and warm, at most three short lines, and keep the same question at the end if the draft asked one. Never add new facts.`,
+        ].filter(Boolean).join("\n"),
+      }],
+      temperature: 0,
+      maxTokens: 400,
+      timeoutMs: 8_000,
+    });
+    const json = raw.match(/\{[\s\S]*\}/)?.[0];
+    if (!json) return null;
+    const verdict = JSON.parse(json) as { ok?: boolean; problem?: string; fixed?: string };
+    if (verdict.ok !== false || !verdict.fixed?.trim() || verdict.fixed.length > 700) return null;
+    let fixed = verdict.fixed.trim();
+    fixed = dropDesignTalk(fixed) || fixed;
+    if (!input.askingPrice) fixed = dropUnaskedPrice(fixed) || fixed;
+    fixed = weVoice(fixed);
+    const question = input.draft.split(/\n+|(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).map((part) => part.trim()).filter((part) => isQuestionSentence(part)).at(-1);
+    if (question && !fixed.includes("?")) fixed = `${fixed}\n${question}`;
+    return { fixed, problem: String(verdict.problem ?? "needed a fix").slice(0, 160) };
+  } catch {
+    return null;
+  }
+}
+
 /** Reads their answer to the consultation / experience centre offer. Keywords get "I'll come back to you" wrong. */
 async function readOfferAnswer(runtime: Runtime, offer: string, reply: string): Promise<"consultation" | "experience" | "not_now" | "unclear"> {
   if (!runtime.llm.complete) return "unclear";
