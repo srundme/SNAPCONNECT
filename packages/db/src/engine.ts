@@ -3194,6 +3194,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const review = nudge === 0 && draft && validated.reply && !cannedReply
       ? await reviewReply(runtime, { customer: freshText, draft, earlier: earlierReplies.slice(-2), askingPrice: askingPrice(freshText), language: languageSample ? languageName(languageSample) : "English" })
       : null;
+    // Every question the code wrote itself this turn: the filters below never remove or replace them.
+    const codeAsks = [confirmAsk, consultAsk, timeAsk, slotNoted, getStarted, welcomeBack, dayOnly, projectAsk, emailAsk, matchAsk, TYPE_ASK,
+      target ? askQuestion(target) : null, nextQuestion ? askQuestion(nextQuestion) : null].filter((ask): ask is string => Boolean(ask));
     // Replies the code wrote itself (small home, office, rooms only, not now, the call wait) are exact: no filter touches them.
     const addressed = nudge > 0
       ? followUpReply(nudge, agent.followUpHours.length)
@@ -3201,6 +3204,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? review?.fixed ?? draft
       : oneQuestion(withoutKnownAsks(review?.fixed ?? draft, {
           askedWho: asksIfBot,
+          protect: codeAsks,
           nameKnown: Boolean(recordedName),
           metBefore: Boolean(elsewhere) || conversation.messages.some((message) => message.author === "AI"),
           agentName: workspace.agentName,
@@ -3212,7 +3216,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
                 return Boolean(value?.trim()) && !missingNow.includes(question) && question !== nextDetail && question !== bhkAgain
                   && !checkedIds.includes(question.id) && !(question.kind === "phone" && wrongNumber);
               }),
-        }), questions);
+        }), questions, codeAsks);
     // The type is already known (they said it, or confirmed it with the property): a question about the
     // type becomes the BHK question alone.
     const knownType = confirmedType ?? homeTypeName(homeSaved);
@@ -4478,22 +4482,34 @@ const TYPE_ASK = "Is it an apartment, villa or independent house?";
 /** Questions the code writes word for word (checks and confirmations). They are never trimmed or reworded. */
 const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends|is that [^?]+ (?:on|in|at)|we have already done|welcome back|the first step is|what time suits you|is our weekly off|our team will call you(?: on \+?\d+)? to confirm it)\b/i;
 
+const plainKey = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/** True for a sentence that is part of a question the code itself wrote: filters never remove those. */
+function protectedBy(protect: string[] = []): (part: string) => boolean {
+  const keys = protect.filter(Boolean).map(plainKey).filter((key) => key.length >= 8);
+  return (part: string) => {
+    const key = plainKey(part);
+    return key.length >= 8 && keys.some((whole) => whole.includes(key));
+  };
+}
+
 /**
  * Code, not the model, decides what is already known: a name we have is never asked again, and someone
  * Varun has already chatted with (here or on another channel) is never introduced to him again.
  */
 export function withoutKnownAsks<T extends string | null | undefined>(
   text: T,
-  known: { nameKnown: boolean; metBefore: boolean; agentName?: string | null; collected?: LeadQuestion[]; askedWho?: boolean },
+  known: { nameKnown: boolean; metBefore: boolean; agentName?: string | null; collected?: LeadQuestion[]; askedWho?: boolean; protect?: string[] },
 ): T {
   if (!text) return text;
+  const isProtected = protectedBy(known.protect);
   const agent = (known.agentName ?? "Varun").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const intro = new RegExp(`\\b(?:this is|i am|i'm|im|myself|my name is)\\s+${agent}\\b|\\b${agent}\\b[^.?!]*\\b(?:assistant|from the)\\b`, "i");
   // Their own name only: "the property name" or "the builder's name" are other questions.
   const theirName = /\b(?:your|ur|aapka|unga|ungal)\s+(?:good\s+|full\s+)?(?:name|naam|peru)\b|\bwhat (?:should|can|shall) (?:i|we) call you\b|\bwho (?:am i|are we) (?:speaking|chatting|talking) (?:with|to)\b|\bam i chatting with\b|\bshall i note your name\b/i;
   // Any other detail already collected (place, home, possession, number, email…) is not asked again either.
   const others = (known.collected ?? []).filter((question) => question.kind !== "name");
-  const askedAgain = (part: string) => isQuestionSentence(part) && !EXACT_ASK.test(part)
+  const askedAgain = (part: string) => isQuestionSentence(part) && !EXACT_ASK.test(part) && !isProtected(part)
     && ((known.nameKnown && theirName.test(part)) || others.some((question) => questionAsked(question, part)));
   // "Are you a bot?" gets an honest "Yes, I am Varun, the AI assistant", even from someone met before.
   const keep = (part: string) => !askedAgain(part) && !(known.metBefore && !known.askedWho && intro.test(part));
@@ -4517,14 +4533,16 @@ export function beforeQuestion(text: string, line: string): string {
  * One question per reply, like a person texting. When the draft asks two things, only the last question
  * stays: that is the detail the system wants next. The statements around it are kept.
  */
-export function oneQuestion<T extends string | null | undefined>(text: T, questions: LeadQuestion[] = []): T {
+export function oneQuestion<T extends string | null | undefined>(text: T, questions: LeadQuestion[] = [], protect: string[] = []): T {
   if (!text) return text;
+  const isProtected = protectedBy(protect);
   const lines = text.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).map((part) => part.trim()).filter(Boolean));
   const asks = lines.flat().filter((part) => isQuestionSentence(part));
   if (asks.length < 2) return text;
   // "Which area is it in? And what is the property name?" is one detail asked in two sentences: both stay.
   const detailOf = (part: string) => questions.find((question) => questionAsked(question, part.includes("?") ? part : `${part}?`))?.id ?? null;
-  const last = asks[asks.length - 1]!;
+  // A question the code wrote itself is the one that stays.
+  const last = [...asks].reverse().find((part) => isProtected(part)) ?? asks[asks.length - 1]!;
   const lastDetail = detailOf(last);
   const keep = new Set([last]);
   // "…? And what is the property name?" continues the question before it.

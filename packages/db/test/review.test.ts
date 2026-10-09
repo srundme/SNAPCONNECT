@@ -31,6 +31,19 @@ describe("second check", () => {
     expect(result).toBeNull();
   });
 
+  it("never removes a question the code wrote itself", () => {
+    const home = { id: "home", kind: "text" as const, label: "What kind of home is it: apartment, villa or independent house, and how many BHK?", required: true, zohoField: null };
+    const known = { nameKnown: true, metBefore: true, agentName: "Varun", collected: [home] };
+    const typeAsk = "Is it an apartment, villa or independent house?";
+    expect(withoutKnownAsks(`Got it. ${typeAsk}`, { ...known, protect: [typeAsk] })).toBe(`Got it. ${typeAsk}`);
+    const sizeAsk = "Adarsh Palm Retreat mostly has 2 and 3 BHK homes, is yours a 5 BHK?";
+    expect(withoutKnownAsks(`Noted. ${sizeAsk}`, { ...known, protect: [sizeAsk] })).toBe(`Noted. ${sizeAsk}`);
+    // Without the protection the same re-ask is removed.
+    expect(withoutKnownAsks(`Got it. ${typeAsk}`, known)).toBe("Got it.");
+    // With two questions, the code's own question is the one kept.
+    expect(oneQuestion(`${typeAsk} When do you get possession?`, [], [typeAsk])).toBe(typeAsk);
+  });
+
   it("keeps only one question per reply, the last one", () => {
     expect(oneQuestion("Got it a 3BHK\nWhat kind of interiors are you looking for? When do you get possession, or is the home already ready?"))
       .toBe("Got it a 3BHK\nWhen do you get possession, or is the home already ready?");
