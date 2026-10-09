@@ -9,7 +9,6 @@ import {
   emailProblem,
   homeTypeName,
   impossibleBhk,
-  materialLine,
   parseCompletedProjects,
   parsePhone,
   pastTimeToday,
@@ -155,8 +154,6 @@ export function checksOnLatest(input: { latest: string; now: Date; agent: AgentS
     const asked = requestedTime(input.latest, input.now, input.agent.workingHours);
     if (asked) facts.push(asked.inside ? `Time check: ${asked.clock} ${asked.day} is inside working hours.` : `Time check: ${asked.clock} ${asked.day} does not work: ${asked.why}.`);
   }
-  const material = materialLine(input.latest, input.agent.materials, input.agent.warranty);
-  if (material) facts.push(`Materials and warranty facts for their question: ${material}`);
   return facts;
 }
 
