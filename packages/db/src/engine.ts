@@ -142,6 +142,7 @@ import {
   dropUnaskedPrice,
   dropTimelinePromise,
   openDays,
+  openHours,
   dropProcessTalk,
   dropAskReason,
   asksTimeline,
@@ -2909,7 +2910,14 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? validated.reply.split(/(?<=[.!?])\s+|\n+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()
       : "";
     const echoesWrongNumber = Boolean(wrongNumber && validated.reply && validated.reply.replace(/\D/g, "").includes(wrongNumber.replace(/\D/g, "")));
-    const passedReply = pastTime && !languageSample ? pastTimeReply(freshText, runtime.now()) : null;
+    // Late in the day "a later time today" is no option: offer tomorrow instead.
+    const closeToday = openHours(agent.workingHours)?.close ?? null;
+    const istClock = new Date(runtime.now().getTime() + 330 * 60_000);
+    const nearClose = closeToday !== null && istClock.getUTCHours() * 60 + istClock.getUTCMinutes() >= closeToday - 60;
+    const passedBase = pastTime && !languageSample ? pastTimeReply(freshText, runtime.now()) : null;
+    const passedReply = passedBase && nearClose
+      ? passedBase.replace(/would a later time today or another day work for (?:u|you)\?/i, "We close soon today, so would tomorrow work? What time tomorrow suits you?")
+      : passedBase;
     const hoursReply = askedTime && !languageSample && validated.reply ? requestedTimeReply(askedTime, validated.reply) : null;
     const composed = passedReply && !/\b(passed|already|over|gone|later|another)\b/i.test(validated.reply ?? "")
       ? passedReply
@@ -3147,8 +3155,15 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : dayWord ? dayWord.charAt(0).toUpperCase() + dayWord.slice(1) : null;
     const openSet = openDays(agent.workingHours);
     const hoursText = agent.workingHours.match(/\d{1,2}(?::\d{2})?\s*(?:am|pm)\s*(?:to|-|–)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)/i)?.[0] ?? "10 AM to 7 PM";
-    const dayOnly = dayWord && (agreedConsultation || proceeding) && !prospectBodies.some((body) => requestedTime(body, runtime.now(), agent.workingHours)) && Number(payload.followUp ?? 0) === 0
-      ? openSet && dayName && !openSet.has(dayName)
+    // "Today at 10 am" names a time (maybe one already gone): that is the time check's job, not this one.
+    const namesClock = /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}\s*o'?\s*clock\b/i.test(freshText);
+    const hoursToday = openHours(agent.workingHours);
+    const istNow = new Date(runtime.now().getTime() + 330 * 60_000);
+    const lateToday = dayWord === "today" && hoursToday !== null && istNow.getUTCHours() * 60 + istNow.getUTCMinutes() >= hoursToday.close - 60;
+    const dayOnly = dayWord && !namesClock && (agreedConsultation || proceeding) && !prospectBodies.some((body) => requestedTime(body, runtime.now(), agent.workingHours)) && Number(payload.followUp ?? 0) === 0
+      ? lateToday
+        ? `We close soon today, so tomorrow would be better. What time tomorrow suits you, between ${hoursText}?`
+        : openSet && dayName && !openSet.has(dayName)
         ? `${dayName} is our weekly off. Which other day and time suits you? We are open ${hoursText}.`
         : `${dayWord === "today" || dayWord === "tomorrow" ? dayWord.charAt(0).toUpperCase() + dayWord.slice(1) : dayName} works. What time suits you, between ${hoursText}?`
       : null;
@@ -4484,7 +4499,7 @@ const VISIT_OFFER = "Shall I book a free consultation for you, or would you like
 const TYPE_ASK = "Is it an apartment, villa or independent house?";
 
 /** Questions the code writes word for word (checks and confirmations). They are never trimmed or reworded. */
-const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|that one doesn't look right either|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends|is that [^?]+ (?:on|in|at)|we have already done|welcome back|the first step is|what time suits you|is our weekly off|our team will call you(?: on \+?\d+)? to confirm it)\b/i;
+const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|that one doesn't look right either|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends|is that [^?]+ (?:on|in|at)|we have already done|welcome back|the first step is|what time suits you|what time tomorrow suits you|is our weekly off|our team will call you(?: on \+?\d+)? to confirm it)\b/i;
 
 const plainKey = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
