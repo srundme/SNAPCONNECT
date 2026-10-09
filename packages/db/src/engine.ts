@@ -3194,8 +3194,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const review = nudge === 0 && draft && validated.reply && !cannedReply
       ? await reviewReply(runtime, { customer: freshText, draft, earlier: earlierReplies.slice(-2), askingPrice: askingPrice(freshText), language: languageSample ? languageName(languageSample) : "English" })
       : null;
+    // Replies the code wrote itself (small home, office, rooms only, not now, the call wait) are exact: no filter touches them.
     const addressed = nudge > 0
       ? followUpReply(nudge, agent.followUpHours.length)
+      : waited || smallHome || commercial || roomsOnly || pausing
+      ? review?.fixed ?? draft
       : oneQuestion(withoutKnownAsks(review?.fixed ?? draft, {
           askedWho: asksIfBot,
           nameKnown: Boolean(recordedName),
