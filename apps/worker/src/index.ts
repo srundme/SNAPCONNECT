@@ -3,7 +3,7 @@ import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { loadConfig, loadDotEnv } from "@snapsocial/config";
 import { connectionSender, getPrisma, processAvailableJobs, recoverStaleJobs, sendDailySummaries, simulationRuntime } from "@snapsocial/db";
-import { bravePlaceLookup, cartesiaSpeaker, fixtureLlm, ollamaLlm, sarvamDocumentReader, sarvamLlm, sarvamTranscriber, sarvamVision, whatsappMediaUrl } from "@snapsocial/integrations";
+import { bravePlaceLookup, cartesiaSpeaker, claudeClient, claudeVision, fixtureLlm, ollamaLlm, sarvamDocumentReader, sarvamLlm, sarvamTranscriber, sarvamVision, whatsappMediaUrl } from "@snapsocial/integrations";
 
 loadDotEnv(process.cwd());
 
@@ -16,6 +16,9 @@ if (config.LLM_MODE === "fixture") {
 }
 const db = getPrisma();
 const credentialKey = Buffer.from(config.CREDENTIAL_ENCRYPTION_KEY, "base64");
+// Claude writes every reply and reads photos and floor plans when the key is set; Sarvam stays for voice and documents.
+const claude = config.ANTHROPIC_API_KEY ? claudeClient({ apiKey: config.ANTHROPIC_API_KEY }) : null;
+if (claude) console.log(`Claude brain on: ${claude.model}`);
 const runtime = simulationRuntime({
   llm: config.LLM_MODE === "sarvam"
     ? sarvamLlm({
@@ -38,7 +41,7 @@ const runtime = simulationRuntime({
   ...(config.SARVAM_API_KEY
     ? {
         transcribe: sarvamTranscriber({ apiKey: config.SARVAM_API_KEY }),
-        seeImage: sarvamVision({ apiKey: config.SARVAM_API_KEY }),
+        seeImage: claude ? claudeVision({ claude }) : sarvamVision({ apiKey: config.SARVAM_API_KEY }),
         readDocument: sarvamDocumentReader({ apiKey: config.SARVAM_API_KEY }),
       }
     : {}),
@@ -55,6 +58,7 @@ const runtime = simulationRuntime({
     ? bravePlaceLookup({ apiKey: config.BRAVE_SEARCH_API_KEY })
     : async () => null,
   pause: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  ...(claude ? { claude } : {}),
 });
 
 let stopping = false;

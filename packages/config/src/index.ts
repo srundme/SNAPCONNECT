@@ -55,6 +55,7 @@ export const envSchema = z.object({
   ZOHO_SCOPES: z.string().default("ZohoCRM.modules.leads.READ,ZohoCRM.modules.leads.CREATE,ZohoCRM.modules.leads.UPDATE"),
   OLLAMA_BASE_URL: z.url().default("http://127.0.0.1:11434"),
   SARVAM_API_KEY: optional,
+  ANTHROPIC_API_KEY: optional,
   CARTESIA_API_KEY: optional,
   GOOGLE_PLACES_API_KEY: optional,
   BRAVE_SEARCH_API_KEY: optional,

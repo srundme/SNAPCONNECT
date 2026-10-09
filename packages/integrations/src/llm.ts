@@ -1,6 +1,7 @@
 import { aiOutputSchema, CALLBACK_TIME_KEY, parseBudget, type AiOutput } from "@snapsocial/domain";
 import { VOICE_EMOTIONS, VOICE_OPENERS, type VoiceDirection } from "./cartesia";
 import { unzipText } from "./zip";
+import type { Claude } from "./claude";
 
 export type LlmRequest = {
   system: string;
@@ -652,6 +653,37 @@ export function sarvamVision(options: { apiKey: string; model?: string; fetchImp
     const described = (await ask(prompt ?? VISION_PROMPT, 280)).replace(/\s+/g, " ").trim().slice(0, 700);
     if (prompt || !/^a floor plan\b/i.test(described)) return described;
     const plan = parseFloorPlan(await ask(FLOOR_PLAN_PROMPT, 1200).catch(() => ""));
+    return plan ? floorPlanText(plan) : described;
+  };
+}
+
+/** The same photo and floor-plan reading as sarvamVision, with Claude looking at the image. */
+export function claudeVision(options: { claude: Claude; fetchImpl?: typeof fetch }) {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  return async (imageUrl: string, bearerToken?: string, prompt?: string): Promise<string> => {
+    const source = new URL(imageUrl);
+    if (source.protocol !== "https:" || !META_MEDIA_HOST.test(source.hostname)) {
+      throw new Error("Image URL is not a Meta media host.");
+    }
+    const download = await fetchImpl(source, {
+      ...(bearerToken ? { headers: { Authorization: `Bearer ${bearerToken}` } } : {}),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!download.ok) throw new Error(`Image download returned HTTP ${download.status}`);
+    const image = await download.arrayBuffer();
+    if (image.byteLength > 5_000_000) throw new Error("Image is too large to describe.");
+    const served = download.headers.get("content-type")?.split(";")[0] ?? "";
+    const type = /^image\/(jpeg|png|gif|webp)$/.test(served) ? served : "image/jpeg";
+    const data = Buffer.from(image).toString("base64");
+    const ask = (text: string, maxTokens: number) => options.claude.text({
+      system: "You look at one image a customer sent to a home interiors company and answer exactly what is asked.",
+      messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: type, data } }, { type: "text", text }] }],
+      maxTokens,
+      timeoutMs: 60_000,
+    });
+    const described = (await ask(prompt ?? VISION_PROMPT, 400)).replace(/\s+/g, " ").trim().slice(0, 700);
+    if (prompt || !/^a floor plan\b/i.test(described)) return described;
+    const plan = parseFloorPlan(await ask(FLOOR_PLAN_PROMPT, 1500).catch(() => ""));
     return plan ? floorPlanText(plan) : described;
   };
 }

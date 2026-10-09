@@ -35,3 +35,4 @@ export function inferenceSlotAvailable(active: number, limit: number): boolean {
   return active < limit;
 }
 export * from "./proof";
+export { VARUN_PROMPT } from "./brain/varun-prompt";

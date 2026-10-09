@@ -41,6 +41,8 @@ export type AgentSettings = {
   summaryTemplate: string;
   /** Homes the firm has done, one per line: "Adarsh Palm Retreat | Bellandur | 4 BHK villa | https://…". */
   completedProjects: string;
+  /** "live": Claude writes every reply (needs ANTHROPIC_API_KEY). "off": the older coded pipeline. */
+  brain: "live" | "off";
 };
 
 export const defaultAgentSettings: AgentSettings = {
@@ -76,6 +78,7 @@ export const defaultAgentSettings: AgentSettings = {
   summaryNumbers: "",
   summaryTemplate: "",
   completedProjects: "",
+  brain: "live",
 };
 
 const TOGGLES = [
@@ -142,6 +145,7 @@ export function parseAgentSettings(value: unknown): AgentSettings {
   if (typeof record.summaryNumbers === "string") settings.summaryNumbers = record.summaryNumbers.trim().slice(0, 2000);
   if (typeof record.summaryTemplate === "string") settings.summaryTemplate = record.summaryTemplate.trim().replace(/[^a-z0-9_]/gi, "").slice(0, 80);
   if (typeof record.completedProjects === "string") settings.completedProjects = record.completedProjects.trim().slice(0, 20000);
+  if (record.brain === "off" || record.brain === "live") settings.brain = record.brain;
   return settings;
 }
 
