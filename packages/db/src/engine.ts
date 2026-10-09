@@ -549,7 +549,7 @@ async function otherChannelLine(
   const chats = others.filter((other) => other.messages.length);
   if (!chats.length) return "";
   return [
-    "This same person also chatted with you on another channel. Treat it as one ongoing conversation and continue from where it was left: never ask again for anything they already told you there. If this is their first message here, a warm 'welcome back' fits. Do not repeat their earlier details back to them (their number, address, project or budget) unless they bring them up first, and do not quote the other chat.",
+    "This same person also chatted with you on another channel. Treat it as one ongoing conversation and continue from where it was left: never ask again for anything they already told you there, their name included. They already know you: never introduce yourself again. If this is their first message here, a warm 'welcome back' fits. Do not repeat their earlier details back to them (their number, address, project or budget) unless they bring them up first, and do not quote the other chat.",
     ...chats.map((other) => `Their ${channelLabel(other.channel)} chat, latest last:\n${other.messages.reverse().map((message) => `${message.author === "AI" ? "You" : "They"}: ${message.body.replace(/\s+/g, " ").slice(0, 200)}`).join("\n")}`),
   ].join("\n");
 }
@@ -3018,7 +3018,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : null;
     const addressed = nudge > 0
       ? followUpReply(nudge, agent.followUpHours.length)
-      : oneQuestion(review?.fixed ?? draft);
+      : oneQuestion(withoutKnownAsks(review?.fixed ?? draft, {
+          nameKnown: Boolean(recordedName),
+          metBefore: Boolean(elsewhere) || conversation.messages.some((message) => message.author === "AI"),
+          agentName: workspace.agentName,
+        }));
     const bubbleOptions = { casual: agent.casualTexting, split: agent.splitMessages, ...(keep ? { keep } : {}) };
     const freshBubbles = addressed ? humanBubbles(addressed, earlierReplies, keepCase, bubbleOptions) : [];
     // When every sentence repeats an earlier reply, a repeat still beats leaving the customer unanswered. Follow-ups can stay quiet.
@@ -4317,6 +4321,28 @@ function dropPlanMentions(text: string): string {
 // The client's close: no designers, layouts or 3D talk, just the two next steps.
 const VISIT_OFFER = "Shall I book a free consultation for you, or would you like to visit our experience centre?";
 const TYPE_ASK = "Is it an apartment, villa or independent house?";
+
+/**
+ * Code, not the model, decides what is already known: a name we have is never asked again, and someone
+ * Varun has already chatted with (here or on another channel) is never introduced to him again.
+ */
+export function withoutKnownAsks<T extends string | null | undefined>(
+  text: T,
+  known: { nameKnown: boolean; metBefore: boolean; agentName?: string | null },
+): T {
+  if (!text) return text;
+  const agent = (known.agentName ?? "Varun").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const intro = new RegExp(`\\b(?:this is|i am|i'm|im|myself|my name is)\\s+${agent}\\b|\\b${agent}\\b[^.?!]*\\b(?:assistant|from the)\\b`, "i");
+  // Their own name only: "the property name" or "the builder's name" are other questions.
+  const theirName = /\b(?:your|ur|aapka|unga|ungal)\s+(?:good\s+|full\s+)?(?:name|naam|peru)\b|\bwhat (?:should|can|shall) (?:i|we) call you\b|\bwho (?:am i|are we) (?:speaking|chatting|talking) (?:with|to)\b|\bam i chatting with\b|\bshall i note your name\b/i;
+  const keep = (part: string) => !(known.nameKnown && isQuestionSentence(part) && theirName.test(part)) && !(known.metBefore && intro.test(part));
+  const out = text
+    .split(/\n+/)
+    .map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).map((part) => part.trim()).filter(Boolean).filter(keep).join(" ").replace(/^\.+\s*/, ""))
+    .filter(Boolean)
+    .join("\n");
+  return (out || "How can we help you today?") as T;
+}
 
 /**
  * One question per reply, like a person texting. When the draft asks two things, only the last question

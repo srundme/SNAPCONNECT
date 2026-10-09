@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { fixtureLlm } from "@snapsocial/integrations";
-import { oneQuestion, reviewReply, simulationRuntime } from "../src/index";
+import { oneQuestion, reviewReply, withoutKnownAsks, simulationRuntime } from "../src/index";
 
 describe("second check", () => {
+  it("never asks a known name or re-introduces Varun to someone he has met", () => {
+    const known = { nameKnown: true, metBefore: true, agentName: "Varun" };
+    expect(withoutKnownAsks("Hi this is Varun an automated assistant for The KariGhars\nWelcome back Karthikeyan sir. Could you share your name?", known))
+      .toBe("Welcome back Karthikeyan sir.");
+    expect(withoutKnownAsks("Could you share your name?", known)).toBe("How can we help you today?");
+    expect(withoutKnownAsks("Noted sir. What is the property name, and which area?", known)).toBe("Noted sir. What is the property name, and which area?");
+    expect(withoutKnownAsks("Hi, I am Varun from The KariGhars. May I know your name?", { nameKnown: false, metBefore: false, agentName: "Varun" }))
+      .toBe("Hi, I am Varun from The KariGhars. May I know your name?");
+  });
+
   it("keeps only one question per reply, the last one", () => {
     expect(oneQuestion("Got it a 3BHK\nWhat kind of interiors are you looking for? When do you get possession, or is the home already ready?"))
       .toBe("Got it a 3BHK\nWhen do you get possession, or is the home already ready?");
