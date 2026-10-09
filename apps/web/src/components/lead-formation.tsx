@@ -47,6 +47,9 @@ export type AgentFormSettings = {
   hotBudgetLakhs: number;
   zohoRatingField: string;
   followUpHours: number[];
+  alertNumbers: string;
+  alertTemplate: string;
+  alertTemplateLanguage: string;
   toggles: Record<string, boolean>;
 };
 
@@ -258,6 +261,26 @@ export function AgentForm({
         </Section>
         <Section title="5. Follow-ups" detail="If the customer goes quiet, Varun checks in. Each box is one check-in.">
           <FollowUps on={settings.toggles.followUps ?? false} hours={settings.followUpHours} />
+        </Section>
+        <Section title="Team alerts" detail="Who hears about hot leads, meetings, slot requests, people asking for a person, and complaints.">
+          <div className="grid gap-4 p-5 sm:grid-cols-2">
+            <label className="sm:col-span-2">
+              Who gets alerts
+              <textarea name="alertNumbers" rows={4} maxLength={2000} defaultValue={settings.alertNumbers} spellCheck={false} placeholder={"Gopi: +91 98450 11111\nRavi: +91 99000 22222"} />
+              <span className="text-[12px] text-[var(--color-muted)]">One person per line: name, a colon, then their WhatsApp number.</span>
+            </label>
+            <label>
+              Alert template name
+              <input name="alertTemplate" maxLength={80} defaultValue={settings.alertTemplate} spellCheck={false} pattern="[A-Za-z0-9_]*" title="Letters, digits and underscores only" placeholder="team_alert" />
+            </label>
+            <label>
+              Template language
+              <input name="alertTemplateLanguage" maxLength={12} defaultValue={settings.alertTemplateLanguage || "en"} spellCheck={false} placeholder="en" />
+            </label>
+            <p className="rounded-xl bg-[#fbf7ee] px-3 py-2.5 text-[12px] leading-5 text-[var(--color-accent-ink)] sm:col-span-2">
+              Alerts appear in the console instantly. On WhatsApp they arrive only if that person messaged the business number in the last 24 hours, or always once Meta approves an alert template (one body variable) and you enter its name here. The person who has taken a chat gets its alerts; otherwise everyone listed.
+            </p>
+          </div>
         </Section>
         <Section title="6. Extra notes" detail="Anything else for every chat. A post can add its own notes under Replies.">
           <div className="p-5">

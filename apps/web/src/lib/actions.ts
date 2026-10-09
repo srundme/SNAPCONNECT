@@ -334,6 +334,9 @@ export async function saveAiSettings(formData: FormData) {
   settings.materials = saved.materials;
   settings.warranty = saved.warranty;
   settings.projectAliases = formData.has("projectAliases") ? String(formData.get("projectAliases") ?? "").replace(/\r\n/g, "\n") : saved.projectAliases;
+  settings.alertNumbers = formData.has("alertNumbers") ? String(formData.get("alertNumbers") ?? "").replace(/\r\n/g, "\n") : saved.alertNumbers;
+  settings.alertTemplate = formData.has("alertTemplate") ? String(formData.get("alertTemplate") ?? "") : saved.alertTemplate;
+  settings.alertTemplateLanguage = formData.has("alertTemplateLanguage") ? String(formData.get("alertTemplateLanguage") ?? "") : saved.alertTemplateLanguage;
   for (const key of agentToggles) settings[key] = formData.get(`toggle:${key}`) === "on";
   for (const [key, limit] of Object.entries(agentTextLimits)) settings[key] = String(formData.get(key) ?? "").trim().slice(0, limit);
   settings.followUpHours = parseFollowUpHours(formData.get("followUpHours"));
@@ -695,4 +698,48 @@ export async function separatePerson(formData: FormData) {
   await unlinkContact(db, workspace.id, contact.id, actor.userId);
   revalidatePath("/inbox");
   revalidatePath("/leads");
+}
+
+/** Marks every unread team alert in the workspace as read by this person (the bell's "Mark all read"). */
+export async function markAlertsRead(): Promise<{ ok: boolean; count: number }> {
+  const { actor, workspace } = await requireWorkspace();
+  if (!workspace || !can(actor, "inbox.reply", workspace.id)) return { ok: false, count: 0 };
+  const result = await getPrisma().teamAlert.updateMany({
+    where: { workspaceId: workspace.id, readAt: null },
+    data: { readAt: new Date(), readBy: actor.userId },
+  });
+  revalidatePath("/inbox");
+  return { ok: true, count: result.count };
+}
+
+const REPLY_FEEDBACK_REASONS = new Set([
+  "Wrong or made-up fact",
+  "Didn't answer the question",
+  "Repeated itself",
+  "Off-topic or irrelevant",
+  "Wrong tone or language",
+  "Asked something already answered",
+  "Other",
+]);
+
+/** Staff flag a Varun reply that went wrong: one flag per person per reply, the latest one counts. */
+export async function submitReplyFeedback(formData: FormData) {
+  const messageId = String(formData.get("messageId") ?? "");
+  const reason = String(formData.get("reason") ?? "").trim();
+  const note = String(formData.get("note") ?? "").trim().slice(0, 300) || null;
+  const { actor, workspace } = await requireWorkspace();
+  if (!workspace || !can(actor, "inbox.reply", workspace.id)) redirect("/overview?denied=1");
+  if (!messageId || !REPLY_FEEDBACK_REASONS.has(reason)) return;
+  const db = getPrisma();
+  const message = await db.message.findFirst({
+    where: { id: messageId, author: "AI", conversation: { workspaceId: workspace.id } },
+    select: { id: true, conversationId: true },
+  });
+  if (!message) redirect("/overview?denied=1");
+  await db.replyFeedback.upsert({
+    where: { messageId_userId: { messageId: message.id, userId: actor.userId } },
+    create: { workspaceId: workspace.id, conversationId: message.conversationId, messageId: message.id, userId: actor.userId, reason, note },
+    update: { reason, note, workspaceId: workspace.id, conversationId: message.conversationId },
+  });
+  revalidatePath("/inbox");
 }

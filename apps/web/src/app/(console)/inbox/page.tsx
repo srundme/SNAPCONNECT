@@ -7,6 +7,7 @@ import { requireWorkspace } from "@/lib/session";
 import { LiveInbox } from "@/components/live-inbox";
 import { ChatPane, type ChatMessage } from "@/components/inbox/chat-pane";
 import { ConversationList, type ListRow } from "@/components/inbox/conversation-list";
+import { buildBrief } from "@/components/inbox/brief";
 import { LeadPanel, type PersonChannel, type PossibleMatch } from "@/components/inbox/lead-panel";
 import { customerHandle, customerName, isTestContact, ownership, readAnswers, type Channel } from "@/components/inbox/labels";
 import { readInboxState } from "@/components/inbox/params";
@@ -180,6 +181,30 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     manual: true,
   }) : null;
 
+  const questions = parseLeadQuestions(workspace.leadQuestions);
+  const selectedOwner = selectedBase ? ownership(selectedBase, names, me, lead?.handoffReason ?? null) : null;
+  const brief = selectedBase ? buildBrief({
+    messages,
+    lead: lead ? { rating: lead.rating, ratingReason: lead.ratingReason, handoffReason: lead.handoffReason, answers: readAnswers(lead.answers) } : null,
+    questions,
+    workingHours: parseAgentSettings(workspace.agentSettings).workingHours,
+    handedAutomatically: selectedOwner?.kind === "handed",
+  }) : null;
+  // Team flags on Varun's replies in the open chat, in one query: the latest reason shows, and my own fills the form.
+  const aiMessageIds = messages.filter((message) => message.author === "AI").map((message) => message.id);
+  const feedbackRows = aiMessageIds.length
+    ? await db.replyFeedback.findMany({
+      where: { workspaceId: workspace.id, messageId: { in: aiMessageIds } },
+      orderBy: { createdAt: "asc" },
+      select: { messageId: true, userId: true, reason: true, note: true },
+    })
+    : [];
+  const feedback: Record<string, { reason: string; mine: { reason: string; note: string | null } | null }> = {};
+  for (const row of feedbackRows) {
+    const mine = row.userId === me ? { reason: row.reason, note: row.note } : feedback[row.messageId]?.mine ?? null;
+    feedback[row.messageId] = { reason: row.reason, mine };
+  }
+
   const chatMessages: ChatMessage[] = messages.map((message) => ({
     id: message.id,
     author: message.author,
@@ -223,13 +248,15 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
               name={customerName(selectedBase.contact)}
               handle={customerHandle(selectedBase.channel, selectedBase.contact, lead?.phoneE164 ?? null)}
               rating={lead?.rating ?? null}
-              owner={ownership(selectedBase, names, me, lead?.handoffReason ?? null)}
+              owner={selectedOwner ?? ownership(selectedBase, names, me, lead?.handoffReason ?? null)}
               alsoOn={alsoOn(selectedBase.contact, selectedBase.channel)}
               messages={chatMessages}
               state={state}
               canReply={canReply}
               replyAllowed={Boolean(eligibility?.allowed)}
               replyReason={eligibility?.reason ?? (connection ? null : "The channel for this chat is missing.")}
+              feedback={feedback}
+              brief={selectedBase.owner === "HUMAN" ? brief : null}
             />
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center px-8 py-16 text-center">
@@ -253,7 +280,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
                 email: lead.email,
                 answers: readAnswers(lead.answers),
               } : null}
-              questions={parseLeadQuestions(workspace.leadQuestions)}
+              questions={questions}
               chosenName={selectedBase.contact.chosenName}
               channel={selectedBase.channel}
               memory={selectedBase.contact.memory}
@@ -262,6 +289,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
               possibleMatches={possibleMatches}
               canDecide={canReply}
               project={project}
+              brief={brief}
             />
           ) : (
             <p className="p-5 text-[13px] text-[var(--color-muted)]">Lead details appear here when a chat is open.</p>

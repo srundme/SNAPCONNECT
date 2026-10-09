@@ -5,6 +5,7 @@ import type { LeadQuestion } from "@snapsocial/domain";
 import { ChannelMark, StatusLabel } from "@/components/ui";
 import { linkPeopleFromMatch, rejectPeopleMatch, separatePerson } from "@/lib/actions";
 import { fullIST, whenIST } from "@/lib/format";
+import { Brief, type TakeoverBrief } from "./brief";
 import { RatingChip } from "./chips";
 import { channelName, crmWording, memoryParagraphs, shortQuestionLabel, type Channel } from "./labels";
 
@@ -83,8 +84,11 @@ export function LeadPanel({
   possibleMatches = [],
   canDecide = false,
   project = null,
+  brief = null,
 }: {
   project?: ProjectCard | null;
+  /** Takeover brief shown first, worked out from the chat. */
+  brief?: TakeoverBrief | null;
   lead: PanelLead | null;
   questions: LeadQuestion[];
   chosenName: string | null;
@@ -113,6 +117,8 @@ export function LeadPanel({
 
   return (
     <div className="space-y-6 p-4 text-sm sm:p-5">
+      {brief ? <Brief brief={brief} /> : null}
+
       <section>
         <div className="flex items-center justify-between gap-2">
           <SectionTitle>Lead</SectionTitle>

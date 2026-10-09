@@ -8,6 +8,7 @@ import {
   BarChart3,
   Bot,
   ChevronDown,
+  Flag,
   Inbox,
   LayoutDashboard,
   LogOut,
@@ -24,6 +25,7 @@ import {
 } from "lucide-react";
 import { clsx } from "clsx";
 import { logout } from "@/lib/actions";
+import { AlertBell, AlertsProvider } from "@/components/alerts/alert-bell";
 
 type Role = "SUPER_ADMIN" | "ADMIN" | "AGENT" | "VIEWER" | null;
 type Item = { href: string; label: string; icon: typeof Inbox; roles?: Role[] };
@@ -49,6 +51,7 @@ const system: Item[] = [
   { href: "/compliance", label: "Compliance", icon: ShieldCheck },
   { href: "/audit", label: "Audit", icon: ScrollText },
   { href: "/health", label: "Health", icon: Activity },
+  { href: "/feedback", label: "Reply fixes", icon: Flag, roles: ADMINS },
 ];
 
 const titles: Record<string, string> = {
@@ -109,7 +112,7 @@ function NavList({ role, showPlatform, onNavigate }: { role: Role; showPlatform:
             <ChevronDown size={15} aria-hidden className={clsx("transition-transform", (systemOpen || inSystem) && "rotate-180")} />
           </button>
           <div id="nav-system" hidden={!(systemOpen || inSystem)} className="mt-0.5 grid gap-0.5 pl-3">
-            {system.map((item) => (
+            {system.filter((item) => allowed(item, role)).map((item) => (
               <NavLink key={item.href} href={item.href} label={item.label} icon={item.icon} active={isActive(pathname, item.href)} onNavigate={onNavigate} />
             ))}
           </div>
@@ -222,6 +225,7 @@ export function ConsoleShell({
   }, [open, close]);
 
   return (
+    <AlertsProvider enabled={role !== null && role !== "VIEWER"}>
     <div className="min-h-dvh lg:grid lg:grid-cols-[252px_minmax(0,1fr)]">
       <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-white/10 bg-[var(--color-shell)] px-4 text-white lg:hidden">
         <button
@@ -241,6 +245,7 @@ export function ConsoleShell({
         <span className="h-5 w-px bg-white/15" aria-hidden />
         <p className="min-w-0 flex-1 truncate font-[family-name:var(--font-display)] text-[20px] font-medium leading-none tracking-tight">{title}</p>
         {practice ? <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white/80">Practice</span> : null}
+        <AlertBell placement="topbar" className="-mr-1.5" />
       </header>
 
       <div
@@ -266,6 +271,7 @@ export function ConsoleShell({
       >
         <div className="flex items-start justify-between px-3 pb-3 pt-4">
           {brand}
+          <AlertBell placement="sidebar" className="max-lg:hidden" />
           <button
             type="button"
             data-drawer-close
@@ -304,6 +310,7 @@ export function ConsoleShell({
         <div className="px-4 py-5 sm:px-6 lg:px-8 lg:py-7">{children}</div>
       </main>
     </div>
+    </AlertsProvider>
   );
 }
 

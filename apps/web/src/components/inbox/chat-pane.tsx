@@ -5,9 +5,11 @@ import { ChannelMark } from "@/components/ui";
 import { ChatThread } from "@/components/live-inbox";
 import { claimConversation, releaseConversation, sendStaffReply } from "@/lib/actions";
 import { whenIST } from "@/lib/format";
+import { Brief, type TakeoverBrief } from "./brief";
 import { OwnerLine, RatingChip } from "./chips";
 import { channelName, dayLabel, isNoisySystemNote, istDayKey, type Channel, type Ownership } from "./labels";
 import { inboxHref, type InboxState } from "./params";
+import { ReplyFeedback } from "./reply-feedback";
 
 export type ChatMessage = {
   id: string;
@@ -32,6 +34,8 @@ export function ChatPane({
   canReply,
   replyAllowed,
   replyReason,
+  feedback = {},
+  brief = null,
 }: {
   conversationId: string;
   channel: Channel;
@@ -46,6 +50,10 @@ export function ChatPane({
   canReply: boolean;
   replyAllowed: boolean;
   replyReason: string | null;
+  /** Team flags on Varun replies in this chat, by message id: the latest reason, and my own flag. */
+  feedback?: Record<string, { reason: string; mine: { reason: string; note: string | null } | null }>;
+  /** Shown above the thread when a person has the chat. */
+  brief?: TakeoverBrief | null;
 }) {
   const noisy = messages.filter((message) => message.author === "SYSTEM" && isNoisySystemNote(message.body)).length;
   const shown = state.system ? messages : messages.filter((message) => !(message.author === "SYSTEM" && isNoisySystemNote(message.body)));
@@ -103,6 +111,12 @@ export function ChatPane({
         </p>
       </header>
 
+      {brief ? (
+        <div className="max-h-[38%] shrink-0 overflow-y-auto border-b border-[var(--color-line)] bg-white px-4 py-2.5 sm:px-5">
+          <Brief brief={brief} compact />
+        </div>
+      ) : null}
+
       <ChatThread key={conversationId} count={shown.length} className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-[#fcfbf9] px-4 py-4 sm:px-6">
         {shown.length === 0 ? (
           <li className="py-16 text-center text-[13px] text-[var(--color-muted)]">No messages yet. The chat starts when the customer writes in.</li>
@@ -129,8 +143,9 @@ export function ChatPane({
           }
           const inbound = message.author === "PROSPECT";
           const label = inbound ? name : message.author === "AI" ? "Varun" : message.staffName ?? "Team";
+          const flagged = message.author === "AI" ? feedback[message.id] ?? null : null;
           return (
-            <li key={message.id}>
+            <li key={message.id} className="group/msg">
               {separator}
               <div className={clsx("flex flex-col", inbound ? "items-start" : "items-end")}>
                 <p className={clsx("mb-1 flex items-center gap-1.5 px-1 text-[11.5px]", inbound ? "text-[var(--color-muted)]" : "text-[var(--color-accent-ink)]")}>
@@ -153,6 +168,16 @@ export function ChatPane({
                 </p>
                 {message.voiceClipId ? (
                   <audio controls preload="none" className="mt-1.5 h-8 w-56 max-w-full" src={`/api/voice/${message.voiceClipId}`} />
+                ) : null}
+                {flagged ? (
+                  <p className="mt-1 max-w-[85%] px-1 text-right text-[11px] text-[var(--color-muted)] sm:max-w-[75%]">
+                    Flagged: <span className="font-medium text-[#8a4b0f]">{flagged.reason}</span>
+                  </p>
+                ) : null}
+                {message.author === "AI" && canReply ? (
+                  <div className="mt-0.5 flex w-full justify-end transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover/msg:opacity-100 pointer-fine:focus-within:opacity-100 pointer-fine:has-[details[open]]:opacity-100">
+                    <ReplyFeedback messageId={message.id} current={flagged?.mine ?? null} />
+                  </div>
                 ) : null}
               </div>
             </li>
