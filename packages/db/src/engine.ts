@@ -2113,7 +2113,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       const said = ` ${plainText(body)} `;
       return words.some((_, index) => index + 4 <= words.length && said.includes(` ${words.slice(index, index + 4).join(" ")} `));
     };
-    const askedIn = (question: LeadQuestion, body: string) => questionAsked(question, body) || plainText(body).includes(plainText(askQuestion(question)));
+    // A check like "is yours a villa there or a flat?" confirms the type; it is not an ask for the BHK count.
+    const typeCheck = /\bis yours an? [a-z ]+ there or an? (?:flat|villa)\b|\bmostly has\b[^?]*\bis yours\b|\bis it an apartment, villa or independent house\b/i;
+    const askedIn = (question: LeadQuestion, body: string) => !typeCheck.test(body) && (questionAsked(question, body) || plainText(body).includes(plainText(askQuestion(question))));
     const timesAsked = (question: LeadQuestion) => spoken.filter((message) => message.author === "AI" && askedIn(question, message.body)).length;
     const justAnsweredPart = (question: LeadQuestion) => Boolean(homeKind && /\bbhk\b/i.test(question.label) && freshText.toLowerCase().includes(homeKind));
     const askLimit = (_question: LeadQuestion) => 2;
