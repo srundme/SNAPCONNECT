@@ -3205,6 +3205,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : oneQuestion(withoutKnownAsks(review?.fixed ?? draft, {
           askedWho: asksIfBot,
           protect: codeAsks,
+          fallback: nextQuestion ? askQuestion(nextQuestion) : complete?.ready ? VISIT_OFFER : null,
           nameKnown: Boolean(recordedName),
           metBefore: Boolean(elsewhere) || conversation.messages.some((message) => message.author === "AI"),
           agentName: workspace.agentName,
@@ -4499,7 +4500,7 @@ function protectedBy(protect: string[] = []): (part: string) => boolean {
  */
 export function withoutKnownAsks<T extends string | null | undefined>(
   text: T,
-  known: { nameKnown: boolean; metBefore: boolean; agentName?: string | null; collected?: LeadQuestion[]; askedWho?: boolean; protect?: string[] },
+  known: { nameKnown: boolean; metBefore: boolean; agentName?: string | null; collected?: LeadQuestion[]; askedWho?: boolean; protect?: string[]; fallback?: string | null },
 ): T {
   if (!text) return text;
   const isProtected = protectedBy(known.protect);
@@ -4518,7 +4519,8 @@ export function withoutKnownAsks<T extends string | null | undefined>(
     .map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).map((part) => part.trim()).filter(Boolean).filter(keep).join(" ").replace(/^\.+\s*/, ""))
     .filter(Boolean)
     .join("\n");
-  return (out || "How can we help you today?") as T;
+  // Nothing left: ask the next real step, never a generic line in the middle of a chat.
+  return (out || known.fallback || "How can we help you today?") as T;
 }
 
 /** Puts an answer line after what was said and before the question, so they get the answer first. */

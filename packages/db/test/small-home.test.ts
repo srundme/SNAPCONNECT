@@ -88,6 +88,10 @@ describeDb("Riteesh small home, 9 Oct demo", () => {
     const two = await say("I have 2 bhk property, with 10 lakhs budget", "Got it. Which area is your home in, and what is the property name?");
     expect(two).not.toMatch(/won't be able|3 BHK homes and above|just to confirm/i);
     expect(two).toMatch(/property name/i);
+    // Riteesh, 6:21 PM: a re-ask the filter removes is replaced by the next real question, never "How can we help you today?".
+    const vague = await say("Apr villa bengaluru", "Which property is Apr villa, and in which area of Bengaluru?");
+    expect(vague).not.toMatch(/how can we help you today/i);
+    expect(vague).toMatch(/\?/);
     // A 1 BHK still gets the small-home check, never "How can we help you today?".
     const one = await say("Sorry, it is actually a 1 bhk", "Got it. How can we help you today?");
     expect(one).toMatch(/1 BHK/i);
