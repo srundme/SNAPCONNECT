@@ -141,6 +141,7 @@ import {
   dropUnaskedCallback,
   dropUnaskedPrice,
   dropTimelinePromise,
+  dropProcessTalk,
   asksTimeline,
   TIMELINE_LINE,
   askingPrice,
@@ -1720,6 +1721,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     let blockedBhk: number | null = null;
     // A question to confirm what they said against the project lookup, asked once.
     let projectAsk: string | null = null;
+    // A home we have already completed in their property, said once in code so it is never skipped.
+    let proofLine: string | null = null;
     // A question about the email they gave: a typo, a keyboard-mash, or one that cannot be real.
     let emailAsk: string | null = null;
     if (questions.length) {
@@ -1798,6 +1801,15 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           projectRejected = true;
           if (!/\d|[a-z]{4,}\s+[a-z]{4,}/i.test(freshText.replace(/^(?:no|nope|nah|nahi|illa|not|wrong)\b[\s,.]*/i, ""))) delete absorbed.answers[placeQuestionEarly.id];
           memoryLines.push("They said it is not the project you suggested. Do not suggest it again. If they have not given the name another way, ask for the full property name in a few words.");
+        }
+      }
+      // "Is that Adarsh Palm Retreat on Sarjapur Road?": a yes keeps the property with its area, a no asks the area.
+      const offeredSpot = lastAsk.match(/\bis that (.+?) (?:on|in|at) ([^?]+)\?/i);
+      if (offeredSpot && placeQuestionEarly) {
+        if (/^(?:yes|yeah|ya|yep|yup|haan|ha|aama|ji|correct|right|sure|exactly|that one|same)\b/i.test(freshText.trim()) && !/\b(?:no|not|wrong)\b/i.test(freshText)) {
+          absorbed.answers[placeQuestionEarly.id] = `${offeredSpot[1]!.trim()}, ${offeredSpot[2]!.trim()}`;
+        } else if (/^(?:no|nope|nah|nahi|illa|not|wrong)\b/i.test(freshText.trim())) {
+          memoryLines.push(`They said their home is not in ${offeredSpot[2]!.trim()}. Do not suggest that area again. If they have not said where it is, ask only which area, in a few words.`);
         }
       }
       // Only a builder ("Puravankara"): no search and no guess. Ask once which of their properties, and where.
@@ -1915,10 +1927,21 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         const typed = found.shortForm ?? found.correctedFrom ?? (absorbed.answers[placeQuestionEarly.id] ?? "").trim();
         projectAsk = `${found.shortForm ? `By ${typed}, did` : "Did"} you mean ${found.name}${found.locality ? ` in ${found.locality}` : ""}?`;
       }
-      // Proof from past work: a home we have really completed in their property, mentioned once.
+      // They named a property and the lookup found where it is: confirm the location once, like a person would.
+      const locality = found?.locality?.trim();
+      const spotAsked = spoken.some((message) => message.author === "AI" && /\bis that .+ (?:on|in|at) [^?]+\?/i.test(message.body));
+      if (!projectAsk && found && locality && placeQuestionEarly && !offeredSpot && !offeredProject && !spotAsked
+        && !new RegExp(`\\b${locality.split(/[\s,]+/)[0]!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(prospectBodies.join(" "))) {
+        projectAsk = `Is that ${found.name} on ${locality}?`;
+      }
+      // Proof from past work: a home we have really completed in their property, said once by the code.
       const completed = projectQuery && !builderNamed ? completedInProperty(found?.name ?? projectQuery, parseCompletedProjects(agent.completedProjects)) : null;
       if (completed && await noteOnce(`Proof: ${completed.property}`, `${completed.home || "a home"}${completed.link ? ` | ${completed.link}` : ""}`)) {
-        memoryLines.push(`We have completed ${completed.home ? `a ${completed.home}` : "homes"} in ${completed.property}, the same property as theirs. Mention it once, naturally, in a few words${completed.link ? `, and share this link to see it: ${completed.link}` : ""}. Never claim more than that, and never name the other owner.`);
+        proofLine = `We have already done ${completed.home ? `a ${completed.home} home` : "homes"} in ${completed.property}${completed.link ? `, you can see it here: ${completed.link}` : ""}.`;
+      }
+      const proofNote = conversation.messages.find((message) => message.author === "SYSTEM" && message.body.startsWith("Proof:"))?.body;
+      if (proofNote && !proofLine) {
+        memoryLines.push(`Fact: we have already completed a home in their property (${proofNote.replace(/^Proof:\s*/, "")}). If they ask whether we have worked there, say yes in a few words with the link. Never claim more, and never name the other owner.`);
       }
       const HOME_TYPE_ONLY = /^(?:it(?:'s| is) )?(?:an? )?(apartment|appartment|flat|villa|bungalow|independent house|individual house|row house|duplex|penthouse)(?: sir| ji)?\.?$/i;
       const SCOPE_ONLY = /^(?:(?:it(?:'s| is) )?(?:the )?(?:full|whole|entire|complete) (?:home|house|flat)|selected rooms|only (?:some|few) rooms)(?: sir| ji)?\.?$/i;
@@ -2949,7 +2972,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : offeredBase;
     // Never a price figure in any reply. A price question gets the quote line instead.
     // Never a promise of how long the work takes: the team decides that after seeing the site.
-    const untimed = offered ? dropTimelinePromise(dropUnaskedPrice(offered)) : offered;
+    const untimed = offered ? dropProcessTalk(dropTimelinePromise(dropUnaskedPrice(offered))) || offered : offered;
     const pricedOut = untimed !== null && untimed !== undefined && asksTimeline(freshText) && !/\btimeline depends\b/i.test(untimed)
       ? beforeQuestion(untimed, TIMELINE_LINE)
       : untimed;
@@ -2965,6 +2988,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const heldBase = askingPrice(freshText) && !quotedBefore && !/\b(?:quoted by our team|share the exact budget)\b/i.test(unpriced ?? "")
       ? beforeQuestion(unpriced ?? "", QUOTE_LINE)
       : unpriced;
+    const heldWithProof = proofLine && heldBase ? beforeQuestion(heldBase, proofLine) : heldBase;
     // 8. They said only "house": ask the type once. The BHK is never asked again.
     const homeSaved = questions.filter((question) => /\bbhk\b/i.test(question.label)).map((question) => recordedAnswers[question.id] ?? "").join(" ");
     const needsType = /\d\s*-?\s*bhk\b/i.test(homeSaved) && /\bhouse\b/i.test(homeSaved) && !homeTypeName(homeSaved)
@@ -2984,8 +3008,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     // A check against the project lookup comes first, then "spoken before", then the name, then the plain home type.
     const confirmAsk = projectAsk ?? emailAsk ?? matchAsk ?? nameAsk ?? (needsType ? TYPE_ASK : null);
     const held = confirmAsk && heldBase && Number(payload.followUp ?? 0) === 0 && !holdScript && !offerConsultation && !needsTime && !chasingCall
-      ? [heldBase.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n"), confirmAsk].filter(Boolean).join("\n")
-      : heldBase;
+      ? [heldWithProof!.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n"), confirmAsk].filter(Boolean).join("\n")
+      : heldWithProof;
     if (matchAsk && suggestion && held?.includes(matchAsk)) {
       await db.personMatch.updateMany({ where: { contactId: conversation.contactId, candidateId: suggestion.id }, data: { askedAt: runtime.now() } });
     }
@@ -3299,7 +3323,7 @@ export async function reviewReply(
     let newLead = verdict.lead.trim().split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?") && !isQuestionSentence(part)).join(" ");
     newLead = dropEmptyPraise(dropDesignTalk(newLead) || newLead);
     if (!input.askingPrice) newLead = dropUnaskedPrice(newLead);
-    newLead = dropTimelinePromise(newLead);
+    newLead = dropProcessTalk(dropTimelinePromise(newLead));
     newLead = weVoice(newLead).trim();
     const fixed = [newLead, ...questions].filter(Boolean).join("\n");
     if (!fixed) return null;
@@ -4354,7 +4378,7 @@ const VISIT_OFFER = "Shall I book a free consultation for you, or would you like
 const TYPE_ASK = "Is it an apartment, villa or independent house?";
 
 /** Questions the code writes word for word (checks and confirmations). They are never trimmed or reworded. */
-const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends|our team will call you(?: on \+?\d+)? to confirm it)\b/i;
+const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends|is that [^?]+ (?:on|in|at)|we have already done|our team will call you(?: on \+?\d+)? to confirm it)\b/i;
 
 /**
  * Code, not the model, decides what is already known: a name we have is never asked again, and someone

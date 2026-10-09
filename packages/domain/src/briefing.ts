@@ -129,6 +129,7 @@ export function salesBriefing(input: SalesBriefingInput): string {
     "",
     `# What ${brand} offers`,
     ...facts.map((fact) => `- ${fact}`),
+    "- Never narrate the back office: do not say you have saved, noted, recorded or updated anything, and never say vague lines like 'so we can confirm'. Say what happens next for them, or just ask the next thing.",
     "- Time to finish: never say how many days, weeks or months the work takes, not even roughly. It depends on the site and the scope, and only the team decides it. When they ask, say only: 'The timeline depends on the site and the scope of work, so we will confirm it once we understand your requirement.'",
     "- Price or cost: never give any price, lakh figure, starting price, range or estimate, even if the knowledge base or the team's notes have one. When they ask, say only: 'We will share the exact budget after understanding your requirement, the scope and the materials you choose.'",
     ...(settings.workingHours ? [`- Working hours: ${settings.workingHours}. The team calls and receives visitors only in these hours.`] : []),

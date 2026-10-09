@@ -270,3 +270,14 @@ describe("9 Oct WhatsApp test wording", () => {
     expect(weVoice("Could you share the email for your team to forward the details?")).toBe("Could you share the email for our team to forward the details?");
   });
 });
+
+describe("no back-office narration", () => {
+  it("drops 'saved your choice' lines and keeps real confirmations", async () => {
+    const { dropProcessTalk } = await import("../src/style");
+    expect(dropProcessTalk("Both works sir.\nI have saved your choice here so we can confirm.")).toBe("Both works sir.");
+    expect(dropProcessTalk("I have noted it here for the team. Which day suits you?")).toBe("Which day suits you?");
+    expect(dropProcessTalk("I have updated your number to 9845011111.")).toBe("I have updated your number to 9845011111.");
+    expect(dropProcessTalk("Noted, today at 4 PM at our experience centre.")).toBe("Noted, today at 4 PM at our experience centre.");
+    expect(dropProcessTalk("We have already done a 4 BHK home in Adarsh Palm Retreat.")).toBe("We have already done a 4 BHK home in Adarsh Palm Retreat.");
+  });
+});

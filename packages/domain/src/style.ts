@@ -255,6 +255,19 @@ export function dropTimelinePromise(text: string): string {
     .join("\n");
 }
 
+// "I have saved your choice here so we can confirm": narrating the back office, which a salesperson never says.
+const PROCESS_TALK = /\b(?:i|we)(?:'ve|\s+have|\s+had)?\s+(?:already\s+)?(?:saved|noted(?:\s+down)?|recorded|updated|stored|logged|captured|added|made a note of|passed (?:it|this|that) (?:on|to))\b[^.?!]*|\bso (?:we|the team) can confirm\b\s*[.!]?$/i;
+
+/** Drops sentences that only narrate saving or noting things. Keeps a sentence with a real time ("noted 4 PM tomorrow"). */
+export function dropProcessTalk(text: string): string {
+  return text
+    .split(/\n+/)
+    .map((line) => line.split(/(?<=[.!?।])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => isQuestionSentence(part)
+      || !PROCESS_TALK.test(part) || /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\d{5,}|@/i.test(part)).join(" ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 /** Removes a promised callback the customer did not ask for. Keeps the rest of the reply. */
 export function dropUnaskedCallback(text: string, proceeding: boolean): string {
   if (proceeding || !/\b(?:team|we) will call\b/i.test(text)) return text;
