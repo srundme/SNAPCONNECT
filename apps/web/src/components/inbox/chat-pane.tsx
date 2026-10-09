@@ -26,6 +26,7 @@ export function ChatPane({
   handle,
   rating,
   owner,
+  alsoOn = [],
   messages,
   state,
   canReply,
@@ -38,6 +39,8 @@ export function ChatPane({
   handle: string | null;
   rating: string | null;
   owner: Ownership;
+  /** Other channels this same person writes on. */
+  alsoOn?: Channel[];
   messages: ChatMessage[];
   state: InboxState;
   canReply: boolean;
@@ -62,6 +65,11 @@ export function ChatPane({
               <ChannelMark channel={channel} />
               {handle ? <span>{handle}</span> : null}
             </div>
+            {alsoOn.length > 0 ? (
+              <p className="mt-1 text-[12px] text-[var(--color-muted)]">
+                Also on <span className="font-medium text-[#4a4239]">{alsoOn.map(channelName).join(" · ")}</span>
+              </p>
+            ) : null}
           </div>
           {canReply ? (
             <div className="flex shrink-0 flex-wrap gap-2">

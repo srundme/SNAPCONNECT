@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { clsx } from "clsx";
 import { Search } from "lucide-react";
-import { ChannelMark } from "@/components/ui";
+import { ChannelGlyph, ChannelMark } from "@/components/ui";
 import { whenIST } from "@/lib/format";
 import { OwnerBadge, RatingChip } from "./chips";
 import { inboxHref, type InboxState } from "./params";
-import type { Channel, InboxView, Ownership } from "./labels";
+import { channelName, type Channel, type InboxView, type Ownership } from "./labels";
 
 export type ListRow = {
   id: string;
@@ -16,6 +16,16 @@ export type ListRow = {
   at: Date;
   rating: string | null;
   owner: Ownership;
+  /** Other channels this same person has written on. */
+  alsoOn: Channel[];
+  /** An open "possibly the same person" suggestion waits for the team. */
+  possibleMatch: boolean;
+};
+
+const GLYPH_TONE: Record<Channel, string> = {
+  INSTAGRAM: "text-[var(--color-ig)]",
+  WHATSAPP: "text-[var(--color-wa)]",
+  FACEBOOK: "text-[var(--color-fb)]",
 };
 
 const VIEWS: Array<[InboxView, string]> = [
@@ -126,8 +136,27 @@ export function ConversationList({ rows, state, selectedId, hiddenTests }: { row
                     {row.preview}
                   </p>
                   <div className="mt-2 flex items-center gap-2">
-                    <ChannelMark channel={row.channel} />
+                    <span className="inline-flex shrink-0 items-center gap-1">
+                      <ChannelMark channel={row.channel} />
+                      {row.alsoOn.map((channel) => (
+                        <span
+                          key={channel}
+                          title={`Also on ${channelName(channel)}`}
+                          className={clsx("inline-flex size-[18px] items-center justify-center rounded-full bg-[var(--color-paper)]", GLYPH_TONE[channel])}
+                        >
+                          <ChannelGlyph channel={channel} size={10} />
+                          <span className="sr-only">Also on {channelName(channel)}</span>
+                        </span>
+                      ))}
+                    </span>
                     <RatingChip rating={row.rating} />
+                    {row.possibleMatch ? (
+                      <span title="Possibly the same person as another chat" className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-[var(--color-accent-ink)]">
+                        <span aria-hidden className="size-1.5 rounded-full bg-[var(--color-accent)]" />
+                        <span className="hidden sm:inline">Possible match</span>
+                        <span className="sr-only sm:hidden">Possible match</span>
+                      </span>
+                    ) : null}
                     <span className="ml-auto min-w-0"><OwnerBadge owner={row.owner} /></span>
                   </div>
                 </Link>

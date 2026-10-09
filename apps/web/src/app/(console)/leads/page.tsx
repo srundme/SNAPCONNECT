@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Download, ExternalLink } from "lucide-react";
 import { can, parseLeadQuestions } from "@snapsocial/domain";
-import { getPrisma } from "@snapsocial/db";
+import { getPrisma, primaryOf } from "@snapsocial/db";
 import { ChannelMark, Empty, PageTitle, Panel, StatGrid } from "@/components/ui";
 import { RatingChip, StatusChip } from "@/components/leads/chips";
 import { ClickableRow } from "@/components/leads/clickable-row";
@@ -69,31 +69,49 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const users = new Map((userIds.length ? await db.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } }) : []).map((user) => [user.id, user.name]));
   const agentName = workspace.agentName?.trim() || "Assistant";
 
-  const rows = leads.map((lead) => {
+  // One row per person: chats on different channels that are the same person share a personId.
+  const people = new Map<string, typeof leads>();
+  for (const lead of leads) {
+    const key = lead.contact.personId ? `person:${lead.contact.personId}` : `lead:${lead.id}`;
+    const group = people.get(key);
+    if (group) group.push(lead);
+    else people.set(key, [lead]);
+  }
+  const CHANNEL_ORDER = ["WHATSAPP", "INSTAGRAM", "FACEBOOK"] as const;
+  const rows = [...people.values()].map((group) => {
+    const oldestFirst = [...group].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const lead = primaryOf(oldestFirst) ?? oldestFirst[0]!;
     const answers = answersOf(lead.answers);
     const pick = (id: string | null) => (id ? answers[id] ?? null : null);
+    const channels = CHANNEL_ORDER.filter((channel) => group.some((item) => item.channel === channel));
+    const latest = group.reduce((a, b) => (b.updatedAt > a.updatedAt ? b : a));
+    const latestConversation = group
+      .map((item) => byContact.get(item.contactId))
+      .filter((item): item is NonNullable<typeof item> => Boolean(item))
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
     return {
       id: lead.id,
-      name: leadName(lead.contact),
+      name: leadName(lead.contact.chosenName ? lead.contact : group.find((item) => item.contact.chosenName)?.contact ?? lead.contact),
       test: isTestContact(lead.contact),
-      channel: lead.channel,
-      phone: lead.phoneE164,
+      channels,
+      phone: lead.phoneE164 ?? group.find((item) => item.phoneE164)?.phoneE164 ?? null,
       home: pick(columns.home),
       project: pick(columns.project) ?? lead.city,
       possession: pick(columns.possession),
       rating: ratingOf(lead.rating),
       ratingReason: lead.ratingReason,
       status: leadStatus(lead),
-      owner: ownerLabel(byContact.get(lead.contactId), agentName, users),
-      updatedAt: lead.updatedAt,
+      owner: ownerLabel(latestConversation, agentName, users),
+      updatedAt: latest.updatedAt,
       zohoUrl: lead.crm?.crmId && !lead.crm.simulated ? zohoLeadUrl(lead.crm.crmId, zoho?.apiDomain) : null,
     };
   });
+  rows.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
   const visible = rows.filter((row) => showTest || !row.test);
   const testCount = rows.length - visible.length;
   const filtered = visible.filter((row) => {
     if (ratingFilter && row.rating !== ratingFilter) return false;
-    if (channelFilter && row.channel !== channelFilter) return false;
+    if (channelFilter && !row.channels.includes(channelFilter)) return false;
     if (statusFilter && row.status !== statusFilter) return false;
     if (query) {
       const haystack = [row.name, row.phone, row.project, row.home].filter(Boolean).join(" ").toLowerCase();
@@ -158,7 +176,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                         <Link href={`/leads/${row.id}`} className="block truncate">{row.name}</Link>
                         {row.phone ? <span className="block text-[12px] tabular-nums text-[var(--color-muted)]">{row.phone}</span> : null}
                       </td>
-                      <td><ChannelMark channel={row.channel} /></td>
+                      <td><Channels channels={row.channels} /></td>
                       <td className="whitespace-nowrap">{row.home ?? <Dash />}</td>
                       <td className="max-w-[220px]"><span className="line-clamp-2">{row.project ?? <Dash />}</span></td>
                       <td className="max-w-[160px]"><span className="line-clamp-2">{row.possession ?? <Dash />}</span></td>
@@ -190,7 +208,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                 </p>
                 {row.possession ? <p className="text-[13px] text-[var(--color-muted)]">Possession: {row.possession}</p> : null}
                 <div className="mt-3 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-3"><ChannelMark channel={row.channel} /><StatusChip status={row.status} /></div>
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5"><Channels channels={row.channels} /><StatusChip status={row.status} /></div>
                   {row.zohoUrl ? <span className="relative z-10"><ZohoLink href={row.zohoUrl} /></span> : null}
                 </div>
               </li>
@@ -199,6 +217,14 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
         </>
       )}
     </section>
+  );
+}
+
+function Channels({ channels }: { channels: Array<"INSTAGRAM" | "FACEBOOK" | "WHATSAPP"> }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1" title={channels.length > 1 ? "Same person on more than one channel" : undefined}>
+      {channels.map((channel) => <ChannelMark key={channel} channel={channel} />)}
+    </span>
   );
 }
 

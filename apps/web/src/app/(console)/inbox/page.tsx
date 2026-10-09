@@ -7,8 +7,8 @@ import { requireWorkspace } from "@/lib/session";
 import { LiveInbox } from "@/components/live-inbox";
 import { ChatPane, type ChatMessage } from "@/components/inbox/chat-pane";
 import { ConversationList, type ListRow } from "@/components/inbox/conversation-list";
-import { LeadPanel } from "@/components/inbox/lead-panel";
-import { customerHandle, customerName, isTestContact, ownership, readAnswers } from "@/components/inbox/labels";
+import { LeadPanel, type PersonChannel, type PossibleMatch } from "@/components/inbox/lead-panel";
+import { customerHandle, customerName, isTestContact, ownership, readAnswers, type Channel } from "@/components/inbox/labels";
 import { readInboxState } from "@/components/inbox/params";
 
 const LIST_SIZE = 60;
@@ -43,7 +43,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
       } : {}),
     },
     include: {
-      contact: { select: { id: true, displayName: true, username: true, chosenName: true } },
+      contact: { select: { id: true, displayName: true, username: true, chosenName: true, personId: true } },
       messages: { where: { author: { not: "SYSTEM" } }, orderBy: { createdAt: "desc" }, take: 1, select: { body: true, author: true, createdAt: true, voice: true } },
     },
     orderBy: { updatedAt: "desc" },
@@ -66,6 +66,76 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     selectedBase ? db.lead.findFirst({ where: { contactId: selectedBase.contactId, archivedAt: null }, orderBy: { createdAt: "desc" } }) : Promise.resolve(null),
     selectedBase ? db.channelConnection.findUnique({ where: { id: selectedBase.connectionId } }) : Promise.resolve(null),
   ]);
+  // Same person on other channels, and open "possibly the same person" suggestions, for the listed chats and the open one.
+  const personContact = {
+    id: true,
+    channel: true,
+    personId: true,
+    displayName: true,
+    username: true,
+    chosenName: true,
+    conversations: { orderBy: { updatedAt: "desc" as const }, take: 1, select: { id: true, updatedAt: true, lastUserMessageAt: true } },
+  };
+  const selectedContact = selectedBase?.contact ?? null;
+  const personIds = [...new Set([...visible.map((item) => item.contact.personId), selectedContact?.personId].filter((id): id is string => Boolean(id)))];
+  const listedContactIds = [...new Set([...visible.map((item) => item.contactId), ...(selectedContact ? [selectedContact.id] : [])])];
+  const [personMembers, openMatches] = await Promise.all([
+    personIds.length
+      ? db.contact.findMany({ where: { workspaceId: workspace.id, personId: { in: personIds } }, select: personContact })
+      : Promise.resolve([]),
+    listedContactIds.length
+      ? db.personMatch.findMany({
+        where: { workspaceId: workspace.id, status: "SUGGESTED", OR: [{ contactId: { in: listedContactIds } }, { candidateId: { in: listedContactIds } }] },
+        orderBy: { score: "desc" },
+      })
+      : Promise.resolve([]),
+  ]);
+  const channelsByPerson = new Map<string, Set<Channel>>();
+  for (const member of personMembers) {
+    if (!member.personId) continue;
+    const set = channelsByPerson.get(member.personId) ?? new Set<Channel>();
+    set.add(member.channel);
+    channelsByPerson.set(member.personId, set);
+  }
+  const suggestionsByContact = new Map<string, number>();
+  for (const match of openMatches) {
+    suggestionsByContact.set(match.contactId, (suggestionsByContact.get(match.contactId) ?? 0) + 1);
+    suggestionsByContact.set(match.candidateId, (suggestionsByContact.get(match.candidateId) ?? 0) + 1);
+  }
+  const alsoOn = (contact: { personId: string | null }, channel: Channel): Channel[] =>
+    contact.personId ? [...(channelsByPerson.get(contact.personId) ?? [])].filter((item) => item !== channel) : [];
+
+  const toPersonChannel = (contact: (typeof personMembers)[number]): PersonChannel => {
+    const conversation = contact.conversations[0];
+    return {
+      contactId: contact.id,
+      channel: contact.channel,
+      name: customerName(contact),
+      conversationId: conversation?.id ?? null,
+      lastAt: conversation?.lastUserMessageAt ?? conversation?.updatedAt ?? null,
+    };
+  };
+  const samePerson: PersonChannel[] = selectedContact?.personId
+    ? personMembers.filter((member) => member.personId === selectedContact.personId && member.id !== selectedContact.id).map(toPersonChannel)
+    : [];
+  const selectedMatches = selectedContact
+    ? openMatches.filter((match) => match.contactId === selectedContact.id || match.candidateId === selectedContact.id)
+    : [];
+  const matchOthers = selectedMatches.length
+    ? await db.contact.findMany({
+      where: { workspaceId: workspace.id, id: { in: selectedMatches.map((match) => (match.contactId === selectedContact?.id ? match.candidateId : match.contactId)) } },
+      select: personContact,
+    })
+    : [];
+  const matchOtherById = new Map(matchOthers.map((contact) => [contact.id, contact]));
+  const possibleMatches: PossibleMatch[] = [];
+  for (const match of selectedMatches) {
+    const other = matchOtherById.get(match.contactId === selectedContact?.id ? match.candidateId : match.contactId);
+    // Already joined some other way: nothing left to decide.
+    if (!other || (other.personId && other.personId === selectedContact?.personId)) continue;
+    possibleMatches.push({ matchId: match.id, other: toPersonChannel(other), reasons: match.reasons, askedAt: match.askedAt });
+  }
+
   const leadByContact = new Map<string, (typeof leads)[number]>();
   for (const item of leads) if (!leadByContact.has(item.contactId)) leadByContact.set(item.contactId, item);
 
@@ -88,6 +158,8 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
       at: last?.createdAt ?? item.updatedAt,
       rating: itemLead?.rating ?? null,
       owner: ownership(item, names, me, itemLead?.handoffReason ?? null),
+      alsoOn: alsoOn(item.contact, item.channel),
+      possibleMatch: (suggestionsByContact.get(item.contactId) ?? 0) > 0,
     };
   });
 
@@ -145,6 +217,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
               handle={customerHandle(selectedBase.channel, selectedBase.contact, lead?.phoneE164 ?? null)}
               rating={lead?.rating ?? null}
               owner={ownership(selectedBase, names, me, lead?.handoffReason ?? null)}
+              alsoOn={alsoOn(selectedBase.contact, selectedBase.channel)}
               messages={chatMessages}
               state={state}
               canReply={canReply}
@@ -178,6 +251,9 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
               channel={selectedBase.channel}
               memory={selectedBase.contact.memory}
               memoryUpdatedAt={selectedBase.contact.memoryUpdatedAt}
+              samePerson={samePerson}
+              possibleMatches={possibleMatches}
+              canDecide={canReply}
             />
           ) : (
             <p className="p-5 text-[13px] text-[var(--color-muted)]">Lead details appear here when a chat is open.</p>

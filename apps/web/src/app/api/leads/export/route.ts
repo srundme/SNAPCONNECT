@@ -30,7 +30,19 @@ export async function GET() {
     db.lead.findMany({ where: { workspaceId, archivedAt: null }, include: { contact: true, crm: true }, orderBy: { updatedAt: "desc" } }),
     db.zohoConnection.findUnique({ where: { workspaceId }, select: { apiDomain: true } }),
   ]);
-  const leads = allLeads.filter((lead) => !isTestContact(lead.contact));
+  // One row per person: a customer on Instagram and WhatsApp is one lead, like in Zoho.
+  const seenPeople = new Set<string>();
+  const leads = allLeads
+    .filter((lead) => !isTestContact(lead.contact))
+    .sort((a, b) => Number(Boolean(b.crm?.crmId)) - Number(Boolean(a.crm?.crmId)) || a.createdAt.getTime() - b.createdAt.getTime())
+    .filter((lead) => {
+      const person = lead.contact.personId;
+      if (!person) return true;
+      if (seenPeople.has(person)) return false;
+      seenPeople.add(person);
+      return true;
+    })
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
   const conversations = leads.length
     ? await db.conversation.findMany({
       where: { workspaceId, contactId: { in: leads.map((lead) => lead.contactId) } },

@@ -1,10 +1,12 @@
-import { ChevronDown } from "lucide-react";
+import Link from "next/link";
+import { Check, ChevronDown, Link2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type { LeadQuestion } from "@snapsocial/domain";
-import { StatusLabel } from "@/components/ui";
-import { fullIST } from "@/lib/format";
+import { ChannelMark, StatusLabel } from "@/components/ui";
+import { linkPeopleFromMatch, rejectPeopleMatch, separatePerson } from "@/lib/actions";
+import { fullIST, whenIST } from "@/lib/format";
 import { RatingChip } from "./chips";
-import { crmWording, memoryParagraphs, shortQuestionLabel, type Channel } from "./labels";
+import { channelName, crmWording, memoryParagraphs, shortQuestionLabel, type Channel } from "./labels";
 
 export type PanelLead = {
   rating: string | null;
@@ -14,6 +16,44 @@ export type PanelLead = {
   email: string | null;
   answers: Record<string, string>;
 };
+
+/** One channel contact of a person: where they chatted and when. */
+export type PersonChannel = {
+  contactId: string;
+  channel: Channel;
+  name: string;
+  conversationId: string | null;
+  lastAt: Date | null;
+};
+
+/** An open "possibly the same person" suggestion for the open chat. */
+export type PossibleMatch = {
+  matchId: string;
+  other: PersonChannel;
+  reasons: string;
+  askedAt: Date | null;
+};
+
+function OtherChat({ person }: { person: PersonChannel }) {
+  return (
+    <div className="min-w-0">
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <ChannelMark channel={person.channel} />
+        {person.conversationId ? (
+          <Link href={`/inbox?id=${person.conversationId}`} className="min-w-0 truncate text-[13.5px] font-semibold hover:text-[var(--color-accent-ink)] hover:underline underline-offset-2">
+            {person.name}
+          </Link>
+        ) : (
+          <span className="min-w-0 truncate text-[13.5px] font-semibold">{person.name}</span>
+        )}
+      </div>
+      <p className="mt-0.5 text-[12px] text-[var(--color-muted)]">
+        {person.lastAt ? <>Last chatted <time dateTime={person.lastAt.toISOString()} className="tabular-nums">{whenIST(person.lastAt)}</time></> : "No chat yet"}
+        {person.conversationId ? <> · <Link href={`/inbox?id=${person.conversationId}`} className="font-medium text-[var(--color-accent-ink)] hover:underline underline-offset-2">Open chat</Link></> : null}
+      </p>
+    </div>
+  );
+}
 
 function SectionTitle({ children }: { children: ReactNode }) {
   return <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">{children}</p>;
@@ -26,6 +66,9 @@ export function LeadPanel({
   channel,
   memory,
   memoryUpdatedAt,
+  samePerson = [],
+  possibleMatches = [],
+  canDecide = false,
 }: {
   lead: PanelLead | null;
   questions: LeadQuestion[];
@@ -33,6 +76,9 @@ export function LeadPanel({
   channel: Channel;
   memory: string | null;
   memoryUpdatedAt: Date | null;
+  samePerson?: PersonChannel[];
+  possibleMatches?: PossibleMatch[];
+  canDecide?: boolean;
 }) {
   const paragraphs = memoryParagraphs(memory);
   const rows: Array<{ id: string; label: string; full: string; answer: string | null }> = lead
@@ -90,6 +136,78 @@ export function LeadPanel({
           <p className="mt-2 text-[12px] leading-4 text-[var(--color-muted)]">
             {channel === "WHATSAPP" ? "They are chatting from this WhatsApp number." : "A valid number is not proof that the person owns it, or that it is on WhatsApp."}
           </p>
+        </section>
+      ) : null}
+
+      {samePerson.length > 0 ? (
+        <section>
+          <div className="flex items-center gap-1.5">
+            <Link2 size={13} aria-hidden className="text-[var(--color-accent)]" />
+            <SectionTitle>Same person on</SectionTitle>
+          </div>
+          <ul className="mt-2 divide-y divide-[var(--color-line)] border-y border-[var(--color-line)]">
+            {samePerson.map((person) => (
+              <li key={person.contactId} className="group/row py-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <OtherChat person={person} />
+                  {canDecide ? (
+                    <details className="group/sep shrink-0">
+                      <summary className="list-none rounded-md border border-[var(--color-line)] bg-white px-2 py-0.5 text-[12px] font-medium text-[var(--color-muted)] hover:border-[#d9cfbf] hover:text-[var(--color-ink)] [&::-webkit-details-marker]:hidden">
+                        <span className="group-open/sep:hidden">Separate</span>
+                        <span className="hidden group-open/sep:inline">Cancel</span>
+                      </summary>
+                    </details>
+                  ) : null}
+                </div>
+                {canDecide ? (
+                  <form action={separatePerson} className="mt-2 hidden flex-wrap items-center justify-between gap-2 rounded-lg bg-[#fdf4f5] px-2.5 py-2 group-has-[details[open]]/row:flex">
+                    <input type="hidden" name="contactId" value={person.contactId} />
+                    <p className="min-w-0 flex-1 text-[12px] leading-4 text-[#7a2e3b]">Not the same person? The {channelName(person.channel)} chat is kept apart from now on. Answers already shared stay.</p>
+                    <button type="submit" className="shrink-0 border-rose-200 px-2.5 py-1 text-[12px] text-rose-800 hover:!bg-rose-50">Separate</button>
+                  </form>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[12px] leading-4 text-[var(--color-muted)]">Answers are shared across these chats. Zoho has one lead for this person.</p>
+        </section>
+      ) : null}
+
+      {possibleMatches.length > 0 ? (
+        <section>
+          <div className="flex items-center gap-1.5">
+            <span aria-hidden className="size-1.5 rounded-full bg-[var(--color-accent)]" />
+            <SectionTitle>Possibly the same person</SectionTitle>
+          </div>
+          <ul className="mt-2 space-y-2">
+            {possibleMatches.map((match) => (
+              <li key={match.matchId} className="rounded-xl border border-[#eadfca] bg-[#fbf7ef] p-3">
+                <OtherChat person={match.other} />
+                <p className="mt-2 text-[12.5px] leading-[1.35] text-[#4a4239]">
+                  <span className="text-[var(--color-muted)]">Why: </span>{match.reasons}
+                </p>
+                {match.askedAt ? (
+                  <p className="mt-1 text-[12px] text-[var(--color-accent-ink)]">Varun asked them · {whenIST(match.askedAt)}</p>
+                ) : null}
+                {canDecide ? (
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
+                    <form action={linkPeopleFromMatch}>
+                      <input type="hidden" name="matchId" value={match.matchId} />
+                      <button type="submit" className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[12.5px] text-white" title="Join the two chats: answers are shared and Zoho keeps one lead.">
+                        <Check size={13} aria-hidden /> Same person
+                      </button>
+                    </form>
+                    <form action={rejectPeopleMatch}>
+                      <input type="hidden" name="matchId" value={match.matchId} />
+                      <button type="submit" className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[12.5px]" title="They will not be suggested again.">
+                        <X size={13} aria-hidden /> Not the same
+                      </button>
+                    </form>
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
         </section>
       ) : null}
 

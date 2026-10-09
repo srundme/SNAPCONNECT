@@ -28,9 +28,12 @@ import {
   getPrisma,
   handBack,
   ingestEvents,
+  linkContacts,
   queuePostDescriptions,
+  rejectMatch,
   setConnectionPaused,
   takeOver,
+  unlinkContact,
 } from "@snapsocial/db";
 import { auth } from "./auth";
 import { requireActor, requireWorkspace } from "./session";
@@ -650,4 +653,45 @@ export async function releaseConversation(formData: FormData) {
   if (!owned) redirect("/overview?denied=1");
   await handBack(getPrisma(), owned.id, actor.userId);
   revalidatePath("/inbox");
+}
+
+/** Staff confirm a suggested match: the two chats become one person with one Zoho lead. */
+export async function linkPeopleFromMatch(formData: FormData) {
+  const matchId = String(formData.get("matchId") ?? "");
+  const { actor, workspace } = await requireWorkspace();
+  if (!workspace || !can(actor, "inbox.reply", workspace.id)) redirect("/overview?denied=1");
+  const db = getPrisma();
+  const match = await db.personMatch.findFirst({ where: { id: matchId, workspaceId: workspace.id }, select: { contactId: true, candidateId: true } });
+  if (!match) redirect("/overview?denied=1");
+  const contacts = await db.contact.count({ where: { id: { in: [match.contactId, match.candidateId] }, workspaceId: workspace.id } });
+  if (contacts !== 2) redirect("/overview?denied=1");
+  await linkContacts(db, { workspaceId: workspace.id, contactId: match.contactId, otherId: match.candidateId, evidence: "STAFF", actorId: actor.userId });
+  revalidatePath("/inbox");
+  revalidatePath("/leads");
+}
+
+/** Staff say a suggested match is a different person: it is never suggested again. */
+export async function rejectPeopleMatch(formData: FormData) {
+  const matchId = String(formData.get("matchId") ?? "");
+  const { actor, workspace } = await requireWorkspace();
+  if (!workspace || !can(actor, "inbox.reply", workspace.id)) redirect("/overview?denied=1");
+  const db = getPrisma();
+  const match = await db.personMatch.findFirst({ where: { id: matchId, workspaceId: workspace.id }, select: { id: true } });
+  if (!match) redirect("/overview?denied=1");
+  await rejectMatch(db, workspace.id, match.id, actor.userId);
+  revalidatePath("/inbox");
+  revalidatePath("/leads");
+}
+
+/** Staff separate a chat that was joined to another channel by mistake. */
+export async function separatePerson(formData: FormData) {
+  const contactId = String(formData.get("contactId") ?? "");
+  const { actor, workspace } = await requireWorkspace();
+  if (!workspace || !can(actor, "inbox.reply", workspace.id)) redirect("/overview?denied=1");
+  const db = getPrisma();
+  const contact = await db.contact.findFirst({ where: { id: contactId, workspaceId: workspace.id }, select: { id: true } });
+  if (!contact) redirect("/overview?denied=1");
+  await unlinkContact(db, workspace.id, contact.id, actor.userId);
+  revalidatePath("/inbox");
+  revalidatePath("/leads");
 }

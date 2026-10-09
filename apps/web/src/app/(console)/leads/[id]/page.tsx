@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { ArrowLeft, ExternalLink, Mail, MessageCircle, MessagesSquare, Phone } from "lucide-react";
+import { ArrowLeft, ExternalLink, Link2, Mail, MessageCircle, MessagesSquare, Phone } from "lucide-react";
 import { parseLeadQuestions } from "@snapsocial/domain";
 import { notFound } from "next/navigation";
-import { getPrisma } from "@snapsocial/db";
+import { getPrisma, personLeads, primaryOf } from "@snapsocial/db";
 import { deleteLeadContact } from "@/lib/actions";
 import { ChannelMark } from "@/components/ui";
 import { RatingChip, StatusChip } from "@/components/leads/chips";
@@ -29,13 +29,32 @@ export default async function LeadDetail({ params }: { params: Promise<{ id: str
     include: { contact: true, crm: true },
   });
   if (!lead) notFound();
+  // Every channel this person wrote on. Zoho knows one lead for all of them: the primary.
+  const [personAll, channelContacts] = await Promise.all([
+    personLeads(db, lead.contactId),
+    lead.contact.personId
+      ? db.contact.findMany({
+        where: { workspaceId: workspace.id, personId: lead.contact.personId },
+        select: {
+          id: true,
+          channel: true,
+          conversations: { orderBy: { updatedAt: "desc" }, take: 1, select: { id: true, updatedAt: true, lastUserMessageAt: true } },
+        },
+        orderBy: { createdAt: "asc" },
+      })
+      : Promise.resolve([]),
+  ]);
+  const person = personAll.filter((item) => item.workspaceId === workspace.id);
+  const primary = primaryOf(person) ?? lead;
+  const multiChannel = channelContacts.length > 1;
+  const olderZoho = person.filter((item) => item.id !== primary.id && item.crm?.crmId && item.crm.crmId !== primary.crm?.crmId);
   const [conversation, lastSync, zoho] = await Promise.all([
     db.conversation.findFirst({
       where: { workspaceId: workspace.id, contactId: lead.contactId },
       orderBy: { updatedAt: "desc" },
       include: { messages: { orderBy: { createdAt: "desc" }, take: 5 } },
     }),
-    db.crmSyncAttempt.findFirst({ where: { leadId: lead.id }, orderBy: { createdAt: "desc" } }),
+    db.crmSyncAttempt.findFirst({ where: { leadId: primary.id }, orderBy: { createdAt: "desc" } }),
     db.zohoConnection.findUnique({ where: { workspaceId: workspace.id }, select: { apiDomain: true } }),
   ]);
   const userIds = [conversation?.ownerUserId, ...(conversation?.messages.map((message) => message.staffUserId) ?? [])].filter((value): value is string => Boolean(value));
@@ -52,7 +71,7 @@ export default async function LeadDetail({ params }: { params: Promise<{ id: str
   const emailQuestion = questions.find((question) => shortLabel(question) === "Email");
   const email = lead.email ?? (emailQuestion ? answers[emailQuestion.id] : undefined) ?? null;
   const waNumber = (lead.whatsappE164 ?? lead.phoneE164)?.replace(/\D/g, "") || null;
-  const zohoUrl = lead.crm?.crmId && !lead.crm.simulated ? zohoLeadUrl(lead.crm.crmId, zoho?.apiDomain) : null;
+  const zohoUrl = primary.crm?.crmId && !primary.crm.simulated ? zohoLeadUrl(primary.crm.crmId, zoho?.apiDomain) : null;
   const canDelete = role === "ADMIN" || role === "SUPER_ADMIN";
   const messages = [...(conversation?.messages ?? [])].reverse();
 
@@ -80,7 +99,9 @@ export default async function LeadDetail({ params }: { params: Promise<{ id: str
             <h1 className="text-balance break-words font-[family-name:var(--font-display)] text-[34px] font-medium leading-tight tracking-tight">{name}</h1>
             {profileName && profileName !== name ? <p className="mt-0.5 text-[13px] text-[var(--color-muted)]">Profile: {profileName}</p> : null}
             <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-              <ChannelMark channel={lead.channel} />
+              {multiChannel
+                ? [...new Set(channelContacts.map((item) => item.channel))].map((channel) => <ChannelMark key={channel} channel={channel} />)
+                : <ChannelMark channel={lead.channel} />}
               <RatingChip rating={rating} reason={lead.ratingReason} />
               <StatusChip status={status} />
             </div>
@@ -156,9 +177,32 @@ export default async function LeadDetail({ params }: { params: Promise<{ id: str
             ) : null}
           </Card>
 
-          <Card title="Zoho CRM">
+          {multiChannel ? (
+            <Card title="Channels" action={<Link2 size={14} aria-hidden className="text-[var(--color-accent)]" />}>
+              <ul className="divide-y divide-[var(--color-line)]">
+                {channelContacts.map((item) => {
+                  const chat = item.conversations[0];
+                  const last = chat?.lastUserMessageAt ?? chat?.updatedAt ?? null;
+                  return (
+                    <li key={item.id} className="flex items-center justify-between gap-3 py-2.5">
+                      <div className="min-w-0">
+                        <ChannelMark channel={item.channel} />
+                        <p className="mt-1 text-[12px] text-[var(--color-muted)]">{last ? `Last chatted ${whenIST(last)}` : "No chat yet"}{item.id === lead.contactId ? " · this lead" : ""}</p>
+                      </div>
+                      {chat ? (
+                        <Link href={`/inbox?id=${chat.id}`} className="shrink-0 text-[13px] font-semibold text-[var(--color-accent-ink)] hover:underline underline-offset-2">Open chat</Link>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="mt-2 text-[12px] leading-4 text-[var(--color-muted)]">Same person on every channel. Answers are shared across these chats.</p>
+            </Card>
+          ) : null}
+
+          <Card title="Zoho CRM" action={multiChannel ? <span className="text-[12px] font-semibold text-[var(--color-accent-ink)]">One Zoho lead for all channels</span> : null}>
             <dl className="divide-y divide-[var(--color-line)]">
-              <Field label="Status">{lead.crm?.simulated ? "Simulated (not in real Zoho)" : CRM_STATE[lead.crmState] ?? lead.crmState}</Field>
+              <Field label="Status">{primary.crm?.simulated ? "Simulated (not in real Zoho)" : CRM_STATE[primary.crmState] ?? primary.crmState}</Field>
               <Field label="Last sync" muted={!lastSync}>
                 {lastSync ? (
                   <span title={lastSync.error ?? undefined}>
@@ -169,6 +213,27 @@ export default async function LeadDetail({ params }: { params: Promise<{ id: str
               </Field>
             </dl>
             {zohoUrl ? <div className="mt-3"><ActionLink href={zohoUrl} external icon={<ExternalLink size={14} aria-hidden />}>Open in Zoho</ActionLink></div> : null}
+            {multiChannel && primary.id !== lead.id ? (
+              <p className="mt-3 text-[12px] leading-4 text-[var(--color-muted)]">
+                Zoho is updated through the {primary.channel === "WHATSAPP" ? "WhatsApp" : primary.channel === "INSTAGRAM" ? "Instagram" : "Facebook"} lead.{" "}
+                <Link href={`/leads/${primary.id}`} className="font-semibold text-[var(--color-accent-ink)] hover:underline underline-offset-2">Open it</Link>
+              </p>
+            ) : null}
+            {olderZoho.length > 0 ? (
+              <ul className="mt-3 space-y-1.5">
+                {olderZoho.map((item) => {
+                  const crmId = item.crm!.crmId!;
+                  const url = item.crm?.simulated ? null : zohoLeadUrl(crmId, zoho?.apiDomain);
+                  return (
+                    <li key={item.id} className="rounded-lg bg-[#fff6e8] px-2.5 py-2 text-[12.5px] leading-[1.35] text-[#92400e]">
+                      Also in Zoho as{" "}
+                      {url ? <a href={url} target="_blank" rel="noreferrer" className="break-all font-semibold underline underline-offset-2">{crmId}</a> : <span className="break-all font-semibold">{crmId}</span>}{" "}
+                      (created before the chats were joined) — merge in Zoho
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
           </Card>
         </div>
       </div>
