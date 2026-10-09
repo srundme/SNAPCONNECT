@@ -819,6 +819,12 @@ async function handleComment(db: Db, connectionId: string, body: Record<string, 
           body: "Opening reserved.",
         },
       });
+      // The opener is only a hello, so their comment is kept here for the first real reply to answer.
+      if (String(body.text ?? "").trim()) {
+        await tx.message.create({
+          data: { workspaceId: connection.workspaceId, connectionId, conversationId: conversation.id, author: "SYSTEM", body: `Their comment: ${String(body.text).trim().slice(0, 500)}` },
+        });
+      }
       await tx.commentDecision.create({
         data: {
           workspaceId: connection.workspaceId,
@@ -2325,6 +2331,12 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     if (prospectBodies.length === 1 && /^\s*(?:https?:\/\/|www\.)\S+\s*$/i.test(freshText)) {
       memoryLines.push("Their only message is a link. Do not open or describe it. In one short polite line, say you help with home interiors and ask what they are looking for.");
     }
+    // They came from a comment and this is Varun's first real reply: answer what the comment asked, if anything.
+    const commentNote = conversation.messages.find((message) => message.author === "SYSTEM" && message.body.startsWith("Their comment:"))?.body.replace(/^Their comment:\s*/, "");
+    const firstRealReply = conversation.messages.filter((message) => message.author === "AI").length <= 1;
+    if (commentNote && firstRealReply) {
+      memoryLines.push(`They first commented on our post: "${commentNote.slice(0, 300)}". If that comment asked something, answer it in one short line now (never a price: if they asked the price, say we share the exact budget after understanding the requirement, the scope and the materials). Do not introduce yourself again.`);
+    }
     const materialsNote = materialLine(freshText, agent.materials, agent.warranty);
     if (materialsNote) memoryLines.push(materialsNote);
     // Another firm they named: never described, compared or judged. Any sentence naming it is dropped.
@@ -3500,71 +3512,13 @@ async function writeOpening(
   workspace: { brandName: string; agentName: string | null; agentPersona: string | null; services: string; knowledgeBase: string | null; agentSettings: unknown; leadQuestions: unknown },
   input: { comment: string; post: { caption: string | null; seenSummary: string | null } | null; name: string },
 ): Promise<string | null> {
-  if (!runtime.llm.complete) return null;
-  const agent = parseAgentSettings(workspace.agentSettings);
-  const questions = parseLeadQuestions(workspace.leadQuestions);
-  // A real first name on their profile is simply used, so the opener asks the next detail instead of the name.
+  // The client's opener for a comment: one plain line, nothing else. The chat starts when they reply.
+  // A real first name on their profile is used ("Hi Gopi, …"); a handle that is not a name is left out.
   const profileName = profileFirstName(null, input.name);
   const usableName = profileName && runtime.llm.addressFor
     ? await runtime.llm.addressFor(profileName).then((word) => word !== "bro").catch(() => false)
-    : false;
-  const first = questions.find((question) => question.required !== false && question.kind !== "phone" && !(usableName && question.kind === "name")) ?? questions[0];
-  const sample = chatLanguageSample([input.comment]);
-  const guessedAddress = agent.addressSirMam && input.name && runtime.llm.addressFor ? await runtime.llm.addressFor(input.name).catch(() => null) : null;
-  const address = guessedAddress === "bro" ? null : guessedAddress;
-  const profile = usableName ? profileName : null;
-  try {
-    const raw = await runtime.llm.complete({
-      system: [
-        `You are ${workspace.agentName ?? "the assistant"}, the AI assistant for ${workspace.brandName}. ${workspace.agentPersona ?? ""}`.trim(),
-        `What ${workspace.brandName} does: ${workspace.services}`,
-        workspace.knowledgeBase ? `Knowledge base (the only facts you may use):\n${withoutPrices(workspace.knowledgeBase).slice(0, 12000)}` : "",
-        agent.rules ? `Team rules:\n${agent.rules}` : "",
-        "Pricing: never give any price, lakh figure or starting price. If they ask, say we will share the exact budget after understanding the requirement, the scope and the materials.",
-        `Time to finish: never say how many days, weeks or months the work takes. If they ask, say: "${TIMELINE_LINE}"`,
-        sample
-          ? `They commented in ${languageName(sample)}, like "${sample}". Write the whole message, the question too, in exactly that language and style.`
-          : "Write the whole message, the question too, in the language and style of their comment: plain English for an English comment; Tamil, Hindi or another Indian language typed in English letters (Tanglish, Hinglish) when they wrote that way.",
-        address ? `Address them only as ${address}.` : "",
-        profile ? `Their name is ${profile}. Greet them by it once, naturally, like "Hi ${profile}".` : "You do not know their real name yet. Never use their profile name or username.",
-        "Someone just commented on a post. You are sending them their first private message about it.",
-        "This is only an enquiry: do not sound like they have already chosen you, and do not oversell.",
-      ].filter(Boolean).join("\n\n"),
-      messages: [{
-        role: "user",
-        content: [
-          `Post: ${[input.post?.caption?.trim(), input.post?.seenSummary ? `(it shows: ${input.post.seenSummary})` : ""].filter(Boolean).join(" ") || "no caption"}`,
-          `Their comment: "${input.comment.slice(0, 500)}"`,
-          "",
-          "Write the first message:",
-          `1. Say hi and that you are ${workspace.agentName ?? "the"} AI assistant for ${workspace.brandName}, in a few words.`,
-          "2. If the comment asks something (in any language), answer exactly that in one short sentence using only the knowledge base, never quoting a price (follow the pricing rule). If it only says hi, praises the post or says they are interested, thank them for reaching out in a few plain words. This sentence asks nothing.",
-          `Only say what their comment actually says. Never claim they praised, appreciated or asked about something they did not write. If they name something ${workspace.brandName} does not offer (like an integration, an app or a product), do not repeat it back as if it were our work; just thank them and talk about home interiors.`,
-          first
-            ? `3. End with one natural question, in the same language as the rest, asking for: ${first.label} That is only the topic: do not copy its words.`
-            : "3. End by asking how you can help, in the same language as the rest.",
-          "If the comment is in Tanglish (Tamil in English letters, like \"evlo aagum\") or Hinglish (like \"kitna hoga\"), every sentence must be in that same style, not English.",
-          "Two or three short sentences in total. No emojis, no hashtags, no links. Do not start with Great, Perfect, Absolutely, Certainly or Wonderful.",
-          "Return only the message.",
-        ].join("\n"),
-      }],
-      temperature: 0.4,
-      maxTokens: 400,
-      timeoutMs: 45_000,
-    });
-    const text = raw.replace(/^(?:message|reply)\s*:\s*/i, "").replace(/^["'“]+|["'”]+$/g, "").trim();
-    if (!text || text.length > 700 || !text.includes("?")) return null;
-    // The opener never volunteers budget talk, and asks one thing.
-    const priced = askingPrice(input.comment) ? text : dropUnaskedPrice(text).split(/(?<=[.!?])\s+/).filter((part) => !/\b(budget|price|cost|quote)\b/i.test(part)).join(" ");
-    const trimmed = oneQuestion(dropAskReason(dropTimelinePromise(priced)));
-    // Instagram and Facebook allow one private reply to a comment until they write back, so it is one
-    // message, but each thought on its own line, the way it reads on WhatsApp.
-    const lines = humanizeReply(trimmed.includes("?") ? trimmed : text).split(/(?<=[.!?])\s+/).map((part) => part.trim()).filter(Boolean);
-    return lines.join("\n");
-  } catch (error) {
-    console.warn(`Opening message failed: ${error instanceof Error ? error.message : String(error)}`);
-    return null;
-  }
+    : Boolean(profileName);
+  return `Hi${usableName ? ` ${profileName}` : ""}, I am ${workspace.agentName ?? "Varun"}, the AI assistant for ${workspace.brandName}.`;
 }
 
 const plainWords = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
