@@ -35,3 +35,10 @@ describe("guardrails on Claude's words", () => {
     expect(ruleBreaks(["Our team will call you on +91 63836 53279 to confirm.", "You can see our work here: https://www.thekarighars.com/videos/"], context({ previousAi: [] }))).toEqual([]);
   });
 });
+
+describe("question count", () => {
+  it("does not count the ? inside a link", () => {
+    const context = { latest: "", allowedText: "https://www.youtube.com/watch?v=tSh1xAt-Tmg", allowedPhones: [], allowedEmails: [], previousAi: [], otherFirm: null };
+    expect(ruleBreaks(["We have done a villa there: https://www.youtube.com/watch?v=tSh1xAt-Tmg", "May I know your name?"], context)).toEqual([]);
+  });
+});

@@ -177,6 +177,8 @@ export function placeFacts(input: {
   const area = builder ? null : areaOnly(input.place);
   if (builder) facts.push(`They named only the builder (${builder}), not the property: ask which ${builder} property and where.`);
   else if (area) facts.push(`They named only an area (${area}), not the property name.`);
+  // Nobody can list every short form people use: when the lookup cannot place the name, Varun asks for the full one.
+  if (!builder && !area && !input.found) facts.push(`Property lookup could not find "${input.place}". If it looks like a short form, a nickname or a misspelling (like "APR" or "PWM"), ask once, naturally, for the full name of the project and the area. If they already gave the full name, or say it is a small or new project, accept it and carry on.`);
   const found = input.found;
   if (found) {
     facts.push([
@@ -260,6 +262,7 @@ export function ruleBreaks(bubbles: string[], context: RuleContext): string[] {
   if (context.previousAi.length && said(text) && context.previousAi.some((previous) => said(previous) === said(text))) {
     breaks.push("It repeats your previous message word for word. Say something new or move to the next detail.");
   }
-  if ((text.match(/\?/g) ?? []).length > 1) breaks.push("It asks more than one question. Ask exactly one.");
+  // A "?" inside a link (youtube.com/watch?v=) is not a question.
+  if ((text.replace(/https?:\/\/\S+/g, " ").match(/\?/g) ?? []).length > 1) breaks.push("It asks more than one question. Ask exactly one.");
   return breaks;
 }
