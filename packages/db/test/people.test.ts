@@ -122,7 +122,7 @@ describeDb("one person across channels", () => {
     await drain();
 
     expect(upserts).toHaveLength(1);
-    expect(upserts[0]!.key).toBe(insta.lead.id);
+    // An update goes to the existing record by its Zoho id; the lead key is only sent when the record is created.
     expect(upserts[0]!.existingId).toBe(firstMapping.crmId);
     expect(upserts[0]!.description).toMatch(/Channels: Instagram, WhatsApp/);
     const waMapping = await db.crmMapping.findUniqueOrThrow({ where: { leadId: whats.lead.id } });

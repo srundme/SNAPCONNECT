@@ -616,6 +616,8 @@ model CrmMapping {
   leadId           String   @unique
   crmId            String?
   syncedRevision   Int      @default(0)
+  /// The values last sent to Zoho, so later syncs send only what changed in the chat.
+  syncedFields     Json?
   simulated        Boolean  @default(false)
   lead             Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
 }

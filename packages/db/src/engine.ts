@@ -3917,17 +3917,51 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
     if (lines.length) record.Description = [record.Description, ...lines].filter(Boolean).join("\n");
     if (mapping.externalKeyField) record[mapping.externalKeyField] = lead.id;
   }
-  let result = lead.workspace.mode === "INTEGRATION"
-    ? await liveZohoUpsert(db, runtime, zoho, record, duplicateCheckFields(mapping), lead.crm?.crmId)
+  // After the first send, only what changed in the chat goes to Zoho, so the team's own edits there are kept:
+  // a corrected answer replaces the old one; a field filled for the first time is skipped if the team already filled it.
+  const live = lead.workspace.mode === "INTEGRATION";
+  const previous = (lead.crm?.crmId ? (lead.crm.syncedFields as Record<string, string> | null) : null) ?? null;
+  let outgoing: Record<string, string> = record;
+  let remembered: Record<string, string> = { ...record };
+  if (lead.crm?.crmId) {
+    const createOnly = new Set([mapping.externalKeyField, "Lead_Source"].filter(Boolean) as string[]);
+    const fresh = Object.entries(record).filter(([field, value]) => !createOnly.has(field) && field !== "Description" && previous?.[field] !== value);
+    const corrected = fresh.filter(([field]) => previous !== null && previous[field] !== undefined);
+    const firstTime = fresh.filter(([field]) => previous === null || previous[field] === undefined);
+    const firstKept: Array<[string, string]> = [];
+    const teamFilled: Record<string, string> = {};
+    if (firstTime.length) {
+      const fields = firstTime.map(([field]) => field);
+      const current = live
+        ? await liveZohoFields(db, runtime, zoho, lead.crm.crmId, fields)
+        : (await runtime.zoho.fetchFields?.({ apiDomain: "simulation", token: "simulation", id: lead.crm.crmId, fields })) ?? null;
+      if (current) {
+        for (const [field, value] of firstTime) {
+          if ((current[field] ?? "").trim() && current[field] !== value) teamFilled[field] = value;
+          else firstKept.push([field, value]);
+        }
+      }
+      // Zoho could not be read: send nothing new this time rather than risk overwriting the team.
+    }
+    const descriptionChanged = record.Description !== undefined && previous?.Description !== record.Description;
+    outgoing = Object.fromEntries([...corrected, ...firstKept, ...(descriptionChanged ? [["Description", record.Description!] as [string, string]] : [])]);
+    remembered = { ...(previous ?? {}), ...teamFilled, ...outgoing };
+    if (!Object.keys(outgoing).length) {
+      await db.crmMapping.update({ where: { leadId: lead.id }, data: { syncedRevision: lead.revision, syncedFields: remembered } });
+      return "done";
+    }
+  }
+  let result = live
+    ? await liveZohoUpsert(db, runtime, zoho, outgoing, duplicateCheckFields(mapping), lead.crm?.crmId)
     : await runtime.zoho.upsert({
       apiDomain: zoho?.apiDomain ?? "https://www.zohoapis.com",
       token: "workspace-token",
-      record,
+      record: outgoing,
       duplicateCheckFields: duplicateCheckFields(mapping),
       existingId: lead.crm?.crmId,
       trigger: [],
     });
-  if (result?.status === "FAILED" && lead.channel === "WHATSAPP" && lead.workspace.mode === "INTEGRATION" && record.Lead_Source !== mapping.facebookSourceValue) {
+  if (result?.status === "FAILED" && !lead.crm?.crmId && lead.channel === "WHATSAPP" && lead.workspace.mode === "INTEGRATION" && record.Lead_Source !== mapping.facebookSourceValue) {
     result = await liveZohoUpsert(db, runtime, zoho, { ...record, Lead_Source: mapping.facebookSourceValue }, duplicateCheckFields(mapping), lead.crm?.crmId);
   }
   if (!result) {
@@ -3938,8 +3972,8 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
   if (result.status === "SUCCESS") {
     await db.crmMapping.upsert({
       where: { leadId: lead.id },
-      update: { crmId: result.crmId, syncedRevision: lead.revision, simulated: result.simulated },
-      create: { leadId: lead.id, crmId: result.crmId, syncedRevision: lead.revision, simulated: result.simulated },
+      update: { crmId: result.crmId, syncedRevision: lead.revision, simulated: result.simulated, syncedFields: remembered },
+      create: { leadId: lead.id, crmId: result.crmId, syncedRevision: lead.revision, simulated: result.simulated, syncedFields: remembered },
     });
     await db.lead.update({ where: { id: lead.id }, data: { crmState: "SYNCED" } });
     // The person's other channels point at the same Zoho record from now on.
@@ -3967,10 +4001,42 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
   return "done";
 }
 
+type ZohoConnectionRow = { id: string; mode: string; apiDomain: string | null; credentialCiphertext: string | null; credentialKeyId: string | null; refreshCiphertext: string | null; expiresAt: Date | null };
+
+/** The current values of some fields on a live Zoho lead, or null when they cannot be read. */
+async function liveZohoFields(db: Db, runtime: Runtime, zoho: ZohoConnectionRow | null, id: string, fields: string[]): Promise<Record<string, string> | null> {
+  if (!zoho || zoho.mode !== "INTEGRATION" || !zoho.credentialCiphertext || !zoho.refreshCiphertext || !zoho.credentialKeyId) return null;
+  if (!runtime.zohoClientId || !runtime.zohoClientSecret || !runtime.zohoAccountsUrl) return null;
+  try {
+    let token = decryptSecret(zoho.credentialCiphertext, runtime.credentialKeys);
+    let apiDomain = zoho.apiDomain ?? "https://www.zohoapis.com";
+    if (!zoho.expiresAt || zoho.expiresAt.getTime() < Date.now() + 60_000) {
+      const refreshed = await refreshZohoAccess({
+        accountsUrl: runtime.zohoAccountsUrl,
+        clientId: runtime.zohoClientId,
+        clientSecret: runtime.zohoClientSecret,
+        refreshToken: decryptSecret(zoho.refreshCiphertext, runtime.credentialKeys),
+      });
+      token = refreshed.accessToken;
+      if (refreshed.apiDomain) apiDomain = refreshed.apiDomain;
+      const key = runtime.credentialKeys[zoho.credentialKeyId];
+      if (key) {
+        await db.zohoConnection.update({
+          where: { id: zoho.id },
+          data: { credentialCiphertext: encryptSecret(token, key, zoho.credentialKeyId), expiresAt: refreshed.expiresAt, apiDomain },
+        });
+      }
+    }
+    return (await zohoAdapter().fetchFields?.({ apiDomain, token, id, fields })) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function liveZohoUpsert(
   db: Db,
   runtime: Runtime,
-  zoho: { id: string; mode: string; apiDomain: string | null; credentialCiphertext: string | null; credentialKeyId: string | null; refreshCiphertext: string | null; expiresAt: Date | null } | null,
+  zoho: ZohoConnectionRow | null,
   record: Record<string, string>,
   duplicateCheckFields: string[],
   existingId: string | null | undefined,
