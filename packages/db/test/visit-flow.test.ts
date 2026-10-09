@@ -14,7 +14,7 @@ const describeDb = databaseUrl ? describe : describe.skip;
 
 describeDb("visit flow after the consultation offer", () => {
   const db = createPrisma(databaseUrl ?? "postgresql://unused");
-  // Jobs are scheduled in real time, so the test clock starts now and only moves forward.
+  // Real time throughout; queued replies are pulled forward instead of waiting out the typing delay.
   let clock = new Date();
   // Tomorrow at 4 PM, unless tomorrow is the Monday off: then Tuesday.
   const tomorrow = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", weekday: "long" }).format(new Date(Date.now() + 86_400_000));
@@ -24,7 +24,7 @@ describeDb("visit flow after the consultation offer", () => {
   const base = simulationRuntime();
   const runtime: Runtime = {
     ...base,
-    now: () => clock,
+    now: () => new Date(),
     llm: {
       ...fixtureLlm(),
       async generate() {
@@ -41,8 +41,7 @@ describeDb("visit flow after the consultation offer", () => {
     for (let index = 0; index < 20; index += 1) {
       const pending = await db.outboxJob.count({ where: { status: "PENDING", workspaceId: workspaceId } });
       if (pending === 0) return;
-      // The test clock is fixed; let it pass the short reply delay.
-      clock = new Date(clock.getTime() + 15_000);
+      await db.outboxJob.updateMany({ where: { status: "PENDING", workspaceId }, data: { availableAt: new Date() } });
       await processAvailableJobs(db, runtime, 30);
     }
   }
@@ -92,8 +91,9 @@ describeDb("visit flow after the consultation offer", () => {
     await add("AI", "Shall I book a free consultation for you, or would you like to visit our experience centre?");
 
     const say = async (text: string, reply: string) => {
-      clock = new Date(clock.getTime() + 30_000);
-      at = clock.getTime() - 1;
+      // WhatsApp timestamps are whole seconds: a real reply never lands in the same second as Varun's.
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      clock = new Date();
       draft = reply;
       const before = new Set((await db.message.findMany({ where: { conversationId: conversation.id, author: "AI" }, select: { id: true } })).map((message) => message.id));
       const events = normalizeMetaPayload("WHATSAPP", {
@@ -110,9 +110,14 @@ describeDb("visit flow after the consultation offer", () => {
     expect(both).toMatch(/which day and time would you like to visit\?/i);
     expect(await db.message.count({ where: { conversationId: conversation.id, author: "SYSTEM", body: { startsWith: "Situation: flood" } } })).toBe(0);
 
+    const late = await say(`${slotDay} 9pm`, "That is outside our working hours.");
+    expect(late).toMatch(/working hours/i);
     const slot = await say(`I want ${slotDay} 4 pm`, `Ok sir 4 PM ${slotDay} works. We will confirm.`);
     expect(slot).toMatch(new RegExp(`noted,? ${slotDay} at 4 PM at our experience centre`, "i"));
     expect(slot).toMatch(/our team will call you on \+\d+ to confirm it/i);
     expect(slot).not.toMatch(/\bworks\b/i);
+    // The team hears about the time they finally chose, not only the first one.
+    const slots = await db.teamAlert.findMany({ where: { conversationId: conversation.id, kind: "slot" } });
+    expect(slots.some((alert) => /4 PM/.test(alert.text))).toBe(true);
   });
 });

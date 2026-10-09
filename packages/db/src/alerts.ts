@@ -27,7 +27,8 @@ export async function raiseAlert(
   input: { workspaceId: string; conversationId: string; kind: AlertKind; text: string },
 ): Promise<void> {
   const recent = await db.teamAlert.findFirst({
-    where: { conversationId: input.conversationId, kind: input.kind, createdAt: { gte: new Date(runtime.now().getTime() - REPEAT_AFTER_MS) } },
+    // A new time is a new slot: "tomorrow 9 PM" then "today 4 PM" must both reach the team.
+    where: { conversationId: input.conversationId, kind: input.kind, ...(input.kind === "slot" ? { text: input.text } : {}), createdAt: { gte: new Date(runtime.now().getTime() - REPEAT_AFTER_MS) } },
     select: { id: true },
   });
   if (recent) return;
