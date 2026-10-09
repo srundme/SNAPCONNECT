@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { Bell, BellOff, MessageSquare, Volume2, X } from "lucide-react";
+import { Bell, BellOff, Flag, MessageSquare, Volume2, X } from "lucide-react";
 import { clsx } from "clsx";
 import { markAlertsRead } from "@/lib/actions";
 import { agoIST } from "@/lib/format";
@@ -15,6 +15,9 @@ export type TeamAlertItem = {
   conversationId: string;
   createdAt: string;
 };
+
+/** Safety-check flags (info fishing, floods, spam) are quiet: grey, and no chime. */
+const isFlag = (item: { kind: string }) => item.kind === "flag";
 
 type Toast = TeamAlertItem & { shownAt: number };
 
@@ -159,7 +162,7 @@ export function AlertsProvider({ enabled, children }: { enabled: boolean; childr
             if (fresh.length) {
               const shownAt = Date.now();
               setToasts((current) => [...fresh.reverse().map((item) => ({ ...item, shownAt })), ...current].slice(0, 4));
-              play();
+              if (fresh.some((item) => !isFlag(item))) play();
             }
           }
         }
@@ -228,11 +231,19 @@ export function AlertsProvider({ enabled, children }: { enabled: boolean; childr
                   role="status"
                   className="pointer-events-auto flex items-start gap-3 rounded-2xl border border-[var(--color-line)] bg-white px-4 py-3 text-[var(--color-ink)] shadow-[var(--shadow-lift)]"
                 >
-                  <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#f4ead2] text-[var(--color-accent-ink)]" aria-hidden>
-                    <Bell size={15} />
+                  <span
+                    className={clsx(
+                      "mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full",
+                      isFlag(toast) ? "bg-[#f1efeb] text-[var(--color-muted)]" : "bg-[#f4ead2] text-[var(--color-accent-ink)]",
+                    )}
+                    aria-hidden
+                  >
+                    {isFlag(toast) ? <Flag size={15} /> : <Bell size={15} />}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-accent-ink)]">Team alert</p>
+                    <p className={clsx("text-[11px] font-semibold uppercase tracking-[0.08em]", isFlag(toast) ? "text-[var(--color-muted)]" : "text-[var(--color-accent-ink)]")}>
+                      {isFlag(toast) ? "Flagged chat" : "Team alert"}
+                    </p>
                     <p className="mt-0.5 text-pretty text-sm font-medium leading-5">{toast.text}</p>
                     <Link
                       href={`/inbox?id=${encodeURIComponent(toast.conversationId)}`}
@@ -379,9 +390,17 @@ export function AlertBell({ placement, className }: { placement: "sidebar" | "to
               {alerts.length ? (
                 <ul className="min-h-0 flex-1 divide-y divide-[var(--color-line)] overflow-y-auto overscroll-contain">
                   {alerts.map((alert) => (
-                    <li key={alert.id} className="px-4 py-3">
-                      <p className="text-[11.5px] font-medium text-[var(--color-muted)]">{agoIST(alert.createdAt)}</p>
-                      <p className="mt-0.5 text-pretty text-sm leading-5">{alert.text}</p>
+                    <li key={alert.id} className={clsx("px-4 py-3", isFlag(alert) && "bg-[#faf9f7]")}>
+                      <p className="flex items-center gap-1.5 text-[11.5px] font-medium text-[var(--color-muted)]">
+                        {isFlag(alert) ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-[#efece7] px-1.5 py-px text-[10.5px] font-semibold">
+                            <Flag size={10} aria-hidden />
+                            Flagged
+                          </span>
+                        ) : null}
+                        {agoIST(alert.createdAt)}
+                      </p>
+                      <p className={clsx("mt-0.5 text-pretty text-sm leading-5", isFlag(alert) && "text-[#4a4239]")}>{alert.text}</p>
                       <Link
                         href={`/inbox?id=${encodeURIComponent(alert.conversationId)}`}
                         onClick={() => close(false)}

@@ -337,6 +337,9 @@ export async function saveAiSettings(formData: FormData) {
   settings.alertNumbers = formData.has("alertNumbers") ? String(formData.get("alertNumbers") ?? "").replace(/\r\n/g, "\n") : saved.alertNumbers;
   settings.alertTemplate = formData.has("alertTemplate") ? String(formData.get("alertTemplate") ?? "") : saved.alertTemplate;
   settings.alertTemplateLanguage = formData.has("alertTemplateLanguage") ? String(formData.get("alertTemplateLanguage") ?? "") : saved.alertTemplateLanguage;
+  settings.summaryNumbers = formData.has("summaryNumbers") ? String(formData.get("summaryNumbers") ?? "").replace(/\r\n/g, "\n") : saved.summaryNumbers;
+  settings.summaryTemplate = formData.has("summaryTemplate") ? String(formData.get("summaryTemplate") ?? "") : saved.summaryTemplate;
+  settings.completedProjects = formData.has("completedProjects") ? String(formData.get("completedProjects") ?? "").replace(/\r\n/g, "\n") : saved.completedProjects;
   for (const key of agentToggles) settings[key] = formData.get(`toggle:${key}`) === "on";
   for (const [key, limit] of Object.entries(agentTextLimits)) settings[key] = String(formData.get(key) ?? "").trim().slice(0, limit);
   settings.followUpHours = parseFollowUpHours(formData.get("followUpHours"));

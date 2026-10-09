@@ -6,3 +6,4 @@ export { connectionSender } from "./sender";
 export * from "./people";
 export * from "./projects";
 export * from "./alerts";
+export * from "./summary";

@@ -13,9 +13,19 @@ export type TakeoverBrief = {
   language: string | null;
   last: { text: string; at: Date } | null;
   handoff: string | null;
+  /** Warnings from the safety checks: info fishing, message floods, broadcast spam. */
+  flags: string[];
+  /** The completed home Varun mentioned, when he did. */
+  proof: string | null;
 };
 
 type BriefMessage = { author: "PROSPECT" | "AI" | "STAFF" | "SYSTEM"; body: string; createdAt: Date };
+
+const SITUATION_FLAGS: Array<[string, string]> = [
+  ["Situation: info-seeking", "⚠️ Asking many questions but sharing no home details. Possibly price or info fishing."],
+  ["Situation: flood", "⚠️ Sent a burst of messages; replies paused for 30 minutes."],
+  ["Situation: broadcast", "⚠️ Same message seen from many senders (likely spam)."],
+];
 
 const OFFER_WISH: Record<string, string> = {
   consultation: "Wants a consultation",
@@ -91,7 +101,12 @@ export function buildBrief(input: {
 
   const handoff = input.handedAutomatically && lead?.handoffReason?.trim() ? lead.handoffReason.trim() : null;
 
-  return { profile, rating, intent, language, last, handoff };
+  const flags = SITUATION_FLAGS.filter(([prefix]) => system.some((message) => message.body.startsWith(prefix))).map(([, text]) => text);
+  const proofNote = [...system].reverse().find((message) => message.body.startsWith("Proof: "));
+  const proofPlace = proofNote?.body.slice("Proof: ".length).split(" |")[0]?.trim();
+  const proof = proofPlace ? `Varun mentioned our completed home in ${clip(proofPlace, 60)}` : null;
+
+  return { profile, rating, intent, language, last, handoff, flags, proof };
 }
 
 function Line({ children }: { children: ReactNode }) {
@@ -154,6 +169,10 @@ export function Brief({ brief, compact = false, open = true }: { brief: Takeover
             ) : null}
           </Line>
         ) : null}
+        {brief.proof ? <Line>{brief.proof}</Line> : null}
+        {brief.flags.map((flag) => (
+          <Line key={flag}><span className="text-[#8a4b0f]">{flag}</span></Line>
+        ))}
         {brief.handoff ? (
           <Line>
             <span className="text-[#8a4b0f]">Handed to the team because: </span>

@@ -206,3 +206,14 @@ describe("email checks", () => {
     expect(emailProblem("priya.nair92@yahoo.com")).toBeNull();
   });
 });
+
+describe("proof from completed homes", () => {
+  it("matches only the same property", async () => {
+    const { parseCompletedProjects, completedInProperty } = await import("../src/index");
+    const done = parseCompletedProjects("Adarsh Palm Retreat | Bellandur | 4 BHK villa | https://www.thekarighars.com/apr\nPrestige Lakeside Habitat | Varthur | 3 BHK apartment |");
+    expect(completedInProperty("Adarsh Palm Retreat, Bellandur, Bengaluru", done)?.link).toBe("https://www.thekarighars.com/apr");
+    expect(completedInProperty("prestige lakeside habitat", done)?.home).toBe("3 BHK apartment");
+    expect(completedInProperty("Prestige Shantiniketan", done)).toBeNull();
+    expect(completedInProperty("Bellandur", done)).toBeNull();
+  });
+});

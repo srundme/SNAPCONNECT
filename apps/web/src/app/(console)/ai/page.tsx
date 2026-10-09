@@ -50,6 +50,9 @@ export default async function AiPage({ searchParams }: { searchParams: Promise<{
               alertNumbers: settings.alertNumbers,
               alertTemplate: settings.alertTemplate,
               alertTemplateLanguage: settings.alertTemplateLanguage,
+              summaryNumbers: settings.summaryNumbers,
+              summaryTemplate: settings.summaryTemplate,
+              completedProjects: settings.completedProjects,
               toggles: Object.fromEntries(agentToggles.map((key) => [key, settings[key]])),
             }}
             questions={questions.map((question) => ({ label: question.label, zohoField: question.zohoField ?? defaultZohoField(question), required: question.required }))}

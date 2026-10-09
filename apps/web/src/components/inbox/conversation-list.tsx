@@ -20,6 +20,8 @@ export type ListRow = {
   alsoOn: Channel[];
   /** An open "possibly the same person" suggestion waits for the team. */
   possibleMatch: boolean;
+  /** A safety check flagged this chat: info fishing, a message flood or broadcast spam. */
+  flagged: boolean;
 };
 
 const GLYPH_TONE: Record<Channel, string> = {
@@ -155,6 +157,11 @@ export function ConversationList({ rows, state, selectedId, hiddenTests }: { row
                         <span aria-hidden className="size-1.5 rounded-full bg-[var(--color-accent)]" />
                         <span className="hidden sm:inline">Possible match</span>
                         <span className="sr-only sm:hidden">Possible match</span>
+                      </span>
+                    ) : null}
+                    {row.flagged ? (
+                      <span title="Flagged by a safety check: info fishing, a message burst or likely spam" className="inline-flex shrink-0 items-center rounded-full border border-[var(--color-line)] bg-[var(--color-paper)] px-1.5 py-px text-[10.5px] font-semibold text-[var(--color-muted)]">
+                        Flagged
                       </span>
                     ) : null}
                     <span className="ml-auto min-w-0"><OwnerBadge owner={row.owner} /></span>

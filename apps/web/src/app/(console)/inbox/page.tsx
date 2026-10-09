@@ -13,6 +13,7 @@ import { customerHandle, customerName, isTestContact, ownership, readAnswers, ty
 import { readInboxState } from "@/components/inbox/params";
 
 const LIST_SIZE = 60;
+const SITUATION_PREFIXES = ["Situation: info-seeking", "Situation: flood", "Situation: broadcast"];
 
 export default async function InboxPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
@@ -57,7 +58,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     ? await db.conversation.findFirst({ where: { id: state.id, workspaceId: workspace.id }, include: { contact: true } })
     : visible[0] ? await db.conversation.findFirst({ where: { id: visible[0].id, workspaceId: workspace.id }, include: { contact: true } }) : null;
 
-  const [leads, messages, lead, connection] = await Promise.all([
+  const [leads, messages, lead, connection, flagNotes] = await Promise.all([
     db.lead.findMany({
       where: { workspaceId: workspace.id, archivedAt: null, contactId: { in: visible.map((item) => item.contactId) } },
       select: { contactId: true, rating: true, handoffReason: true, phoneE164: true },
@@ -66,7 +67,20 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     selectedBase ? db.message.findMany({ where: { conversationId: selectedBase.id }, orderBy: { createdAt: "asc" } }) : Promise.resolve([]),
     selectedBase ? db.lead.findFirst({ where: { contactId: selectedBase.contactId, archivedAt: null }, orderBy: { createdAt: "desc" } }) : Promise.resolve(null),
     selectedBase ? db.channelConnection.findUnique({ where: { id: selectedBase.connectionId } }) : Promise.resolve(null),
+    // Safety-check flags for the listed chats, in one query: info fishing, floods and broadcast spam.
+    visible.length
+      ? db.message.findMany({
+        where: {
+          conversationId: { in: visible.map((item) => item.id) },
+          author: "SYSTEM",
+          OR: SITUATION_PREFIXES.map((prefix) => ({ body: { startsWith: prefix } })),
+        },
+        distinct: ["conversationId"],
+        select: { conversationId: true },
+      })
+      : Promise.resolve([]),
   ]);
+  const flaggedIds = new Set(flagNotes.map((note) => note.conversationId));
   // What public listings say about their project, from the project memory: no search from here.
   // Same text and key the assistant used when it looked the project up.
   const placeText = lead ? placeAnswer(parseLeadQuestions(workspace.leadQuestions), readAnswers(lead.answers)).slice(0, 120) : "";
@@ -168,6 +182,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
       owner: ownership(item, names, me, itemLead?.handoffReason ?? null),
       alsoOn: alsoOn(item.contact, item.channel),
       possibleMatch: (suggestionsByContact.get(item.contactId) ?? 0) > 0,
+      flagged: flaggedIds.has(item.id),
     };
   });
 

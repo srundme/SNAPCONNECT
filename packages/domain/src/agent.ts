@@ -35,6 +35,12 @@ export type AgentSettings = {
   /** A Meta-approved WhatsApp template for alerts (one body variable), so they arrive any time. Empty = plain text. */
   alertTemplate: string;
   alertTemplateLanguage: string;
+  /** Owners who get the 9 AM summary, one per line: "Karthikeyan: +91 63836 53279". */
+  summaryNumbers: string;
+  /** A Meta-approved template for the summary (one body variable), so it arrives any day. */
+  summaryTemplate: string;
+  /** Homes the firm has done, one per line: "Adarsh Palm Retreat | Bellandur | 4 BHK villa | https://…". */
+  completedProjects: string;
 };
 
 export const defaultAgentSettings: AgentSettings = {
@@ -67,6 +73,9 @@ export const defaultAgentSettings: AgentSettings = {
   alertNumbers: "",
   alertTemplate: "",
   alertTemplateLanguage: "en",
+  summaryNumbers: "",
+  summaryTemplate: "",
+  completedProjects: "",
 };
 
 const TOGGLES = [
@@ -130,6 +139,9 @@ export function parseAgentSettings(value: unknown): AgentSettings {
   if (typeof record.alertNumbers === "string") settings.alertNumbers = record.alertNumbers.trim().slice(0, 2000);
   if (typeof record.alertTemplate === "string") settings.alertTemplate = record.alertTemplate.trim().replace(/[^a-z0-9_]/gi, "").slice(0, 80);
   if (typeof record.alertTemplateLanguage === "string" && record.alertTemplateLanguage.trim()) settings.alertTemplateLanguage = record.alertTemplateLanguage.trim().slice(0, 10);
+  if (typeof record.summaryNumbers === "string") settings.summaryNumbers = record.summaryNumbers.trim().slice(0, 2000);
+  if (typeof record.summaryTemplate === "string") settings.summaryTemplate = record.summaryTemplate.trim().replace(/[^a-z0-9_]/gi, "").slice(0, 80);
+  if (typeof record.completedProjects === "string") settings.completedProjects = record.completedProjects.trim().slice(0, 20000);
   return settings;
 }
 

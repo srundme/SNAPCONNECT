@@ -2,7 +2,7 @@ import { parseAgentSettings, parsePhone } from "@snapsocial/domain";
 import type { Db } from "./client";
 import type { Runtime, SendConnection } from "./engine";
 
-export type AlertKind = "hot" | "meeting" | "slot" | "person" | "complaint";
+export type AlertKind = "hot" | "meeting" | "slot" | "person" | "complaint" | "flag";
 
 const REPEAT_AFTER_MS = 6 * 3_600_000;
 
@@ -33,6 +33,8 @@ export async function raiseAlert(
   if (recent) return;
   const alert = await db.teamAlert.create({ data: { workspaceId: input.workspaceId, conversationId: input.conversationId, kind: input.kind, text: input.text } });
 
+  // A flag (possible info-seeking, spam) is for the console only, never a WhatsApp ping.
+  if (input.kind === "flag") return;
   const workspace = await db.workspace.findUnique({ where: { id: input.workspaceId }, select: { agentSettings: true } });
   const settings = parseAgentSettings(workspace?.agentSettings);
   const everyone = alertRecipients(settings.alertNumbers, runtime.phoneRegion);

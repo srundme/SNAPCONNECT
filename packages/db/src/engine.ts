@@ -106,6 +106,8 @@ import {
   phoneProblem,
   dropRepeatedSentences,
   fullWords,
+  completedInProperty,
+  parseCompletedProjects,
   emailProblem,
   builderOnly,
   weVoice,
@@ -1551,6 +1553,37 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       });
       return "done";
     }
+    // Spam: a burst of messages pauses this chat for 30 minutes; the same text from many senders gets no reply.
+    const nowMs = runtime.now().getTime();
+    // Typed messages only: a customer sharing 15 photos of their home is not spam.
+    const burst = spoken.filter((message) => message.author === "PROSPECT" && nowMs - message.createdAt.getTime() < 10 * 60_000 && !/^\(Sent (?:a |an )?(?:photo|voice|document|attachment|video|sticker)/i.test(message.body)).length;
+    const floodNote = conversation.messages.filter((message) => message.author === "SYSTEM" && message.body.startsWith("Situation: flood")).at(-1);
+    const latestText = [...spoken].reverse().find((message) => message.author === "PROSPECT")?.body.trim() ?? "";
+    // Only promotional text counts: ad leads all send the same prefilled "Hi, I'm interested" and must get replies.
+    const promotional = /https?:\/\/|www\.|\b(offer|discount|earn|click|join|subscribe|loan|crypto|bitcoin|investment|followers|promotion|deal|lottery|winner)\b/i.test(latestText);
+    const sameElsewhere = promotional && latestText.length >= 20 && !/^\(/.test(latestText)
+      ? await db.message.groupBy({
+        by: ["conversationId"],
+        where: { workspaceId: workspace.id, author: "PROSPECT", body: latestText, createdAt: { gte: new Date(nowMs - 2 * 3_600_000) } },
+      }).then((rows) => rows.length).catch(() => 0)
+      : 0;
+    const spamStop = burst >= 15
+      ? "flood"
+      : floodNote && nowMs - floodNote.createdAt.getTime() < 30 * 60_000
+        ? "flood-wait"
+        : sameElsewhere >= 5 ? "broadcast" : null;
+    if (spamStop) {
+      if (spamStop !== "flood-wait") {
+        await db.message.create({
+          data: { workspaceId: workspace.id, connectionId: conversation.connectionId, conversationId, author: "SYSTEM", body: spamStop === "flood" ? `Situation: flood | ${burst} messages in 10 minutes. Replies paused for 30 minutes.` : `Situation: broadcast | The same message came from ${sameElsewhere} chats in 2 hours.`, createdAt: runtime.now() },
+        });
+        await alertTeam("flag", spamStop === "flood" ? `⚠️ ${conversation.contact.displayName ?? conversation.contact.username ?? "A chat"} sent ${burst} messages in 10 minutes. Replies paused for 30 minutes.` : `⚠️ The same message came from ${sameElsewhere} chats. Treated as spam, no reply.`);
+      }
+      await db.aiRun.create({
+        data: { workspaceId: workspace.id, conversationId, model: runtime.llm.model, simulated: runtime.llm.mode === "fixture", latencyMs: 0, valid: true, diagnostic: `No reply: ${spamStop === "broadcast" ? "same message from many senders" : "message flood"}.` },
+      });
+      return "done";
+    }
     const recent = spoken.slice(-MEMORY_WINDOW);
     const prospectTimes = spoken.filter((message) => message.author === "PROSPECT").map((message) => message.createdAt.getTime());
     const gapHours = prospectTimes.length >= 2 ? (prospectTimes[prospectTimes.length - 1]! - prospectTimes[prospectTimes.length - 2]!) / 3_600_000 : 0;
@@ -1848,6 +1881,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         && !spoken.some((message) => message.author === "AI" && /\bdid you mean\b/i.test(message.body) && message.body.toLowerCase().includes(found.name.toLowerCase()))) {
         const typed = found.shortForm ?? found.correctedFrom ?? (absorbed.answers[placeQuestionEarly.id] ?? "").trim();
         projectAsk = `${found.shortForm ? `By ${typed}, did` : "Did"} you mean ${found.name}${found.locality ? ` in ${found.locality}` : ""}?`;
+      }
+      // Proof from past work: a home we have really completed in their property, mentioned once.
+      const completed = projectQuery && !builderNamed ? completedInProperty(found?.name ?? projectQuery, parseCompletedProjects(agent.completedProjects)) : null;
+      if (completed && await noteOnce(`Proof: ${completed.property}`, `${completed.home || "a home"}${completed.link ? ` | ${completed.link}` : ""}`)) {
+        memoryLines.push(`We have completed ${completed.home ? `a ${completed.home}` : "homes"} in ${completed.property}, the same property as theirs. Mention it once, naturally, in a few words${completed.link ? `, and share this link to see it: ${completed.link}` : ""}. Never claim more than that, and never name the other owner.`);
       }
       const HOME_TYPE_ONLY = /^(?:it(?:'s| is) )?(?:an? )?(apartment|appartment|flat|villa|bungalow|independent house|individual house|row house|duplex|penthouse)(?: sir| ji)?\.?$/i;
       const SCOPE_ONLY = /^(?:(?:it(?:'s| is) )?(?:the )?(?:full|whole|entire|complete) (?:home|house|flat)|selected rooms|only (?:some|few) rooms)(?: sir| ji)?\.?$/i;
@@ -2173,6 +2211,26 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     memoryLines.push("They are exploring. Do not assume they have chosen the company. Answer what they asked before any question. One question at a time, about what they are considering. Do not give execution advice.");
     // A materials or warranty question gets only the matching entries, never the whole sheet.
+    // Internal business details are never shared with anyone, customer or not.
+    const SENSITIVE = /\b(suppliers?|vendors?|dealers?|factory|manufacturers?|margins?|mark-?up|rate cards?|rate lists?|boq|bill of quantit\w+|cost break ?-?ups?|break ?-?up of (?:the )?cost|labou?r (?:rate|cost|charges)|carpenter (?:rate|cost|charges|wages)|wholesale|commission|purchase price|cost price)\b/i;
+    if (SENSITIVE.test(freshText)) {
+      memoryLines.push("They asked for internal business details (suppliers, factory, margins, rate cards, cost breakups, labour rates). Never share these with anyone. In a few polite words say the team shares a detailed quotation with clients after the free consultation, then carry on.");
+    }
+    // Someone collecting answers without telling anything about a home: keep it short and general, ask about the home first.
+    const INFO_QUESTION = /\b(price|cost|how much|rate|budget|quote|quotation|materials?|ply(?:wood)?|brands?|hardware|hinges?|channels?|finish(?:es)?|laminates?|warranty|guarantee|process|timeline|how long|how many days|which company|suppliers?|vendors?|margins?)\b/i;
+    const infoQuestions = prospectBodies.filter((body) => INFO_QUESTION.test(body) && /\?|\b(what|which|how|tell|share|send|give)\b/i.test(body)).length;
+    const homeDetails = [recordedName, recordedPhone, ...questions.filter((question) => question.kind === "text").map((question) => recordedAnswers[question.id])].filter((value) => value && String(value).trim()).length;
+    const COMPETITOR = /\b(my client|our client|for (?:a |my )?client|i am (?:also )?(?:an )?interior|we are (?:also )?(?:an )?interior|i run an? interior|interior designer myself|for comparison|your competitor|which vendor do you use)\b/i;
+    if ((infoQuestions >= 4 && homeDetails <= 1) || COMPETITOR.test(freshText) || (SENSITIVE.test(freshText) && homeDetails <= 1)) {
+      if (await noteOnce("Situation: info-seeking", `${infoQuestions} detailed questions, ${homeDetails} home details shared${COMPETITOR.test(freshText) ? "; mentioned a client or being in interiors" : ""}.`)) {
+        await alertTeam("flag", `⚠️ Possible price or info fishing: ${conversation.contact.displayName ?? conversation.contact.username ?? "a chat"} asked ${infoQuestions} detailed questions without sharing home details.`);
+      }
+      memoryLines.push("They have asked several detailed questions without telling you anything about their home. Stay warm and never accuse them. Keep answers short, general and only what is public. Before going deeper, ask lightly about their home: which property it is and how many BHK.");
+    }
+    // A first message that is only a link.
+    if (prospectBodies.length === 1 && /^\s*(?:https?:\/\/|www\.)\S+\s*$/i.test(freshText)) {
+      memoryLines.push("Their only message is a link. Do not open or describe it. In one short polite line, say you help with home interiors and ask what they are looking for.");
+    }
     const materialsNote = materialLine(freshText, agent.materials, agent.warranty);
     if (materialsNote) memoryLines.push(materialsNote);
     const onlyHello = freshText.trim().length < 80

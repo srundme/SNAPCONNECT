@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { loadConfig, loadDotEnv } from "@snapsocial/config";
-import { connectionSender, getPrisma, processAvailableJobs, recoverStaleJobs, simulationRuntime } from "@snapsocial/db";
+import { connectionSender, getPrisma, processAvailableJobs, recoverStaleJobs, sendDailySummaries, simulationRuntime } from "@snapsocial/db";
 import { bravePlaceLookup, cartesiaSpeaker, fixtureLlm, ollamaLlm, sarvamDocumentReader, sarvamLlm, sarvamTranscriber, sarvamVision, whatsappMediaUrl } from "@snapsocial/integrations";
 
 loadDotEnv(process.cwd());
@@ -80,7 +80,14 @@ async function tick() {
   }
 }
 
+let summaryCheckedAt = 0;
+
 async function work() {
+  // The owners' 9 AM summary: checked once a minute, sent once a day.
+  if (Date.now() - summaryCheckedAt > 60_000) {
+    summaryCheckedAt = Date.now();
+    await sendDailySummaries(db, runtime).catch((error: unknown) => console.error("Daily summary failed:", error));
+  }
   await db.workerHeartbeat.upsert({
     where: { id: "worker" },
     update: { seenAt: new Date(), detail: config.LLM_MODE },

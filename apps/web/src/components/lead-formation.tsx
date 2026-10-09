@@ -50,6 +50,9 @@ export type AgentFormSettings = {
   alertNumbers: string;
   alertTemplate: string;
   alertTemplateLanguage: string;
+  summaryNumbers: string;
+  summaryTemplate: string;
+  completedProjects: string;
   toggles: Record<string, boolean>;
 };
 
@@ -280,6 +283,31 @@ export function AgentForm({
             <p className="rounded-xl bg-[#fbf7ee] px-3 py-2.5 text-[12px] leading-5 text-[var(--color-accent-ink)] sm:col-span-2">
               Alerts appear in the console instantly. On WhatsApp they arrive only if that person messaged the business number in the last 24 hours, or always once Meta approves an alert template (one body variable) and you enter its name here. The person who has taken a chat gets its alerts; otherwise everyone listed.
             </p>
+          </div>
+        </Section>
+        <Section title="Owner daily summary" detail="A short morning report on yesterday, sent to the owners.">
+          <div className="grid gap-4 p-5 sm:grid-cols-2">
+            <label className="sm:col-span-2">
+              Who gets the summary
+              <textarea name="summaryNumbers" rows={3} maxLength={2000} defaultValue={settings.summaryNumbers} spellCheck={false} placeholder={"Karthikeyan: +91 63836 53279\nPartner: +91 99000 22222"} />
+              <span className="text-[12px] text-[var(--color-muted)]">One person per line: name, a colon, then their WhatsApp number. Several numbers are fine.</span>
+            </label>
+            <label>
+              Summary template name
+              <input name="summaryTemplate" maxLength={80} defaultValue={settings.summaryTemplate} spellCheck={false} pattern="[A-Za-z0-9_]*" title="Letters, digits and underscores only" placeholder="daily_summary" />
+            </label>
+            <p className="rounded-xl bg-[#fbf7ee] px-3 py-2.5 text-[12px] leading-5 text-[var(--color-accent-ink)] sm:col-span-2">
+              Every day at 9 AM (India time) these numbers get yesterday&apos;s numbers: chats, new leads, HOT leads, consultations and visits requested, leads in Zoho, and chats waiting on the team. On WhatsApp it arrives only if that number messaged the business number in the last 24 hours, or always once Meta approves a summary template (one body variable) and you enter its name here.
+            </p>
+          </div>
+        </Section>
+        <Section title="Homes we have completed" detail="Real projects Varun can point to when a customer lives in the same property.">
+          <div className="p-5">
+            <label>
+              Completed homes
+              <textarea name="completedProjects" rows={6} maxLength={20000} defaultValue={settings.completedProjects} spellCheck={false} placeholder={"Adarsh Palm Retreat | Bellandur | 4 BHK villa | https://www.thekarighars.com/...\nPrestige Lakeside Habitat | Varthur | 3 BHK apartment |"} />
+              <span className="text-[12px] leading-5 text-[var(--color-muted)]">One per line: property | area | home | portfolio link (link optional). When a customer&apos;s home is in one of these properties, Varun mentions it once, naturally, with the link. Only list homes you have really completed.</span>
+            </label>
           </div>
         </Section>
         <Section title="6. Extra notes" detail="Anything else for every chat. A post can add its own notes under Replies.">
