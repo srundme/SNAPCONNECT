@@ -294,3 +294,25 @@ describe("questions without a reason tacked on", () => {
   });
 });
 const VISIT = "Shall I book a free consultation for you, or would you like to visit our experience centre?";
+
+describe("Gopi 9 Oct fixes", () => {
+  it("reads pushing for a number as a question, not 'not now'", async () => {
+    const { notNow } = await import("../src/situations");
+    expect(notNow("Okay give a number based on the I will decide what to do")).toBe(false);
+    expect(notNow("just looking for now")).toBe(true);
+  });
+  it("never rates a 3 BHK full home as junk on a typed area", async () => {
+    const { rateLead } = await import("../src/rating");
+    const questions = [
+      { id: "home", kind: "text" as const, label: "What kind of home is it: apartment, villa or independent house, and how many BHK?", required: true, zohoField: null },
+      { id: "area", kind: "text" as const, label: "Approximate carpet area in sq ft?", required: false, zohoField: null },
+    ];
+    expect(rateLead({ questions, answers: { home: "3 BHK Apartment", area: "1000 sq ft" }, hotBudgetLakhs: 30 }).rating).not.toBe("JUNK");
+  });
+  it("drops empty sympathy and 'we already have that'", async () => {
+    const { dropEmptyPraise, dropProcessTalk } = await import("../src/style");
+    expect(dropEmptyPraise("I hear you sir.\nWould you like to visit our experience centre?")).toBe("Would you like to visit our experience centre?");
+    expect(dropProcessTalk("We already have that sir. Which day suits you?")).toBe("Which day suits you?");
+    expect(dropProcessTalk("We have these details and will take it from here.")).toBe("");
+  });
+});

@@ -137,7 +137,10 @@ function check(scenario: Scenario, sent: string) {
   const justGiven = (key: string) => /bhk/i.test(key) && /\d\s*bhk/i.test(scenario.customer);
   for (const key of scenario.mustKeep) {
     if (norm(sent).includes(norm(key))) continue;
-    if (key === scenario.mustKeep[0] && (codeCheck || justGiven(key))) continue;
+    // The code may ask the same detail in its own words ("May I know your name?" for "What should I call you?").
+    const nextQuestion = QUESTIONS.find((question) => question.id === scenario.next);
+    const asksSameDetail = Boolean(nextQuestion) && sent.split(/\n+/).some((line) => (nextQuestion!.kind === "name" ? /\byour name\b|\bcall you\b/i.test(line) : questionAsked(nextQuestion!, line)) && line.includes("?"));
+    if (key === scenario.mustKeep[0] && (codeCheck || justGiven(key) || asksSameDetail)) continue;
     out.push({ ...base, problem: `cut good content: "${key}"` });
   }
   for (const bad of scenario.mustDrop) if (bad.re.test(sent)) out.push({ ...base, problem: `let through: ${bad.name}` });

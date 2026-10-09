@@ -58,7 +58,7 @@ export function parseWarranty(value: unknown): WarrantyTerms | null {
   };
 }
 
-const MATERIAL_TOPIC = /\b(thickness|thick|\d+\s*mm|materials?|ply(?:wood)?|wood|board|hdf|mdf|particle ?board|hinges?|channels?|drawers?|hardware|fittings?|sliding|appliances?|chimney|hood|hob|oven|otg|glass|mirror|finish(?:es)?|laminates?|acrylics?|veneers?|lacquer|pu|brands?|quality|termite|borer|water ?proof|waterproof|moisture|bwp|bwr|blum|hettich|h[aä]fele|century|aristo|siemens|bosch|grass)\b/i;
+const MATERIAL_TOPIC = /\b(thickness|thick|\d+\s*mm|materials?|ply(?:wood)?|wood|board|hdf|mdf|particle ?board|hinges?|channels?|drawers?|hardware|fittings?|sliding|appliances?|chimney|hood|hob|oven|otg|glass|mirror|finish(?:es)?|laminates?|acrylics?|veneers?|lacquer|pu|brands?|bands?|grades?|quality|termite|borer|water ?proof|waterproof|moisture|bwp|bwr|blum|hettich|h[aä]fele|century|aristo|siemens|bosch|grass)\b/i;
 const WARRANTY_TOPIC = /\b(warranty|warrantee|guarantee|guaranty|after ?sales?|lifetime|life ?time)\b/i;
 const WHY = /\b(why|difference|different|differ|compare|comparison|vs|versus|better|which is better|reason|kyun|kyon|kyu|farak|fark|antar|yen|enna vithiyasam|vithiyasam|vyatyasa)\b/i;
 /** Details the spec sheet does not give: never guessed, the quotation carries them. */
@@ -101,6 +101,9 @@ export function materialLine(text: string, materials: MaterialEntry[], warranty:
   const unlisted = UNLISTED_DETAIL.test(plain)
     ? " They also asked a detail these facts do not give (like thickness or size). Never guess it: say the team will confirm it in the quotation, which mentions the exact brand and grade."
     : "";
+  const ownBrand = /\bown (?:brands?|labels?|make)\b|\bin-?house (?:brands?|labels?)\b/i.test(plain)
+    ? " They asked if we use our own brands: we use the brands named in these facts. Never say we have our own brand or label."
+    : "";
   const why = WHY.test(plain) ? " They asked why or what the difference is: say it plainly in one line, using the Why given for each, like which area faces water and which does not." : "";
-  return `${lines.join(" ")}${why}${unlisted} Answer only what they asked, in one or two short sentences in your own words: the brand and one plain benefit. Never paste or list the whole specification, never name a material or brand that is not in these facts, and never give a price.${unlisted ? "" : " Your answer is complete: do not add that the team will confirm or share the details."} Then carry on with the chat.`;
+  return `${lines.join(" ")}${ownBrand}${why}${unlisted} Answer only what they asked, in one or two short sentences in your own words: the brand and one plain benefit. Never paste or list the whole specification, never name a material or brand that is not in these facts, and never give a price.${unlisted ? "" : " Your answer is complete: do not add that the team will confirm or share the details."} Then carry on with the chat.`;
 }

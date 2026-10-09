@@ -256,7 +256,7 @@ export function dropTimelinePromise(text: string): string {
 }
 
 // "I have saved your choice here so we can confirm": narrating the back office, which a salesperson never says.
-const PROCESS_TALK = /\b(?:i|we)(?:'ve|\s+have|\s+had)?\s+(?:already\s+)?(?:saved|noted(?:\s+down)?|recorded|updated|stored|logged|captured|added|made a note of|passed (?:it|this|that) (?:on|to))\b[^.?!]*|\bso (?:we|the team) can confirm\b\s*[.!]?$/i;
+const PROCESS_TALK = /\bwe (?:already )?have (?:that|it|this|these details|the basics|your details)\b[^.?!]*[.!]?\s*$|\b(?:i|we)(?:'ve|\s+have|\s+had)?\s+(?:already\s+)?(?:saved|noted(?:\s+down)?|recorded|updated|stored|logged|captured|added|made a note of|passed (?:it|this|that) (?:on|to))\b[^.?!]*|\bso (?:we|the team) can confirm\b\s*[.!]?$/i;
 
 /** Drops sentences that only narrate saving or noting things. Keeps a sentence with a real time ("noted 4 PM tomorrow"). */
 export function dropProcessTalk(text: string): string {
@@ -329,6 +329,8 @@ const COMMENTARY = new RegExp([
   `^(?:that|this|it)(?:'s|\\s+is|\\s+sounds|\\s+looks|\\s+seems)\\s+(?:like\\s+)?(?:a\\s+|an\\s+|really\\s+|very\\s+|quite\\s+|such\\s+a\\s+)*(?:${PRAISE_WORDS})\\b`,
   `^(?:a|an|your|the)\\s+[^.?!]{0,60}\\b(?:sounds|looks|is)\\s+(?:like\\s+)?(?:a\\s+|an\\s+|really\\s+|very\\s+)*(?:${PRAISE_WORDS})\\b`,
   `^(?:good|glad|happy|nice|great)\\s+to\\s+(?:know|hear)\\b`,
+  // Empty sympathy with nothing after it: "I hear you sir", "I understand that is worrying".
+  `^i\\s+(?:hear you|understand(?:\\s+(?:your concern(?:\\s+about [a-z ]+)?|that(?:\\s+is|'s)?\\s+worrying|how you feel|sir|mam))?)(?:\\s+(?:sir|mam))?$`,
   `^(?:that|this|it)\\s+(?:makes|will make|should make)\\s+(?:things|it|everything|the work|our work|work)\\s+(?:much\\s+|a lot\\s+|so\\s+)?(?:easier|simpler|smoother|faster|quicker)\\b`,
   `^(?:what\\s+a|such\\s+a)\\s+(?:${PRAISE_WORDS})\\b`,
 ].join("|"), "i");

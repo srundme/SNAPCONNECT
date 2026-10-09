@@ -2156,6 +2156,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       if (placeQuestion && absorbed.answers[placeQuestion.id]) {
         absorbed.answers[placeQuestion.id] = preferLatestPlace(absorbed.answers[placeQuestion.id]!, prospectBodies);
       }
+      // A corrected spelling ("it's Ittina Mahaveer Apartments") is thanked, never answered with "we already have that".
+      const placeFixed = placeQuestion ? absorbed.answers[placeQuestion.id] : undefined;
+      if (placeQuestion && placeFixed && recordedAnswers[placeQuestion.id] && placeFixed !== recordedAnswers[placeQuestion.id]) {
+        memoryLines.push(`They corrected the property to "${placeFixed}". Say "Got it, ${placeFixed}." in a few words, then carry on. Never say you already have it.`);
+      }
       for (const question of questions) {
         if (/budget/i.test(question.label) && priceShock(absorbed.answers[question.id] ?? "")) delete absorbed.answers[question.id];
       }
@@ -2297,6 +2302,29 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     const materialsNote = materialLine(freshText, agent.materials, agent.warranty);
     if (materialsNote) memoryLines.push(materialsNote);
+    // Another firm they named: never described, compared or judged. Any sentence naming it is dropped.
+    const otherFirm = freshText.match(/\b(?:betw\w*n (?:you|u|karighars|the karighars) (?:and|&)|difference (?:with|from)|better than|than|vs\.?|versus|compared (?:to|with))\s+(?:the\s+)?([A-Za-z][\w&'.-]*(?:\s+[A-Z][\w&'.-]*){0,3})/)?.[1]?.trim()
+      ?? freshText.match(/\b(livspace|homelane|design ?cafe|bonito|decorpot|hometown|the interior company)\b/i)?.[1] ?? null;
+    if (otherFirm && !/karighars/i.test(otherFirm)) {
+      memoryLines.push(`They mentioned ${otherFirm}. Never describe, compare or judge ${otherFirm} or any other company. In one or two sentences say what The KariGhars does, only from the knowledge base: luxury full-home interiors, one team end to end, and our completed homes.`);
+    }
+    if (/\b(site visit|visit (?:my|the) (?:flat|home|house|site)|come (?:to|and see|and check) my (?:flat|home|house|site)|3d (?:design|view|render|plan)s?)\b/i.test(freshText)) {
+      memoryLines.push("They asked for a site visit or 3D designs. Never promise a site visit or 3D designs. Say the first step is a free consultation or a visit to our experience centre, and our team takes it forward from there.");
+    }
+    if (/\b(too (?:expensive|costly|high|much)|very (?:expensive|costly)|over ?priced|out of (?:my )?budget|mehenga|costly)\b/i.test(freshText)) {
+      memoryLines.push("They feel we are expensive. Do not argue, discount or give figures. In one or two sentences: the cost depends on the scope and the materials they choose, and the free consultation shows exactly what they get. Then ask if they would like the consultation.");
+    }
+    const badReviews = /\b(?:bad|negative|poor|worst|fake) reviews?\b|\breviews? (?:are|is) (?:bad|poor)\b|\bcomplaints? (?:about|against) (?:you|your)\b/i.test(freshText);
+    if (badReviews) {
+      await alertTeam("flag", `⚠️ ${whoIs(recordedName, recordedAnswers)} mentioned bad reviews of the company. Worth a personal call.`);
+      memoryLines.push("They mention bad reviews. Do not deny, argue, or promise to look into anything. Say we take every review seriously, that they can see our completed homes and visit the experience centre to judge the work themselves, and that our team will speak to them personally.");
+    }
+    if (/\bwhat (?:all )?(?:things|details|info\w*|do you need)\b[^?]*\b(?:need|know|require)\b|\bwhat do you need to know\b/i.test(freshText)) {
+      memoryLines.push("They ask what we need to know about their requirement. Answer concretely in one or two sentences: we have their home details, and in the consultation we go through each room, the style they like, must-haves like storage or a pooja space, and the materials they prefer.");
+    }
+    if (/\b(not getting|don'?t understand|didn'?t (?:get|understand)|not clear|confus\w*|what do you mean|samajh nahi|puriyala)\b/i.test(freshText)) {
+      memoryLines.push("They did not understand your last message. Say the same thing again in plain, simple words, in one or two short sentences. Do not just ask how you can help.");
+    }
     const onlyHello = freshText.trim().length < 80
       && /^(?:hi+|hello+|hey|vanakkam|namaste|good (?:morning|evening|afternoon))\b/i.test(freshText.trim())
       && !/\b(bhk|villa|apartment|flat|house|home|interior|price|cost|budget|quote)\b/i.test(freshText);
@@ -2421,7 +2449,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     // A plain yes to "Shall I book a free consultation…?" is a yes to the consultation.
     // "Both": the consultation happens at the experience centre, so it is a visit.
     const choseBoth = /\b(both|dono|donon|rendum|rendu|eradu)\b/i.test(freshText);
-    const freshOfferAnswer = offerJustMade ? plainYes ? "consultation" as const : choseBoth ? "experience" as const : await readOfferAnswer(runtime, lastAiBody, freshText) : null;
+    // "Before the visit I want to know the materials" is a question, not a booking.
+    const conditional = /\?|\b(before|first (?:i|tell|let)|want to know|what|which|how|why|tell me)\b/i.test(freshText);
+    const freshOfferAnswer = offerJustMade ? plainYes ? "consultation" as const : choseBoth ? "experience" as const : conditional ? "unclear" as const : await readOfferAnswer(runtime, lastAiBody, freshText) : null;
     if (freshOfferAnswer && freshOfferAnswer !== "unclear") {
       await db.message.create({
         data: { workspaceId: workspace.id, connectionId: conversation.connectionId, conversationId, author: "SYSTEM", body: `Offer answer: ${freshOfferAnswer} | ${freshText.slice(0, 200)}`, createdAt: runtime.now() },
@@ -2980,7 +3010,16 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : offeredBase;
     // Never a price figure in any reply. A price question gets the quote line instead.
     // Never a promise of how long the work takes: the team decides that after seeing the site.
-    const untimed = offered ? dropAskReason(dropProcessTalk(dropTimelinePromise(dropUnaskedPrice(offered))) || offered) : offered;
+    const sentencesWithout = (text: string, drop: (part: string) => boolean) => text.split(/\n+/)
+      .map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !drop(part)).join(" ").trim()).filter(Boolean).join("\n");
+    const cleaned = offered ? dropAskReason(dropProcessTalk(dropTimelinePromise(dropUnaskedPrice(offered))) || offered) : offered;
+    // Never a word about another firm, never a site visit promise, and one timeline line, ours.
+    const untimed = cleaned
+      ? sentencesWithout(cleaned, (part) => (otherFirm !== null && part.toLowerCase().includes(otherFirm.toLowerCase()))
+        || /\bsite visits?\b|\bvisit (?:your|the) (?:site|flat|home|house)\b/i.test(part)
+        || (asksTimeline(freshText) && !/timeline depends/i.test(part) && /\b(schedule|timeline|time ?frame|duration|how long|lock it in|time it takes)\b/i.test(part)))
+        || (asksTimeline(freshText) ? "" : VISIT_OFFER)
+      : cleaned;
     const pricedOut = untimed !== null && untimed !== undefined && asksTimeline(freshText) && !/\btimeline depends\b/i.test(untimed)
       ? beforeQuestion(untimed, TIMELINE_LINE)
       : untimed;
@@ -3046,7 +3085,26 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const slotNoted = slot?.inside && Number(payload.followUp ?? 0) === 0
       ? `Noted, ${slot.day} at ${slot.clock}${choseVisit ? " at our experience centre" : " for your free consultation"}.\n${recordedPhone ? `Our team will call you on ${recordedPhone} to confirm it.` : "Our team will confirm it with you here."}`
       : null;
-    const withConsult = slotNoted
+    // "How do we get started?": the next step, said plainly by the code.
+    const timeGiven = prospectBodies.some((body) => requestedTime(body, runtime.now(), agent.workingHours)?.inside);
+    const getStarted = /\b(how (?:do|can|shall|should) (?:we|i) (?:get started|start|begin|proceed|go ahead)|what(?:'s| is) the (?:next step|process)|next steps?|how to (?:start|proceed|begin)|what should i do next)\b/i.test(freshText) && Number(payload.followUp ?? 0) === 0
+      ? timeGiven
+        ? `Our team will call you${recordedPhone ? ` on ${recordedPhone}` : ""} to confirm your ${choseVisit ? "visit" : "consultation"} and take it forward from there.`
+        : agreedConsultation
+          ? `The first step is the ${choseVisit ? "visit to our experience centre" : "free consultation"}, where our team goes through your home, the style and the materials with you.\n${timeAsk}`
+          : `The first step is a free consultation with our team, where we go through your home, the style and the materials with you.\n${VISIT_OFFER}`
+      : null;
+    // "Hi" from someone Varun already knows: welcome them back, never read their details back to them.
+    const firstName = recordedName?.split(/\s+/)[0] ?? null;
+    const pendingAsk = missingNow.find((question) => question.kind !== "name" || !recordedName);
+    const welcomeBack = onlyHello && introduced && Number(payload.followUp ?? 0) === 0 && !slotNoted && !getStarted
+      ? `Hi${firstName ? ` ${firstName}` : ""}, welcome back.\n${pendingAsk ? askQuestion(pendingAsk) : "How can we help you today?"}`
+      : null;
+    const withConsult = getStarted
+      ? getStarted
+      : welcomeBack
+      ? welcomeBack
+      : slotNoted
       ? slotNoted
       : waited
       ? waited
@@ -3054,7 +3112,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? welcomed && /\bconsultation\b/i.test(welcomed)
         ? welcomed
         : [welcomed?.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n"), consultAsk].filter(Boolean).join("\n")
-      : needsTime && !askedForTime && welcomed && !/\b(what|which) time\b/i.test(welcomed)
+      : needsTime && !askedForTime && welcomed
         ? [welcomed.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n"), timeAsk].filter(Boolean).join("\n")
         : consultationAsked && !/\bconsultation\b/i.test(freshText) && welcomed
           // The consultation was offered once already. Never push it again unless they bring it up.
@@ -3336,6 +3394,11 @@ export async function reviewReply(
     if (!input.askingPrice) newLead = dropUnaskedPrice(newLead);
     newLead = dropAskReason(dropProcessTalk(dropTimelinePromise(newLead)));
     newLead = weVoice(newLead).trim();
+    // The second check may shorten or soften, never add facts: a new lead longer than a short
+    // acknowledgement must be made of sentences already in the draft.
+    const drafted = new Set(input.draft.split(/\n+|(?<=[.!?])\s+/).map((part) => part.toLowerCase().replace(/[^a-z0-9 ]+/g, "").trim()).filter(Boolean));
+    const invented = newLead.split(/(?<=[.!?])\s+/).some((part) => !drafted.has(part.toLowerCase().replace(/[^a-z0-9 ]+/g, "").trim()));
+    if (invented && newLead.split(/\s+/).length > 6) return null;
     const fixed = [newLead, ...questions].filter(Boolean).join("\n");
     if (!fixed) return null;
     return { fixed, problem: String(verdict.problem ?? "needed a fix").slice(0, 160) };
@@ -4389,7 +4452,7 @@ const VISIT_OFFER = "Shall I book a free consultation for you, or would you like
 const TYPE_ASK = "Is it an apartment, villa or independent house?";
 
 /** Questions the code writes word for word (checks and confirmations). They are never trimmed or reworded. */
-const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends|is that [^?]+ (?:on|in|at)|we have already done|our team will call you(?: on \+?\d+)? to confirm it)\b/i;
+const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends|is that [^?]+ (?:on|in|at)|we have already done|welcome back|the first step is|our team will call you(?: on \+?\d+)? to confirm it)\b/i;
 
 /**
  * Code, not the model, decides what is already known: a name we have is never asked again, and someone

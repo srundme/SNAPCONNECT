@@ -23,6 +23,14 @@ describe("second check", () => {
     expect(withoutKnownAsks("Noted. Which number should the team call you on?", known)).toBe("Noted. Which number should the team call you on?");
   });
 
+  it("never lets the second check invent facts", async () => {
+    const runtime = simulationRuntime({
+      llm: { ...fixtureLlm(), complete: async () => JSON.stringify({ ok: false, problem: "ignores direct question", lead: "We use a mix of our own premium labels and trusted industry brands." }) },
+    });
+    const result = await reviewReply(runtime, { customer: "Are you using your own brands", draft: "We use Century Ply and Blum.\nWould you like to visit our experience centre?", earlier: [], askingPrice: false, language: "English" });
+    expect(result).toBeNull();
+  });
+
   it("keeps only one question per reply, the last one", () => {
     expect(oneQuestion("Got it a 3BHK\nWhat kind of interiors are you looking for? When do you get possession, or is the home already ready?"))
       .toBe("Got it a 3BHK\nWhen do you get possession, or is the home already ready?");
@@ -40,9 +48,8 @@ describe("second check", () => {
       askingPrice: false,
       language: "English",
     });
-    expect(result?.fixed).toMatch(/Which number should the team call you on\?$/);
-    expect(result?.fixed).not.toMatch(/floor/i);
-    expect(result?.fixed).not.toMatch(/spacious/i);
+    // "the 6th works for us" is a promise the draft never made: the rewrite is refused and the draft goes out as is.
+    expect(result).toBeNull();
   });
 
   it("leaves a reply with no opening words alone", async () => {

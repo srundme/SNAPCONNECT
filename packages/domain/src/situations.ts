@@ -266,6 +266,8 @@ export function priceShock(text: string): boolean {
 /** "Just looking" or "call me later" pauses the script. A date such as "after Diwali" does not. */
 export function notNow(text: string): boolean {
   const plain = text.replace(/^\(Replied to:[\s\S]*?\)\s*/, "");
+  // "Give me a number, then I will decide" is pushing for an answer, not putting it off.
+  if (/\b(give|tell|share|send|number|estimate|ballpark|figure|quote|price|cost|timeline|how much|how long)\b/i.test(plain)) return false;
   return /\b(?:just (?:looking|browsing|checking|enquiring|inquiring|asking)|only looking|not now|not right now|maybe later|not urgent|not serious|i(?:'ll| will) (?:think|decide|see)|call me later|call me after|call me next year)\b/i.test(plain);
 }
 
