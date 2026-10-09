@@ -171,6 +171,8 @@ export function hindiEndings(text: string): string {
 export function maleHindi(text: string): string {
   const am = "(hoon|hun|hu|hoo)";
   return text
+    // Speaking for the company: "team confirm karegi" is "hum confirm karenge".
+    .replace(/\b(?:hamari |humari |our )?team\s+((?:\p{L}+\s+){0,2}?)(kar|bata|bhej|call kar|check kar|share kar)(?:egi|ega|enge)\b/giu, (match, middle: string, verb: string) => `${/^[A-Z]/.test(match) ? "Hum" : "hum"} ${middle}${verb}enge`)
     .replace(new RegExp(`\\b(\\p{L}+)ti\\s+${am}\\b`, "giu"), "$1ta $2")
     .replace(new RegExp(`\\b(rahi|gayi|gai|chuki|paayi|payi)\\s+${am}\\b`, "giu"), (_match, verb: string, be: string) => `${({ rahi: "raha", gayi: "gaya", gai: "gaya", chuki: "chuka", paayi: "paaya", payi: "paaya" } as Record<string, string>)[verb.toLowerCase()] ?? verb} ${be}`)
     .replace(/\b(?!lungi\b)(\p{L}{2,})ungi\b/giu, "$1unga");

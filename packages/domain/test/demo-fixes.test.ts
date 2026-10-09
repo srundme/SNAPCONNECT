@@ -156,6 +156,8 @@ describe("Varun speaks Hindi as a man", () => {
     expect(maleHindi("main kar sakti hu")).toBe("main kar sakta hu");
     expect(maleHindi("main bhejungi details")).toBe("main bhejunga details");
     expect(maleHindi("Main team se check karta hoon")).toBe("Main team se check karta hoon");
+    expect(maleHindi("Team confirm karegi aapke project ke liye")).toBe("Hum confirm karenge aapke project ke liye");
+    expect(maleHindi("hamari team aapko call karegi")).toBe("hum aapko call karenge");
   });
 });
 
