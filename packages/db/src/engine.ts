@@ -143,6 +143,7 @@ import {
   dropUnaskedPrice,
   dropTimelinePromise,
   openDays,
+  festivalToday,
   VARUN_PROMPT,
   openHours,
   dropProcessTalk,
@@ -3970,6 +3971,24 @@ async function promptedReply(db: Db, runtime: Runtime, input: PromptedInput): Pr
 }
 
 /**
+ * "Call me later at 6": one follow-up at their time instead of the usual ones, if it falls between 9:30 AM and 9 PM
+ * India time and inside the 24-hour messaging window. Returns false when it cannot, so the usual follow-up applies.
+ */
+async function followUpAtTheirTime(db: Db, runtime: Runtime, conversationId: string, when: string): Promise<boolean> {
+  const match = when.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
+  if (!match) return false;
+  const due = new Date(`${match[1]}T${match[2]}:${match[3]}:00+05:30`);
+  const conversation = await db.conversation.findUnique({ where: { id: conversationId }, select: { workspaceId: true, lastUserMessageAt: true } });
+  if (!conversation?.lastUserMessageAt || Number.isNaN(due.getTime()) || due.getTime() <= runtime.now().getTime()) return false;
+  if (awakeTime(due).getTime() !== due.getTime() || due.getTime() > conversation.lastUserMessageAt.getTime() + META_WINDOW_MS) return false;
+  await db.outboxJob.updateMany({ where: { type: "FOLLOW_UP", status: "PENDING", payload: { path: ["conversationId"], equals: conversationId } }, data: { status: "CANCELLED", lastError: "they asked for a later time" } });
+  await db.outboxJob.create({
+    data: { workspaceId: conversation.workspaceId, type: "FOLLOW_UP", payload: { conversationId, lastUserAt: conversation.lastUserMessageAt.toISOString(), index: 9, theirTime: when }, availableAt: due },
+  });
+  return true;
+}
+
+/**
  * Claude writes the reply. Code only gathers facts (what is known, checks, property lookup, proof, hours, history,
  * media) and acts on Claude's structured answer (save, alerts, Zoho, follow-ups). No reply text is written here.
  */
@@ -4058,6 +4077,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     return [
       `Now in India: ${indiaTime(runtime.now())}. ${officeNowLine(runtime.now(), agent.workingHours, agent.holidays)}. Tomorrow is ${tomorrow}${openSet && !openSet.has(tomorrow) ? ", our weekly off" : ""}.`,
       timeline,
+      festivalToday(runtime.now(), agent.holidays) ? `Today is ${festivalToday(runtime.now(), agent.holidays)}.` : "",
       `Channel: ${CHANNEL_NAME[conversation.channel]}.${spoken.some((message) => message.author === "AI") ? "" : " You have not replied in this chat yet: this is your first reply."}`,
       conversation.channel === "WHATSAPP" && lead.whatsappE164 ? `They are chatting from WhatsApp number ${lead.whatsappE164}${lead.sameNumberConfirmed ? " (they agreed we can call on it)" : ""}.` : "",
       name ? `Their name: ${name}${conversation.channel !== "WHATSAPP" && notes.some((body) => body.startsWith("Name from profile:")) && name === conversation.contact.chosenName ? " (from their profile; use it, do not ask)" : ""}.` : "Their name: not known yet.",
@@ -4140,6 +4160,16 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       found = await lookupPlaceFor(newPlace);
       if ((found && found.name !== before?.name) || completedInProperty(newPlace, parseCompletedProjects(agent.completedProjects))) extra.push("They just named their property: the property facts above are new for this reply.");
     }
+    // Their BHK against what the property offers: a 7 BHK in a 1 to 3 BHK apartment project is checked once, lightly.
+    const homeQuestion = questions.find((question) => roleOf(question) === "home");
+    const saidBhk = Number((homeQuestion ? read.answers[homeQuestion.id] ?? "" : "").match(/(\d+)\s*BHK/i)?.[1] ?? 0);
+    const listed = found?.bhkOptions ?? [];
+    // Already asked: an earlier reply of ours put this BHK in a question.
+    const sizeChecked = spoken.some((message) => message.author === "AI" && new RegExp(`\\b${saidBhk}\\s*BHK\\b[^?]*\\?`, "i").test(message.body));
+    const savedBhk = Number((homeQuestion ? answers[homeQuestion.id] ?? "" : "").match(/(\d+)\s*BHK/i)?.[1] ?? 0);
+    if (found && saidBhk && listed.length && saidBhk > Math.max(...listed) && saidBhk !== savedBhk && !sizeChecked) {
+      extra.push(`Size check: they said ${saidBhk} BHK, but ${found.name} offers ${listed.join(", ")} BHK homes. Check once, lightly and kindly, whether theirs is really a ${saidBhk} BHK. If they confirm, accept it.`);
+    }
     if (extra.length) {
       answer = await ask(factsFor(extra, found));
       read = readDetails({ answer, questions, answers, whatsappE164: lead.whatsappE164, region: runtime.phoneRegion });
@@ -4160,6 +4190,17 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
         await alertTeam("person", `🙋 ${name ?? "A customer"}: Varun could not write a safe reply. Please take this chat.`);
         await db.aiRun.create({ data: { workspaceId: workspace.id, conversationId: conversation.id, model: claude.model, simulated: false, latencyMs: Date.now() - started, valid: false, diagnostic: diagnostics.join("; ").slice(0, 1000) } });
         return "done";
+      }
+    }
+    // A different home: the old one's details go to a note for the team, and the new home is collected fresh.
+    if (answer.new_home) {
+      const homeRoles = new Set(["place", "home", "possession"]);
+      const earlier = questions.filter((question) => homeRoles.has(roleOf(question) ?? "") && (answers[question.id] ?? "").trim());
+      if (earlier.length) {
+        await note(`Earlier home: ${earlier.map((question) => `${question.label} ${answers[question.id]}`).join(" | ")}`);
+        await alertTeam("flag", `🏠 ${name ?? "A customer"} is now asking about a second home. Earlier: ${earlier.map((question) => answers[question.id]).join(", ")}`.slice(0, 300));
+        const fresh = readDetails({ answer, questions, answers: Object.fromEntries(Object.entries(answers).filter(([id]) => !earlier.some((question) => question.id === id))), whatsappE164: lead.whatsappE164, region: runtime.phoneRegion });
+        read.answers = fresh.answers;
       }
     }
     // A detail they did not want to share is recorded as such, so the team and Zoho see it and Varun moves on.
@@ -4328,6 +4369,8 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   } else if (answer.handoff) {
     await handoff(db, conversation.id, lead.id, (answer.flag ?? "Claude handed this chat to the team.").slice(0, 200));
     await alertTeam("person", `🙋 ${who} needs a person from the team.`);
+  } else if (delivered && answer.follow_up_at && await followUpAtTheirTime(db, runtime, conversation.id, answer.follow_up_at)) {
+    await alertTeam("flag", `⏰ ${who} asked to be contacted ${answer.follow_up_at.replace("T", " at ")}.`);
   } else if (delivered && agent.followUps) {
     await scheduleFollowUp(db, runtime, conversation.id, Number(payload.followUp ?? 0));
   }

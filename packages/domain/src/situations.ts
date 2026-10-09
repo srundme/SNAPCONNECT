@@ -393,6 +393,11 @@ function istDate(now: Date, addDays = 0): { iso: string; weekday: string } {
   return { iso: `${part("year")}-${part("month")}-${part("day")}`, weekday: part("weekday") };
 }
 
+/** Today's festival or holiday in India, from the built-in list and the team's own holidays. */
+export function festivalToday(now: Date, holidays = ""): string | null {
+  return holidayOn(istDate(now).iso, holidays);
+}
+
 function holidayOn(iso: string, holidays: string): string | null {
   const lines = [...NATIONAL_HOLIDAYS, ...holidays.split(/\n+/)].map((line) => line.trim()).filter(Boolean);
   for (const line of lines) {
