@@ -4029,6 +4029,26 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   const tomorrow = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", weekday: "long" }).format(new Date(runtime.now().getTime() + 86_400_000));
   const openSet = openDays(agent.workingHours);
 
+  // When things were said, in India time: a reply the next morning should feel like the next morning.
+  const indiaDay = (date: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(date);
+  const indiaClock = (date: Date) => new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", hour12: true }).format(date).toUpperCase();
+  const istHour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", hour12: false }).format(runtime.now()));
+  const partOfDay = istHour < 5 ? "late night" : istHour < 12 ? "morning" : istHour < 16 ? "afternoon" : istHour < 21 ? "evening" : "night";
+  const earlierFromThem = [...spoken].reverse().find((message) => message.author === "PROSPECT" && lastAiAt && message.createdAt <= lastAiAt);
+  const whenSaid = (date: Date) => {
+    const days = Math.round((Date.parse(indiaDay(runtime.now())) - Date.parse(indiaDay(date))) / 86_400_000);
+    const day = days === 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
+    return `${day} at ${indiaClock(date)} (${since(runtime.now().getTime() - date.getTime())})`;
+  };
+  const timeline = lastAiAt
+    ? [
+        `It is ${partOfDay} in India now.`,
+        `Your last message was sent ${whenSaid(lastAiAt)}.`,
+        earlierFromThem ? `Their message before this one was ${whenSaid(earlierFromThem.createdAt)}.` : "",
+        indiaDay(lastAiAt) !== indiaDay(runtime.now()) ? "This is a new day since you last spoke." : runtime.now().getTime() - lastAiAt.getTime() > 3 * 3_600_000 ? "It has been a few hours since you last spoke." : "You are in the middle of an ongoing chat.",
+      ].filter(Boolean).join(" ")
+    : `It is ${partOfDay} in India now.`;
+
   const factsFor = (extra: string[], found: Awaited<ReturnType<typeof lookupPlaceFor>>) => {
     // On WhatsApp their number is known, but they still say whether we may call on it.
     const callable = phoneE164 && (conversation.channel !== "WHATSAPP" || phoneE164 !== lead.whatsappE164 || lead.sameNumberConfirmed || phoneAgreed) ? phoneE164 : null;
@@ -4037,6 +4057,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     const missing = questions.filter((question) => question.required !== false && !valueOf(question)?.trim()).map((question) => `- ${question.label}`);
     return [
       `Now in India: ${indiaTime(runtime.now())}. ${officeNowLine(runtime.now(), agent.workingHours, agent.holidays)}. Tomorrow is ${tomorrow}${openSet && !openSet.has(tomorrow) ? ", our weekly off" : ""}.`,
+      timeline,
       `Channel: ${CHANNEL_NAME[conversation.channel]}.${spoken.some((message) => message.author === "AI") ? "" : " You have not replied in this chat yet: this is your first reply."}`,
       conversation.channel === "WHATSAPP" && lead.whatsappE164 ? `They are chatting from WhatsApp number ${lead.whatsappE164}${lead.sameNumberConfirmed ? " (they agreed we can call on it)" : ""}.` : "",
       name ? `Their name: ${name}${conversation.channel !== "WHATSAPP" && notes.some((body) => body.startsWith("Name from profile:")) && name === conversation.contact.chosenName ? " (from their profile; use it, do not ask)" : ""}.` : "Their name: not known yet.",
