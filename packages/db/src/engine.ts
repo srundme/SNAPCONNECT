@@ -106,6 +106,7 @@ import {
   phoneProblem,
   dropRepeatedSentences,
   fullWords,
+  emailProblem,
   builderOnly,
   weVoice,
   dropDayAnnouncement,
@@ -1648,6 +1649,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     let blockedBhk: number | null = null;
     // A question to confirm what they said against the project lookup, asked once.
     let projectAsk: string | null = null;
+    // A question about the email they gave: a typo, a keyboard-mash, or one that cannot be real.
+    let emailAsk: string | null = null;
     if (questions.length) {
       let absorbed = absorbTranscript({
         questions,
@@ -1714,7 +1717,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         }
       }
       // "Did you mean Adarsh Palm Retreat in Bellandur?": a yes keeps the full name, a no clears the guess.
-      const offeredProject = lastAsk.match(/\bdid you mean (.+?)(?: in [^?]+)?\?/i)?.[1]?.trim();
+      const offeredMatch = lastAsk.match(/\bdid you mean (.+?)(?: in [^?]+)?\?/i)?.[1]?.trim();
+      const offeredProject = offeredMatch && !offeredMatch.includes("@") ? offeredMatch : undefined;
       let projectRejected = false;
       if (offeredProject && placeQuestionEarly) {
         if (/^(?:yes|yeah|ya|yep|yup|haan|ha|aama|ji|correct|right|sure|exactly|that one)\b/i.test(freshText.trim()) && !/\b(?:no|not|wrong)\b/i.test(freshText)) {
@@ -1853,6 +1857,33 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           || (question.kind !== "phone" && (/\b(phone|mobile|which number)\b/i.test(question.label) || question.zohoField === "Phone" || question.zohoField === "Mobile")
             && value.replace(/\D/g, "").length < 10 && !/^same$/i.test(value));
         if (wrongShape) delete absorbed.answers[question.id];
+      }
+      // Email: a made-up, throwaway or undeliverable address is asked again once; a typo or keyboard-mash is confirmed.
+      const emailQuestion = questions.find((question) => /\be-?mail\b/i.test(question.label) || question.zohoField === "Email");
+      if (emailQuestion) {
+        const offeredEmail = lastAsk.match(/\b(?:did you mean|is your email) ([^\s?]+@[^\s?]+)\?/i)?.[1];
+        const saidYes = /^(?:yes|yeah|ya|yep|yup|haan|ha|aama|ji|correct|right|sure|exactly)\b/i.test(freshText.trim()) && !/\b(?:no|not|wrong)\b/i.test(freshText);
+        if (offeredEmail && saidYes) absorbed.answers[emailQuestion.id] = offeredEmail;
+        const email = (absorbed.answers[emailQuestion.id] ?? "").trim();
+        const confirmedEmail = Boolean(offeredEmail && saidYes && email.toLowerCase() === offeredEmail.toLowerCase());
+        if (email && !NOT_SURE.test(email) && email !== recordedAnswers[emailQuestion.id] && !confirmedEmail) {
+          const problem = emailProblem(email) ?? (await domainTakesMail(email.split("@")[1] ?? "") ? null : { kind: "domain" as const });
+          const checksSoFar = conversation.messages.filter((message) => message.author === "SYSTEM" && message.body.startsWith("Email check:")).length;
+          if (problem && checksSoFar < 2) {
+            await noteOnce(`Email check: ${email.toLowerCase()}`, problem.kind);
+            if (problem.kind === "typo") {
+              emailAsk = `Did you mean ${problem.suggestion}?`;
+            } else if (problem.kind === "gibberish") {
+              emailAsk = `Just to confirm, is your email ${email}?`;
+            } else {
+              delete absorbed.answers[emailQuestion.id];
+              emailAsk = "That email doesn't look right. Could you share the email you actually use?";
+            }
+          } else if (problem && problem.kind !== "typo") {
+            // Asked twice already: never loop. Keep it, marked unverified, and out of Zoho's Email field.
+            await noteOnce(`Email unverified: ${email.toLowerCase()}`, problem.kind);
+          }
+        }
       }
       const scopeQuestion = questions.find((question) => /\b(full home|selected rooms)\b/i.test(question.label));
       if (!formRead && scopeQuestion && !absorbed.answers[scopeQuestion.id] && SCOPE_ONLY.test(freshText.trim())) absorbed.answers[scopeQuestion.id] = freshText.trim();
@@ -2830,7 +2861,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : null;
     const matchAsk = suggestedChannel ? `Have we spoken before on ${channelLabel(suggestedChannel)} about your home?` : null;
     // A check against the project lookup comes first, then "spoken before", then the name, then the plain home type.
-    const confirmAsk = projectAsk ?? matchAsk ?? nameAsk ?? (needsType ? TYPE_ASK : null);
+    const confirmAsk = projectAsk ?? emailAsk ?? matchAsk ?? nameAsk ?? (needsType ? TYPE_ASK : null);
     const held = confirmAsk && heldBase && Number(payload.followUp ?? 0) === 0 && !holdScript && !offerConsultation && !needsTime && !chasingCall
       ? [heldBase.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n"), confirmAsk].filter(Boolean).join("\n")
       : heldBase;
@@ -3596,6 +3627,24 @@ const NOT_SURE = /\b(d(?:o)?n'?t know|dnt know|dont know|not sure|no idea|can (?
 const CLOSING_ACK = /^(ok+|okay|k+|ok ok|ok thanks?|ok thank you|okay thanks?|okay thank you|thanks?|thank you|thank u|thx|tq|ty|seri|sari|super|nice|great|cool|done|fine|sure|alright|noted|theek hai|thik hai|achha|accha|haan ok|\p{Extended_Pictographic}+)(?:[\s,]+(sir|mam|madam|bro|da|ji|anna|akka|boss))?[\s.!🙏👍]*$/iu;
 const VALID_EMAIL = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
 
+const KNOWN_MAIL = /^(gmail|googlemail|yahoo|ymail|rediffmail|outlook|hotmail|live|icloud|me|protonmail|proton|zoho|zohomail|aol)\.(com|co\.in|in|me)$/i;
+const mailDomains = new Map<string, boolean>();
+
+/** Whether a domain can receive email at all (it has mail servers). Big providers are known; others are asked once. */
+async function domainTakesMail(domain: string): Promise<boolean> {
+  const key = domain.toLowerCase();
+  if (KNOWN_MAIL.test(key)) return true;
+  if (mailDomains.has(key)) return mailDomains.get(key)!;
+  const { resolveMx } = await import("node:dns/promises");
+  const ok = await Promise.race([
+    resolveMx(key).then((records) => records.length > 0, (error: NodeJS.ErrnoException) => (error.code === "ENOTFOUND" || error.code === "ENODATA" ? false : true)),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 3_000)),
+  ]);
+  if (mailDomains.size > 2_000) mailDomains.clear();
+  mailDomains.set(key, ok);
+  return ok;
+}
+
 async function refreshMemory(
   db: Db,
   runtime: Runtime,
@@ -3683,6 +3732,11 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
     });
     Object.assign(record, placed.fields);
     if (record.Email && !VALID_EMAIL.test(record.Email)) delete record.Email;
+    const unverifiedEmail = record.Email
+      ? await db.message.findFirst({ where: { author: "SYSTEM", body: { startsWith: `Email unverified: ${record.Email.toLowerCase()}` }, conversation: { contactId: lead.contactId } }, select: { id: true } })
+      : null;
+    const emailNote = unverifiedEmail ? `Email given: ${record.Email} (looks made-up, unverified)` : null;
+    if (unverifiedEmail) delete record.Email;
     for (const field of ["Phone", "Mobile"]) {
       if (record[field] && record[field]!.replace(/\D/g, "").length < 10) delete record[field];
     }
@@ -3708,6 +3762,7 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
             : `Name check: "${concern.name}" differs from the ${channelLabel(lead.channel)} profile (${concern.profile}). Self-reported, please confirm on the call.`]
         : []),
     ];
+    if (emailNote) lines.push(emailNote);
     const channels = [...new Set([lead.channel, ...siblings.map((item) => item.channel)])].map(channelLabel);
     if (channels.length > 1) lines.push(`Channels: ${channels.join(", ")} (same person)`);
     for (const earlier of siblings.filter((item) => item.crm?.crmId && item.crm.crmId !== lead.crm?.crmId)) {

@@ -188,3 +188,19 @@ describe("a builder is not a property", () => {
     expect(builderOnly("Concorde Manhattans")).toBeNull();
   });
 });
+
+describe("email checks", () => {
+  it("spots fake, throwaway, mistyped and keyboard-mashed emails", async () => {
+    const { emailProblem } = await import("../src/index");
+    expect(emailProblem("hfjdfnjknjk@gmail.com")).toEqual({ kind: "gibberish" });
+    expect(emailProblem("Adc@abc.com")).toEqual({ kind: "placeholder" });
+    expect(emailProblem("test@gmail.com")).toEqual({ kind: "placeholder" });
+    expect(emailProblem("ravi@mailinator.com")).toEqual({ kind: "disposable" });
+    expect(emailProblem("karthik@gmial.com")).toEqual({ kind: "typo", suggestion: "karthik@gmail.com" });
+    expect(emailProblem("karthik at gmail")).toEqual({ kind: "format" });
+    expect(emailProblem("gopinwrk@gmail.com")).toBeNull();
+    expect(emailProblem("karthikeyan@theaitel.com")).toBeNull();
+    expect(emailProblem("srundme@gmail.com")).toBeNull();
+    expect(emailProblem("priya.nair92@yahoo.com")).toBeNull();
+  });
+});

@@ -167,3 +167,39 @@ export function evidenceInMessage(evidence: string, message: string): boolean {
   if (needle.length < 2) return false;
   return message.toLowerCase().includes(needle);
 }
+
+const PLACEHOLDER_LOCAL = /^(test|testing|abc|abcd|xyz|xyzz|asdf|asd|qwerty|sample|example|demo|none|na|nil|noemail|no|dummy|fake|user|admin|email|mail|name|aaa+|xxx+|123+|1234|12345)$/i;
+const PLACEHOLDER_DOMAIN = /^(example\.(com|org|net)|test\.com|abc\.com|xyz\.com|email\.com|domain\.com|sample\.com|demo\.com|fake\.com|none\.com|asdf\.com)$/i;
+const DISPOSABLE_DOMAIN = /^(mailinator\.com|yopmail\.com|10minutemail\.com|guerrillamail\.(com|net|org)|sharklasers\.com|tempmail\.(com|net)|temp-mail\.org|trashmail\.(com|net)|getnada\.com|dispostable\.com|maildrop\.cc|throwawaymail\.com|mintemail\.com|fakeinbox\.com|mohmal\.com)$/i;
+const DOMAIN_TYPOS: Record<string, string> = {
+  "gmial.com": "gmail.com", "gmai.com": "gmail.com", "gamil.com": "gmail.com", "gmal.com": "gmail.com", "gmaill.com": "gmail.com",
+  "gmail.co": "gmail.com", "gmail.con": "gmail.com", "gmail.cm": "gmail.com", "gmail.om": "gmail.com", "gnail.com": "gmail.com", "gmail.in": "gmail.com",
+  "yahooo.com": "yahoo.com", "yaho.com": "yahoo.com", "yahoo.co": "yahoo.com", "yahoo.con": "yahoo.com", "yhoo.com": "yahoo.com",
+  "hotmial.com": "hotmail.com", "hotmai.com": "hotmail.com", "hotmail.co": "hotmail.com", "outlok.com": "outlook.com", "outlook.co": "outlook.com",
+  "rediffmal.com": "rediffmail.com", "redifmail.com": "rediffmail.com", "iclod.com": "icloud.com", "icloud.co": "icloud.com",
+};
+
+export type EmailProblem =
+  | { kind: "format" | "placeholder" | "disposable" }
+  | { kind: "typo"; suggestion: string }
+  | { kind: "gibberish" };
+
+/**
+ * What is wrong with an email, in the order a person would notice it. Only the format, a placeholder
+ * or a throwaway address are certain; a typo or a keyboard-mash is something to confirm, never to reject.
+ */
+export function emailProblem(raw: string): EmailProblem | null {
+  const email = raw.trim().toLowerCase();
+  const match = email.match(/^([^\s@]+)@([^\s@]+\.[a-z]{2,})$/);
+  if (!match) return { kind: "format" };
+  const [, local, domain] = match as unknown as [string, string, string];
+  if (PLACEHOLDER_DOMAIN.test(domain) || PLACEHOLDER_LOCAL.test(local)) return { kind: "placeholder" };
+  if (DISPOSABLE_DOMAIN.test(domain)) return { kind: "disposable" };
+  if (DOMAIN_TYPOS[domain]) return { kind: "typo", suggestion: `${local}@${DOMAIN_TYPOS[domain]}` };
+  const letters = local.replace(/[^a-z]/g, "");
+  const vowels = (letters.match(/[aeiouy]/g) ?? []).length;
+  const longestConsonants = Math.max(0, ...(letters.match(/[^aeiouy]+/g) ?? []).map((run) => run.length));
+  const keyboard = /(qwer|wert|asdf|sdfg|dfgh|fghj|ghjk|hjkl|zxcv|xcvb|cvbn|vbnm)/.test(letters);
+  if (letters.length >= 7 && (vowels / letters.length < 0.15 || longestConsonants >= 6 || keyboard)) return { kind: "gibberish" };
+  return null;
+}
