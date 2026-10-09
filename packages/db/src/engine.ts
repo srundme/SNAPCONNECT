@@ -1592,7 +1592,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         where: { workspaceId: workspace.id, author: "PROSPECT", body: latestText, createdAt: { gte: new Date(nowMs - 2 * 3_600_000) } },
       }).then((rows) => rows.length).catch(() => 0)
       : 0;
-    const spamStop = burst >= 15
+    // A customer answering Varun's questions quickly is a conversation, not a flood: Varun replied to most of it.
+    const repliedInBurst = spoken.filter((message) => message.author === "AI" && nowMs - message.createdAt.getTime() < 10 * 60_000).length;
+    const spamStop = burst >= 15 && repliedInBurst < burst / 2
       ? "flood"
       : floodNote && nowMs - floodNote.createdAt.getTime() < 30 * 60_000
         ? "flood-wait"
@@ -2386,7 +2388,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const offerJustMade = sinceReply.length > 0 && /\b(consultation|experience cent(?:re|er))\b/i.test(lastAiBody);
     const plainYes = /^(?:yes|yeah|ya|yep|sure|ok(?:ay)?|haan|ha|please)(?:\s+(?:sir|mam|ji))?\.?$/i.test(freshText.trim());
     // A plain yes to "Shall I book a free consultation…?" is a yes to the consultation.
-    const freshOfferAnswer = offerJustMade ? plainYes ? "consultation" as const : await readOfferAnswer(runtime, lastAiBody, freshText) : null;
+    // "Both": the consultation happens at the experience centre, so it is a visit.
+    const choseBoth = /\b(both|dono|donon|rendum|rendu|eradu)\b/i.test(freshText);
+    const freshOfferAnswer = offerJustMade ? plainYes ? "consultation" as const : choseBoth ? "experience" as const : await readOfferAnswer(runtime, lastAiBody, freshText) : null;
     if (freshOfferAnswer && freshOfferAnswer !== "unclear") {
       await db.message.create({
         data: { workspaceId: workspace.id, connectionId: conversation.connectionId, conversationId, author: "SYSTEM", body: `Offer answer: ${freshOfferAnswer} | ${freshText.slice(0, 200)}`, createdAt: runtime.now() },
@@ -2413,6 +2417,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     const needsTime = Boolean(complete?.ready && !complete.cold && !holdScript && (proceeding || agreedConsultation) && !consultationDeclined && !prospectBodies.some((body) => requestedTime(body, runtime.now(), agent.workingHours)));
     const askedForTime = spoken.some((message) => message.author === "AI" && /\b(?:what|which) time\b/i.test(message.body));
+    if (prospectBodies.some((body) => requestedTime(body, runtime.now(), agent.workingHours)?.inside)) {
+      memoryLines.push(`They already gave a time for the ${choseVisit ? "visit" : "consultation"} and it is noted. If they ask how or when it is confirmed: our team will call them${recordedPhone ? ` on ${recordedPhone}` : ""} to confirm it. Never say it is booked or confirmed already, and never ask for the time again.`);
+    }
     if (consultationAsked && !offerConsultation && !needsTime && !/\bconsultation\b/i.test(freshText)) {
       memoryLines.push("You already offered the free consultation. Do not offer it, mention it or ask about booking it again unless they bring it up.");
     }
@@ -2999,9 +3006,14 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         ? askQuestion(nextDetail)
         : believable;
     const consultAsk = VISIT_OFFER;
-    const confirmSaid = /\bconfirm/i.test(welcomed ?? "");
-    const timeAsk = `${choseVisit ? "which day and time would you like to visit?" : "which day and time suits you for the consultation?"}${confirmSaid ? "" : " we will confirm it."}`;
-    const withConsult = waited
+    const timeAsk = choseVisit ? "Which day and time would you like to visit?" : "Which day and time suits you for the consultation?";
+    // They named a time inside working hours: say exactly what happens next. The team confirms it by phone.
+    const slotNoted = slot?.inside && Number(payload.followUp ?? 0) === 0
+      ? `Noted, ${slot.day} at ${slot.clock}${choseVisit ? " at our experience centre" : " for your free consultation"}.\n${recordedPhone ? `Our team will call you on ${recordedPhone} to confirm it.` : "Our team will confirm it with you here."}`
+      : null;
+    const withConsult = slotNoted
+      ? slotNoted
+      : waited
       ? waited
       : offerConsultation
       ? welcomed && /\bconsultation\b/i.test(welcomed)
@@ -3308,7 +3320,7 @@ async function readOfferAnswer(runtime: Runtime, offer: string, reply: string): 
         content: [
           `We asked: "${offer.slice(0, 300)}"`,
           `They replied: "${reply.slice(0, 300)}"`,
-          "consultation = they want the free consultation. experience = they want to visit the experience centre. not_now = no, later, they will get back, or they are not interested. unclear = a question or anything else.",
+          "consultation = they want the free consultation. experience = they want to visit the experience centre (both = experience, the consultation happens there). not_now = no, later, they will get back, or they are not interested. unclear = a question or anything else.",
         ].join("\n"),
       }],
       temperature: 0,
@@ -4342,7 +4354,7 @@ const VISIT_OFFER = "Shall I book a free consultation for you, or would you like
 const TYPE_ASK = "Is it an apartment, villa or independent house?";
 
 /** Questions the code writes word for word (checks and confirmations). They are never trimmed or reworded. */
-const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends)\b/i;
+const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends|our team will call you(?: on \+?\d+)? to confirm it)\b/i;
 
 /**
  * Code, not the model, decides what is already known: a name we have is never asked again, and someone

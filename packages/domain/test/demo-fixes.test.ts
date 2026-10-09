@@ -262,3 +262,11 @@ describe("never commits to how long the work takes", () => {
     expect(asksTimeline("which plywood do you use?")).toBe(false);
   });
 });
+
+describe("9 Oct WhatsApp test wording", () => {
+  it("drops commentary like 'that makes things easier' and speaks of our team", async () => {
+    const { dropEmptyPraise, weVoice } = await import("../src/style");
+    expect(dropEmptyPraise("That makes things easier sir.\nCan we reach you on this number?")).toBe("Can we reach you on this number?");
+    expect(weVoice("Could you share the email for your team to forward the details?")).toBe("Could you share the email for our team to forward the details?");
+  });
+});

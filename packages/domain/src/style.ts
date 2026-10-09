@@ -183,6 +183,8 @@ export function weVoice(text: string): string {
   const be: Record<string, string> = { is: "are", has: "have", was: "were" };
   return text
     .replace(/\bfor (?:the|our) team who will\b/gi, "and we will")
+    // "the email for your team" is our team: Varun speaks for The KariGhars.
+    .replace(/\byour team\b/gi, (match) => (/^Y/.test(match) ? "Our team" : "our team"))
     .replace(/\b(?:the|our) team (will|can|would|shall|is|are|has|have|was|were|'ll)\b/gi, (match, verb: string) => {
       const word = be[verb.toLowerCase()] ?? verb.toLowerCase();
       const we = /^[A-Z]/.test(match) ? "We" : "we";
@@ -297,6 +299,7 @@ const COMMENTARY = new RegExp([
   `^(?:that|this|it)(?:'s|\\s+is|\\s+sounds|\\s+looks|\\s+seems)\\s+(?:like\\s+)?(?:a\\s+|an\\s+|really\\s+|very\\s+|quite\\s+|such\\s+a\\s+)*(?:${PRAISE_WORDS})\\b`,
   `^(?:a|an|your|the)\\s+[^.?!]{0,60}\\b(?:sounds|looks|is)\\s+(?:like\\s+)?(?:a\\s+|an\\s+|really\\s+|very\\s+)*(?:${PRAISE_WORDS})\\b`,
   `^(?:good|glad|happy|nice|great)\\s+to\\s+(?:know|hear)\\b`,
+  `^(?:that|this|it)\\s+(?:makes|will make|should make)\\s+(?:things|it|everything|the work|our work|work)\\s+(?:much\\s+|a lot\\s+|so\\s+)?(?:easier|simpler|smoother|faster|quicker)\\b`,
   `^(?:what\\s+a|such\\s+a)\\s+(?:${PRAISE_WORDS})\\b`,
 ].join("|"), "i");
 
