@@ -107,6 +107,7 @@ import {
   dropRepeatedSentences,
   fullWords,
   humanBubbles,
+  materialLine,
   withoutPrices,
   parseAgentSettings,
   applyReplySwitches,
@@ -2011,6 +2012,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       memoryLines.push("This is a renovation of a home they already have. They are still only enquiring. Never ask about possession. Never suggest doing it room by room or while they stay there, and never talk as if the work is planned. Never ask for a floor plan. Ask what they are considering.");
     }
     memoryLines.push("They are exploring. Do not assume they have chosen the company. Answer what they asked before any question. One question at a time, about what they are considering. Do not give execution advice.");
+    // A materials or warranty question gets only the matching entries, never the whole sheet.
+    const materialsNote = materialLine(freshText, agent.materials, agent.warranty);
+    if (materialsNote) memoryLines.push(materialsNote);
     const onlyHello = freshText.trim().length < 80
       && /^(?:hi+|hello+|hey|vanakkam|namaste|good (?:morning|evening|afternoon))\b/i.test(freshText.trim())
       && !/\b(bhk|villa|apartment|flat|house|home|interior|price|cost|budget|quote)\b/i.test(freshText);

@@ -19,6 +19,7 @@ export * from "./sense";
 export * from "./situations";
 export * from "./rating";
 export * from "./prompt";
+export * from "./materials";
 
 export function pausesBlock(flags: {
   platform: boolean;

@@ -325,6 +325,10 @@ export async function saveAiSettings(formData: FormData) {
     knowledgeBase = formData.get("knowledgeMode") === "append" && knowledgeBase.trim() ? `${knowledgeBase.trim()}\n\n${text}` : text;
   }
   const settings: Record<string, unknown> = {};
+  // The material list and warranty are not on this form; keep what is saved.
+  const saved = parseAgentSettings(workspace.agentSettings);
+  settings.materials = saved.materials;
+  settings.warranty = saved.warranty;
   for (const key of agentToggles) settings[key] = formData.get(`toggle:${key}`) === "on";
   for (const [key, limit] of Object.entries(agentTextLimits)) settings[key] = String(formData.get(key) ?? "").trim().slice(0, limit);
   settings.followUpHours = parseFollowUpHours(formData.get("followUpHours"));

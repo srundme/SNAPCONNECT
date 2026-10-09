@@ -1,3 +1,5 @@
+import { parseMaterials, parseWarranty, type MaterialEntry, type WarrantyTerms } from "./materials";
+
 /** Everything staff can change about how the agent behaves, edited on the Agent page. */
 export type AgentSettings = {
   goal: string;
@@ -23,6 +25,9 @@ export type AgentSettings = {
   zohoCompanyFallback: string;
   hotBudgetLakhs: number;
   zohoRatingField: string;
+  /** The material specification, one entry per area. Not on the Agent page form, so saving keeps it. */
+  materials: MaterialEntry[];
+  warranty: WarrantyTerms | null;
 };
 
 export const defaultAgentSettings: AgentSettings = {
@@ -49,6 +54,8 @@ export const defaultAgentSettings: AgentSettings = {
   zohoCompanyFallback: "",
   hotBudgetLakhs: 0,
   zohoRatingField: "",
+  materials: [],
+  warranty: null,
 };
 
 const TOGGLES = [
@@ -106,6 +113,8 @@ export function parseAgentSettings(value: unknown): AgentSettings {
   }
   const line = Number(record.hotBudgetLakhs);
   if (Number.isFinite(line) && line >= 0 && line <= 10_000) settings.hotBudgetLakhs = Math.round(line * 10) / 10;
+  settings.materials = parseMaterials(record.materials);
+  settings.warranty = parseWarranty(record.warranty);
   return settings;
 }
 
