@@ -1724,6 +1724,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     let projectAsk: string | null = null;
     // A home we have already completed in their property, said once in code so it is never skipped.
     let proofLine: string | null = null;
+    // The home type they confirmed with the property ("Is that the Adarsh Palm Retreat villas…?" "Yes").
+    let confirmedType = homeTypeName(conversation.messages.find((message) => message.author === "SYSTEM" && message.body.startsWith("Home type:"))?.body.replace(/^Home type:\s*\|?\s*/, "") ?? "");
     // A question about the email they gave: a typo, a keyboard-mash, or one that cannot be real.
     let emailAsk: string | null = null;
     if (questions.length) {
@@ -1805,10 +1807,18 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         }
       }
       // "Is that Adarsh Palm Retreat on Sarjapur Road?": a yes keeps the property with its area, a no asks the area.
-      const offeredSpot = lastAsk.match(/\bis that (.+?) (?:on|in|at) ([^?]+)\?/i);
+      const offeredSpot = lastAsk.match(/\bis that (?:the )?(.+?) (?:on|in|at) ([^?]+)\?/i);
+      // "the Adarsh Palm Retreat villas": the type rides along with the property.
+      const offeredSpotType = offeredSpot?.[1]?.match(/\s(villas|apartments)$/i)?.[1] ?? null;
+      const offeredSpotName = offeredSpot?.[1]?.replace(/\s(villas|apartments)$/i, "").trim() ?? "";
       if (offeredSpot && placeQuestionEarly) {
         if (/^(?:yes|yeah|ya|yep|yup|haan|ha|aama|ji|correct|right|sure|exactly|that one|same)\b/i.test(freshText.trim()) && !/\b(?:no|not|wrong)\b/i.test(freshText)) {
-          absorbed.answers[placeQuestionEarly.id] = `${offeredSpot[1]!.trim()}, ${offeredSpot[2]!.trim()}`;
+          absorbed.answers[placeQuestionEarly.id] = `${offeredSpotName}, ${offeredSpot[2]!.trim()}`;
+          // "Yes, it's an apartment": their own word beats the listing.
+          if (offeredSpotType) {
+            confirmedType = homeTypeName(freshText) ?? homeTypeName(offeredSpotType);
+            await noteOnce("Home type:", `${confirmedType} (they confirmed ${offeredSpotName} ${offeredSpotType.toLowerCase()})`);
+          }
         } else if (/^(?:no|nope|nah|nahi|illa|not|wrong)\b/i.test(freshText.trim())) {
           memoryLines.push(`They said their home is not in ${offeredSpot[2]!.trim()}. Do not suggest that area again. If they have not said where it is, ask only which area, in a few words.`);
         }
@@ -1853,7 +1863,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         const words = ["one", "two", "three", "four", "five", "six", "seven", "eight"];
         const count = /\d/.test(bareBhk) ? bareBhk : String(words.indexOf(bareBhk) + 1);
         // Only the type they said: a listing calling the project "villas" is not their word.
-        const kind = homeTypeName(prospectBodies.join("\n"));
+        const kind = homeTypeName(prospectBodies.join("\n")) ?? confirmedType;
         absorbed.answers[bhkQuestion.id] = `${count} BHK${kind ? ` ${kind}` : ""}`;
       }
       const plansSeen = [...prospectBodies].reverse().map((body) => body.match(PHOTO_SEEN)?.[1] ?? body.match(DOCUMENT_SEEN)?.[2] ?? "")
@@ -1882,7 +1892,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         if (new Set(listed).size > 1) delete absorbed.answers[bhkQuestion.id];
       }
       if (bhkQuestion && !/\d\s*-?\s*(bhk|rk)\b|\bstudio\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
-        homeKind = prospectBodies.join("\n").match(/\b(apartment|appartment|flat|villa|bungalow|independent house|individual house|row house|duplex|penthouse)\b/i)?.[1]?.toLowerCase() ?? null;
+        homeKind = prospectBodies.join("\n").match(/\b(apartment|appartment|flat|villa|bungalow|independent house|individual house|row house|duplex|penthouse)\b/i)?.[1]?.toLowerCase() ?? confirmedType?.toLowerCase() ?? null;
         if (!homeKind && found?.kind) {
           memoryLines.push(`${found.name} is listed as ${found.kind === "apartment" ? "an apartment" : "a villa"} project, but they have not said what theirs is. When the BHK is your next detail, ask only how many BHK${advertised ? `, like "those are mostly ${advertised}, how many BHK is yours?"` : ""}. Never call it a villa or a flat yet.${advertised ? ` Never record ${advertised} as their answer.` : ""} Never name Google, Maps, Brave or any website.`);
         }
@@ -1893,7 +1903,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         }
       } else if (bhkQuestion) {
         const value = absorbed.answers[bhkQuestion.id]!;
-        const type = homeTypeName(value) ?? homeTypeName(prospectBodies.join("\n"));
+        const type = homeTypeName(value) ?? homeTypeName(prospectBodies.join("\n")) ?? confirmedType;
         const size = value.match(/\d+\s*-?\s*(?:bhk|rk)\b/i)?.[0]?.replace(/\s*-?\s*(bhk|rk)/i, (_, unit: string) => ` ${unit.toUpperCase()}`);
         if (type && size) absorbed.answers[bhkQuestion.id] = `${size} ${type}`;
       }
@@ -1912,14 +1922,16 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           if (size) absorbed.answers[bhkQuestion.id] = `${size.replace(/\s*-?\s*(bhk|rk)/i, (_, unit: string) => ` ${unit.toUpperCase()}`)} ${freshType}`;
           homeKind = freshType.toLowerCase();
         }
-        const saidType = freshType ?? homeTypeName(absorbed.answers[bhkQuestion.id] ?? "") ?? homeTypeName(typedHome);
+        const saidType = freshType ?? homeTypeName(absorbed.answers[bhkQuestion.id] ?? "") ?? homeTypeName(typedHome) ?? confirmedType;
+        // They just answered Varun's own type question: that is their answer, never checked again.
+        const typeJustAnswered = /\b(bhk|apartments?|villas?|flat|independent house|kind of home|type of home)\b/i.test(lastAsk) && Boolean(homeTypeName(typedFresh));
         const listedType = found.kind ? homeTypeName(found.kind) : null;
         const count = Number((absorbed.answers[bhkQuestion.id] ?? "").match(/(?<!\d)([1-9])\s*-?\s*bhk\b/i)?.[1] ?? 0);
         const options = found.bhkOptions ?? [];
         if (!saidType && listedType && count && !typeAsked) {
           // They gave the BHK but not the type: ask once, in a way only a type word answers.
           projectAsk = found.kind === "apartment" ? "Is yours a flat there or a villa?" : "Is yours a villa there or a flat?";
-        } else if (saidType && listedType && saidType !== listedType && !typeAsked) {
+        } else if (saidType && listedType && saidType !== listedType && !typeAsked && !typeJustAnswered) {
           const said = saidType.toLowerCase();
           projectAsk = `${found.name} is mostly ${found.kind === "apartment" ? "apartments" : "villas"}, is yours ${/^[aeiou]/.test(said) ? "an" : "a"} ${said} there or ${found.kind === "apartment" ? "a flat" : "a villa"}?`;
           memoryLines.push(`They said ${said}, but ${found.name} is listed as ${found.kind === "apartment" ? "an apartment" : "a villa"} project. Ask once, lightly, only this: "${projectAsk}" Never name Google, Maps, Brave or any website.`);
@@ -1940,7 +1952,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       const spotAsked = spoken.some((message) => message.author === "AI" && /\bis that .+ (?:on|in|at) [^?]+\?/i.test(message.body));
       if (!projectAsk && found && locality && placeQuestionEarly && !offeredSpot && !offeredProject && !spotAsked
         && !new RegExp(`\\b${locality.split(/[\s,]+/)[0]!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(prospectBodies.join(" "))) {
-        projectAsk = `Is that ${found.name} on ${locality}?`;
+        projectAsk = found.kind
+          ? `Is that the ${found.name} ${found.kind === "apartment" ? "apartments" : "villas"} on ${locality}?`
+          : `Is that ${found.name} on ${locality}?`;
       }
       // Proof from past work: a home we have really completed in their property, said once by the code.
       const completed = projectQuery && !builderNamed ? completedInProperty(found?.name ?? projectQuery, parseCompletedProjects(agent.completedProjects)) : null;
@@ -3144,12 +3158,21 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
                   && !checkedIds.includes(question.id) && !(question.kind === "phone" && wrongNumber);
               }),
         }), questions);
+    // The type is already known (they said it, or confirmed it with the property): a question about the
+    // type becomes the BHK question alone.
+    const knownType = confirmedType ?? homeTypeName(homeSaved);
+    const countKnown = /\b[1-9]\s*-?\s*(?:bhk|rk)\b/i.test(homeSaved);
+    const typeAskPattern = /\b(?:apartment|flat|villa|independent house)\b[^?]*\bor\b[^?]*\?|\b(?:kind|type) of home\b[^?]*\?/i;
+    const addressedFinal = addressed && knownType && Number(payload.followUp ?? 0) === 0 && !EXACT_ASK.test(addressed)
+      ? addressed.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/)
+        .map((part) => (typeAskPattern.test(part) ? (countKnown ? "" : `How many BHK is your ${knownType.toLowerCase()}?`) : part)).filter(Boolean).join(" ").trim()).filter(Boolean).join("\n") || addressed
+      : addressed;
     const bubbleOptions = { casual: agent.casualTexting, split: agent.splitMessages, ...(keep ? { keep } : {}) };
-    const freshBubbles = addressed ? humanBubbles(addressed, earlierReplies, keepCase, bubbleOptions) : [];
+    const freshBubbles = addressedFinal ? humanBubbles(addressedFinal, earlierReplies, keepCase, bubbleOptions) : [];
     // When every sentence repeats an earlier reply, a repeat still beats leaving the customer unanswered. Follow-ups can stay quiet.
-    const bubbles = addressed && !freshBubbles.length && nudge === 0 ? humanBubbles(addressed, [], keepCase, bubbleOptions) : freshBubbles;
+    const bubbles = addressedFinal && !freshBubbles.length && nudge === 0 ? humanBubbles(addressedFinal, [], keepCase, bubbleOptions) : freshBubbles;
     const reply = bubbles.length ? bubbles.join("\n") : null;
-    const spokenReply = addressed ? dropRepeatedSentences(addressed.replace(/\s*\n+\s*/g, " "), earlierReplies) : null;
+    const spokenReply = addressedFinal ? dropRepeatedSentences(addressedFinal.replace(/\s*\n+\s*/g, " "), earlierReplies) : null;
     const window = replyEligibility({
       now: runtime.now(),
       lastUserMessageAt: fresh.lastUserMessageAt,

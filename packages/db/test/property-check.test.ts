@@ -88,27 +88,29 @@ describeDb("property check and proof", () => {
     };
 
     const first = await say("Adarsh palm retreat", "I have saved your choice here so we can confirm. Most homes there are 2 and 3 BHK, what is the BHK of yours?");
-    expect(first).toMatch(/is that Adarsh Palm Retreat on Sarjapur Road\?/i);
+    expect(first).toMatch(/is that the Adarsh Palm Retreat villas on Sarjapur Road\?/i);
     expect(first).toMatch(/we have already done a 4 BHK home in Adarsh Palm Retreat/i);
     expect(first).toMatch(/thekarighars\.com\/videos/);
     expect(first).not.toMatch(/saved|so we can confirm/i);
     expect(first.split("?").length - 1).toBe(1);
 
-    const second = await say("Yes", "Got it. How many BHK is your villa?");
-    expect(second).toMatch(/how many BHK/i);
+    // "Yes" confirms the place and the type: only the BHK is left to ask.
+    const second = await say("Yes yes", "Got it. Is it an apartment, villa or independent house, and what is the BHK count?");
+    expect(second).not.toMatch(/apartment|independent house|villa or/i);
     const lead = await db.lead.findFirstOrThrow({ where: { contactId: contact.id } });
     expect(JSON.stringify(lead.answers)).toMatch(/Adarsh Palm Retreat, Sarjapur Road/);
 
-    // "3": the listing says villas, but they have not said so. Save only the BHK and ask the type once.
-    const third = await say("3", "3 BHK villa at Adarsh Palm Retreat. When do you get possession?");
-    expect(third).toMatch(/is yours a villa there or a flat\?/i);
-    expect(third).not.toMatch(/BHK villa/i);
-    const afterBhk = await db.lead.findFirstOrThrow({ where: { contactId: contact.id } });
-    expect(JSON.stringify(afterBhk.answers)).toMatch(/"3 BHK"/);
-    expect(JSON.stringify(afterBhk.answers)).not.toMatch(/villa/i);
-
-    await say("Villa", "Got it. When do you get possession, or is the home already ready?");
+    // "3": saved as a 3 BHK villa, and the type is never asked.
+    const third = await say("3", "Got it. Is yours a villa there or a flat?");
+    expect(third).not.toMatch(/villa there or a flat|apartment or/i);
     const typed = await db.lead.findFirstOrThrow({ where: { contactId: contact.id } });
     expect(JSON.stringify(typed.answers)).toMatch(/3 BHK Villa/i);
+
+
+    // Their own word wins: "Apartment with 3 bhk" after the villa check is saved as said, with no second check.
+    const fourth = await say("Sorry, it's an apartment with 3 bhk", "Adarsh Palm Retreat is mostly villas, is yours an apartment there or a villa?");
+    expect(fourth).not.toMatch(/mostly villas|apartment there or a villa/i);
+    const corrected = await db.lead.findFirstOrThrow({ where: { contactId: contact.id } });
+    expect(JSON.stringify(corrected.answers)).toMatch(/3 BHK Apartment/i);
   });
 });

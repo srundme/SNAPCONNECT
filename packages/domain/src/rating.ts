@@ -89,8 +89,8 @@ export function rateLead(input: { questions: LeadQuestion[]; answers: Record<str
 /** Flat, bungalow, individual house: the words people use, in the type the team works with. */
 export function homeTypeName(text: string): string | null {
   const said = text.toLowerCase();
-  if (/\b(flat|apartment|apt|appartment|appartement|society flat|gated community flat)\b/.test(said)) return "Apartment";
-  if (/\b(villa|bungalow|bunglow)\b/.test(said)) return "Villa";
+  if (/\b(flats?|apartments?|apt|appartments?|appartement|society flat|gated community flat)\b/.test(said)) return "Apartment";
+  if (/\b(villas?|bungalows?|bunglow)\b/.test(said)) return "Villa";
   if (/\b(independent|individual|standalone) (house|home|building)\b|\bthani veedu\b/.test(said)) return "Independent house";
   if (/\brow ?house\b/.test(said)) return "Row house";
   if (/\bduplex\b/.test(said)) return "Duplex";
