@@ -5,6 +5,46 @@ import Link from "next/link";
 import { ExternalLink, RefreshCw } from "lucide-react";
 import { clsx } from "clsx";
 import { savePostSelection } from "@/lib/actions";
+import { ChannelGlyph } from "@/components/ui";
+
+type Channel = "INSTAGRAM" | "FACEBOOK" | "WHATSAPP";
+
+/** Post preview that never shows a broken image: falls back to a quiet tile with the channel icon. */
+function PostThumb({ src, channel, kind, large }: { src: string | null; channel: Channel; kind: string; large?: boolean }) {
+  const [failed, setFailed] = useState<string | null>(null);
+  const tint = channel === "FACEBOOK" ? "text-[var(--color-fb)]" : channel === "WHATSAPP" ? "text-[var(--color-wa)]" : "text-[var(--color-ig)]";
+  if (src && failed !== src) {
+    return (
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(src)}
+        ref={(node) => {
+          // An image that failed before hydration never fires onError, so check once it mounts.
+          if (node && node.complete && node.naturalWidth === 0) setFailed(src);
+        }}
+        className={large ? "max-h-80 w-auto max-w-full rounded-xl bg-[var(--color-paper)] object-contain" : "h-12 w-12 shrink-0 rounded-lg bg-[var(--color-paper)] object-cover"}
+      />
+    );
+  }
+  if (large) {
+    return (
+      <span className={clsx("grid aspect-[4/3] w-full max-w-sm place-items-center rounded-xl bg-[var(--color-paper)]", tint)}>
+        <span className="grid justify-items-center gap-2">
+          <ChannelGlyph channel={channel} size={28} />
+          <span className="text-[12px] font-semibold text-[var(--color-muted)]">{kind} · preview not available</span>
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span className={clsx("grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-[var(--color-paper)]", tint)} aria-hidden>
+      <ChannelGlyph channel={channel} size={18} />
+    </span>
+  );
+}
 
 export type ReplyPost = {
   externalId: string;
@@ -20,11 +60,13 @@ export type ReplyPost = {
 export function ReplySetup({
   connectionId,
   accountName,
+  channel = "INSTAGRAM",
   repliesOn,
   posts,
 }: {
   connectionId: string;
   accountName: string;
+  channel?: Channel;
   repliesOn: boolean;
   posts: ReplyPost[];
 }) {
@@ -46,12 +88,13 @@ export function ReplySetup({
 
       <div className="flex items-center justify-between gap-3 lg:col-span-2">
         <div className="min-w-0">
-          <h1 className="text-[22px] font-semibold tracking-tight">Set up replies</h1>
-          <p className="truncate text-sm text-[var(--color-muted)]">{accountName} · {onCount} of {posts.length} posts on</p>
+          <h1 className="font-[family-name:var(--font-display)] text-[28px] font-medium leading-none tracking-tight">Replies</h1>
+          <p className="mt-1.5 truncate text-sm text-[var(--color-muted)]">{accountName} · replying on {onCount} of {posts.length} {posts.length === 1 ? "post" : "posts"}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <span className={clsx("rounded-full px-2.5 py-1 text-[12px] font-semibold", repliesOn ? "bg-[#f4ead2] text-[#6e5420]" : "bg-[#fff6e8] text-[#92400e]")}>
-            {repliesOn ? "On" : "Off"}
+          <span className={clsx("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-semibold", repliesOn ? "bg-[#f4ead2] text-[#6e5420]" : "bg-[#fff6e8] text-[#92400e]")}>
+            <span className={clsx("h-1.5 w-1.5 rounded-full", repliesOn ? "bg-[var(--color-accent)]" : "bg-[#d97706]")} aria-hidden />
+            {repliesOn ? "Replies on" : "Replies off"}
           </span>
           <button className="border-transparent bg-[var(--color-accent)] px-4 py-2 text-white hover:bg-[#745722]" type="submit" name="activate" value={repliesOn ? "0" : "1"}>
             {repliesOn ? "Save" : "Turn on"}
@@ -59,7 +102,7 @@ export function ReplySetup({
         </div>
       </div>
 
-      <aside className="flex min-h-0 flex-col overflow-hidden rounded-2xl bg-white">
+      <aside className="flex min-h-0 flex-col overflow-hidden rounded-2xl bg-white shadow-[var(--shadow-card)]">
         <div className="flex items-center justify-between border-b border-[var(--color-line)] px-3 py-2.5">
           <p className="text-[13px] font-semibold">Posts</p>
           <button className="inline-flex items-center gap-1 px-2 py-1 text-[12px]" type="submit" form="reload-posts">
@@ -80,14 +123,10 @@ export function ReplySetup({
             {posts.map((post) => {
               const active = post.externalId === selected;
               return (
-                <li key={post.externalId} className={clsx("border-b border-[var(--color-line)] last:border-b-0", active && "bg-[#f3faf8]")}>
+                <li key={post.externalId} className={clsx("border-b border-[var(--color-line)] last:border-b-0", active && "bg-[#faf6ec]")}>
                   <div className="flex items-center gap-2.5 px-2.5 py-2">
                     <button type="button" className="flex min-w-0 flex-1 items-center gap-2.5 border-0 bg-transparent p-0 text-left hover:bg-transparent" onClick={() => setSelected(post.externalId)}>
-                      {post.previewUrl ? (
-                        <img src={post.previewUrl} alt="" className="h-11 w-11 shrink-0 rounded-lg object-cover" />
-                      ) : (
-                        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-[var(--color-paper)] text-[10px] font-semibold text-[var(--color-muted)]">{post.kind}</span>
-                      )}
+                      <PostThumb src={post.previewUrl} channel={channel} kind={post.kind} />
                       <span className="min-w-0">
                         <span className="block text-[11px] font-semibold text-[var(--color-muted)]">{post.kind}{post.when ? ` · ${post.when}` : ""}</span>
                         <span className="mt-0.5 line-clamp-2 text-[13px] leading-4">{post.caption || "No caption"}</span>
@@ -97,6 +136,8 @@ export function ReplySetup({
                     <button
                       type="button"
                       aria-pressed={Boolean(enabled[post.externalId])}
+                      aria-label={`Reply on this ${post.kind.toLowerCase()}`}
+                      title={post.supported ? undefined : "This kind of post cannot get replies"}
                       disabled={!post.supported}
                       onClick={() => setEnabled((current) => ({ ...current, [post.externalId]: !current[post.externalId] }))}
                       className={clsx("h-6 w-11 shrink-0 rounded-full border-0 p-0.5", enabled[post.externalId] ? "bg-[var(--color-accent)] hover:bg-[var(--color-accent)]" : "bg-[#d5d9e0] hover:bg-[#d5d9e0]")}
@@ -111,13 +152,13 @@ export function ReplySetup({
         )}
       </aside>
 
-      <div className="min-h-0 overflow-y-auto rounded-2xl bg-white p-4">
+      <div className="min-h-0 overflow-y-auto rounded-2xl bg-white p-4 shadow-[var(--shadow-card)] sm:p-5">
         {current ? (
           <div className="grid gap-4">
             <p className="text-sm font-semibold leading-5">{current.caption || current.kind}</p>
-            {current.previewUrl ? <img src={current.previewUrl} alt="" className="max-h-80 w-auto rounded-xl object-contain" /> : null}
+            <PostThumb key={current.externalId} src={current.previewUrl} channel={channel} kind={current.kind} large />
             <p className="text-sm text-[var(--color-muted)]">
-              When someone comments here, the assistant writes the first message itself from the comment, this post and the <Link href="/ai" className="font-semibold text-[var(--color-ink)] underline">Agent page</Link>, then carries on the chat with the same settings. Turn the post on or off in the list.
+              When someone comments on this post, the assistant sends them a private message based on their comment, the post and the <Link href="/ai" className="font-semibold text-[var(--color-ink)] underline">Agent</Link> settings, then carries on the chat. Use the switch in the list to turn replies on or off for this post.
             </p>
           </div>
         ) : (

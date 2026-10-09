@@ -4,6 +4,7 @@ import { refreshPosts } from "@/lib/actions";
 import { ReplySetup } from "@/components/reply-setup";
 import { ChannelMark, Empty, Notice } from "@/components/ui";
 import { requireWorkspace } from "@/lib/session";
+import { whenIST } from "@/lib/format";
 import { clsx } from "clsx";
 
 function typeLabel(value: string) {
@@ -28,9 +29,8 @@ export default async function PostsPage({ searchParams }: { searchParams: Promis
   const rule = connection?.rules[0];
   const selected = new Set(rule?.coverage === "SELECTED_POSTS" ? rule.selectedMediaIds : []);
   const repliesOn = Boolean(connection && !connection.automationPaused && !workspace.automationPaused);
-  const when = new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", timeZone: workspace.timezone });
   return (
-    <section className="-mx-4 -my-5 flex h-[calc(100dvh-2.25rem)] flex-col gap-3 overflow-hidden px-4 py-4 sm:-mx-6 lg:-mx-8 lg:-my-7 lg:px-6">
+    <section className="-mx-4 -my-5 flex h-[calc(100dvh-3.5rem)] lg:h-dvh flex-col gap-3 overflow-hidden px-4 py-4 sm:-mx-6 lg:-mx-8 lg:-my-7 lg:px-6">
       {params.connected ? <Notice tone="ok">{params.connected} is connected. Pick the posts, write the first message, then turn replies on.</Notice> : null}
       {params.error ? <Notice tone="stop">{params.error}</Notice> : null}
       {params.saved ? <Notice tone="ok">{params.on ? "Replies are on. A new comment gets the first message." : "Saved."}</Notice> : null}
@@ -38,15 +38,15 @@ export default async function PostsPage({ searchParams }: { searchParams: Promis
       {params.loaded && params.loaded !== "sample" ? <Notice tone="ok">{params.loaded} posts loaded.</Notice> : null}
       {connections.length === 0 ? (
         <div>
-          <Empty title="Connect Instagram first" body="Replies start after the account is connected." />
-          {workspace.mode === "INTEGRATION" ? <a className="mt-4 inline-flex rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold text-white" href={`/api/oauth/instagram/start?workspaceId=${workspace.id}`}>Connect Instagram</a> : null}
+          <Empty title="Connect Instagram first" body="Once Instagram or a Facebook Page is connected, choose the posts whose comments get a private reply." />
+          {workspace.mode === "INTEGRATION" ? <a className="mt-4 inline-flex rounded-[10px] bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold text-white hover:bg-[#745722]" href={`/api/oauth/instagram/start?workspaceId=${workspace.id}`}>Connect Instagram</a> : null}
         </div>
       ) : connection ? (
         <>
           {connections.length > 1 ? (
             <div className="flex flex-wrap gap-2">
               {connections.map((item) => (
-                <Link key={item.id} href={`/posts?connectionId=${item.id}`} className={clsx("inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold", item.id === connection.id ? "bg-[var(--color-ink)] text-white" : "bg-white")}>
+                <Link key={item.id} href={`/posts?connectionId=${item.id}`} className={clsx("inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold", item.id === connection.id ? "bg-[var(--color-ink)] text-white" : "bg-white shadow-[var(--shadow-card)] hover:bg-[#faf7f2]")}>
                   <ChannelMark channel={item.channel} />
                   {item.displayName}
                 </Link>
@@ -59,13 +59,14 @@ export default async function PostsPage({ searchParams }: { searchParams: Promis
           <ReplySetup
             connectionId={connection.id}
             accountName={connection.displayName}
+            channel={connection.channel}
             repliesOn={repliesOn}
             posts={connection.media.map((post) => ({
               externalId: post.externalId,
               caption: post.caption?.trim() || "",
               kind: typeLabel(post.contentType),
               previewUrl: post.previewUrl,
-              when: post.publishedAt ? when.format(post.publishedAt) : null,
+              when: post.publishedAt ? whenIST(post.publishedAt) : null,
               permalink: post.permalink,
               supported: post.supportStatus === "SUPPORTED",
               enabled: rule?.coverage === "SELECTED_POSTS" ? selected.has(post.externalId) : post.supportStatus === "SUPPORTED",

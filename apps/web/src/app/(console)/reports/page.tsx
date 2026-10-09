@@ -1,19 +1,23 @@
 import { getPrisma } from "@snapsocial/db";
-import { chatLanguageSample, languageName, parseLeadQuestions, zonedDay } from "@snapsocial/domain";
-import { ChannelMark, Empty, PageTitle, Panel, StatGrid } from "@/components/ui";
+import { chatLanguageSample, languageName, parseLeadQuestions } from "@snapsocial/domain";
+import { ChannelMark, Empty, PageTitle, Panel } from "@/components/ui";
+import { DailyChart, type DayRow } from "@/components/reports/daily-chart";
+import { FilterGroup } from "@/components/reports/filters";
+import { Funnel } from "@/components/reports/funnel";
+import { contactName, duration, istDateLabel, istDay, istDayStart, istDays, isTestContact, OFFER_ACCEPTED, percentOf } from "@/components/reports/ist";
+import { KpiTiles, PanelHeading } from "@/components/reports/kpi-tiles";
+import { LeadsTable, type LeadRow } from "@/components/reports/leads-table";
+import { whenIST } from "@/lib/format";
 import { requireWorkspace } from "@/lib/session";
 
-const RANGES = { today: "Today", "7d": "Last 7 days", "30d": "Last 30 days", all: "All time" } as const;
+const RANGES = { today: "Today", "7d": "7 days", "30d": "30 days", all: "All time" } as const;
 type RangeKey = keyof typeof RANGES;
+type ChannelKey = "INSTAGRAM" | "FACEBOOK" | "WHATSAPP";
 
+/** Start of the range in India days: today, the last 7 India days including today, the last 30, or everything. */
 function rangeStart(range: RangeKey, now: Date): Date | null {
   if (range === "all") return null;
-  if (range === "today") {
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    return start;
-  }
-  return new Date(now.getTime() - (range === "7d" ? 7 : 30) * 86_400_000);
+  return istDayStart(now, range === "today" ? 0 : range === "7d" ? 6 : 29);
 }
 
 function languageGroup(sample: string | null): string {
@@ -28,14 +32,7 @@ function languageGroup(sample: string | null): string {
   return "Other Indian language";
 }
 
-function percent(part: number, whole: number): string {
-  return whole ? `${Math.round((part / whole) * 100)}%` : "–";
-}
-
-function seconds(ms: number | null): string {
-  if (ms === null) return "–";
-  return ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.round(ms / 60_000)} min`;
-}
+const NAMES = { select: { username: true, displayName: true, chosenName: true } } as const;
 
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ channel?: string; range?: string }> }) {
   const params = await searchParams;
@@ -44,26 +41,63 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const agent = workspace.agentName || "Assistant";
   const db = getPrisma();
   const now = new Date();
+  const today = istDay(now);
   const range: RangeKey = params.range && params.range in RANGES ? (params.range as RangeKey) : "30d";
-  const channel: "INSTAGRAM" | "FACEBOOK" | "WHATSAPP" | null = params.channel === "INSTAGRAM" || params.channel === "FACEBOOK" || params.channel === "WHATSAPP" ? params.channel : null;
+  const channel: ChannelKey | null = params.channel === "INSTAGRAM" || params.channel === "FACEBOOK" || params.channel === "WHATSAPP" ? params.channel : null;
   const since = rangeStart(range, now);
-  const created = since ? { gte: since } : undefined;
   const scope = { workspaceId: workspace.id, ...(channel ? { channel } : {}) };
 
-  const [conversations, leads, openers, media] = await Promise.all([
-    db.conversation.findMany({ where: { ...scope, sandbox: false, ...(created ? { createdAt: created } : {}) }, select: { id: true, channel: true, owner: true, sourceMediaId: true, createdAt: true } }),
-    db.lead.findMany({ where: { ...scope, ...(created ? { createdAt: created } : {}) }, include: { contact: true } }),
-    db.outboundAttempt.findMany({ where: { ...scope, ...(created ? { createdAt: created } : {}) }, select: { status: true } }),
+  // The daily chart always shows whole India days: 7 for Today / 7 days, 30 for 30 days / All time.
+  const chartDays = range === "30d" || range === "all" ? 30 : 7;
+  const chartStart = istDayStart(now, chartDays - 1);
+  const fetchFrom = since === null ? null : since < chartStart ? since : chartStart;
+
+  const [conversationRows, attemptRows, media] = await Promise.all([
+    db.conversation.findMany({
+      where: { ...scope, sandbox: false, ...(fetchFrom ? { createdAt: { gte: fetchFrom } } : {}) },
+      select: { id: true, channel: true, owner: true, contactId: true, sourceMediaId: true, createdAt: true, contact: NAMES },
+    }),
+    db.outboundAttempt.findMany({ where: { ...scope, ...(since ? { createdAt: { gte: since } } : {}) }, select: { status: true, contactId: true, conversationId: true } }),
     db.media.findMany({ where: { workspaceId: workspace.id }, select: { externalId: true, caption: true, channel: true } }),
   ]);
+
+  const real = conversationRows.filter((conversation) => !isTestContact(conversation.contact));
+  const conversations = since ? real.filter((conversation) => conversation.createdAt >= since) : real;
   const ids = conversations.map((conversation) => conversation.id);
-  const [messages, runs] = await Promise.all([
+  const contactIds = [...new Set(conversations.map((conversation) => conversation.contactId))];
+
+  const [leadRows, messages, runs, attemptContacts] = await Promise.all([
+    db.lead.findMany({
+      where: {
+        ...scope,
+        archivedAt: null,
+        ...(range === "all" ? {} : { OR: [{ contactId: { in: contactIds } }, { crmState: "SYNCED", updatedAt: { gte: chartStart } }] }),
+      },
+      select: {
+        id: true, contactId: true, channel: true, phoneE164: true, whatsappE164: true, qualification: true, crmState: true, rating: true,
+        answers: true, city: true, propertyType: true, contactableAt: true, qualifiedAt: true, updatedAt: true, contact: NAMES,
+      },
+    }),
     ids.length
       ? db.message.findMany({ where: { conversationId: { in: ids } }, orderBy: { createdAt: "asc" }, select: { conversationId: true, author: true, body: true, createdAt: true } })
       : Promise.resolve([]),
     ids.length ? db.aiRun.findMany({ where: { conversationId: { in: ids } }, select: { valid: true, diagnostic: true, simulated: true } }) : Promise.resolve([]),
+    attemptRows.length
+      ? db.contact.findMany({ where: { id: { in: [...new Set(attemptRows.map((attempt) => attempt.contactId))] } }, select: { id: true, username: true, displayName: true, chosenName: true } })
+      : Promise.resolve([]),
   ]);
+  const leads = leadRows.filter((lead) => !isTestContact(lead.contact));
 
+  // When a lead reached Zoho: the moment it became ready under this workspace's rule, else its last update.
+  const sentAt = (lead: (typeof leads)[number]) =>
+    (workspace.zohoSendWhen === "QUALIFIED" ? lead.qualifiedAt : lead.contactableAt ?? lead.qualifiedAt) ?? lead.updatedAt;
+
+  const leadsByContact = new Map<string, typeof leads>();
+  for (const lead of leads) {
+    const list = leadsByContact.get(lead.contactId) ?? [];
+    list.push(lead);
+    leadsByContact.set(lead.contactId, list);
+  }
   const byConversation = new Map<string, typeof messages>();
   for (const message of messages) {
     const list = byConversation.get(message.conversationId) ?? [];
@@ -71,14 +105,27 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     byConversation.set(message.conversationId, list);
   }
 
-  const replied = conversations.filter((conversation) => (byConversation.get(conversation.id) ?? []).some((message) => message.author === "PROSPECT"));
-  const handedOff = conversations.filter((conversation) => (byConversation.get(conversation.id) ?? []).some((message) => message.author === "STAFF")).length;
-  const openersSent = openers.filter((attempt) => attempt.status === "ACCEPTED").length;
-  const comments = Math.max(openers.length, leads.filter((lead) => lead.sourceType === "COMMENT").length);
-  const phones = leads.filter((lead) => lead.phoneE164).length;
-  const zoho = leads.filter((lead) => lead.crmState === "SYNCED");
-  const cold = leads.filter((lead) => lead.qualification === "DISQUALIFIED").length;
+  // Each conversation started in the range, and how far it got. All funnel steps count these same conversations.
+  const journeys = conversations.map((conversation) => {
+    const own = leadsByContact.get(conversation.contactId) ?? [];
+    const said = byConversation.get(conversation.id) ?? [];
+    return {
+      conversation,
+      replied: said.some((message) => message.author === "PROSPECT"),
+      details: own.some((lead) => Boolean(lead.phoneE164 || lead.whatsappE164)),
+      qualified: own.some((lead) => lead.qualification === "QUALIFIED"),
+      zoho: own.some((lead) => lead.crmState === "SYNCED"),
+      hot: own.some((lead) => lead.rating === "HOT"),
+      offer: said.some((message) => message.author === "SYSTEM" && OFFER_ACCEPTED.test(message.body)),
+      handed: conversation.owner === "HUMAN" || said.some((message) => message.author === "STAFF"),
+    };
+  });
+  const count = (key: "replied" | "details" | "qualified" | "zoho" | "hot" | "offer" | "handed") => journeys.filter((journey) => journey[key]).length;
+  const started = journeys.length;
+  const zohoCount = count("zoho");
+  const offers = count("offer");
 
+  // Reply time: unchanged calculation — first unanswered customer message to the next AI reply, under 10 minutes.
   const waits: number[] = [];
   let aiReplies = 0;
   let prospectMessages = 0;
@@ -104,71 +151,81 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const modelReplies = runs.filter((run) => run.valid && !run.simulated).length;
   const fallbacks = runs.filter((run) => !run.valid || /plain-text/i.test(run.diagnostic ?? "")).length;
 
+  // From comments: openers sent in the range, and how many of those people wrote back in DMs.
+  const testContacts = new Set(attemptContacts.filter((contact) => isTestContact(contact)).map((contact) => contact.id));
+  const attempts = attemptRows.filter((attempt) => !testContacts.has(attempt.contactId));
+  const delivered = attempts.filter((attempt) => attempt.status === "ACCEPTED");
+  const openerConversations = [...new Set(delivered.map((attempt) => attempt.conversationId).filter((id): id is string => Boolean(id)))];
+  const answered = openerConversations.length
+    ? await db.message.findMany({ where: { conversationId: { in: openerConversations }, author: "PROSPECT" }, select: { conversationId: true }, distinct: ["conversationId"] })
+    : [];
+  const answeredSet = new Set(answered.map((message) => message.conversationId));
+  const openerReplies = delivered.filter((attempt) => attempt.conversationId && answeredSet.has(attempt.conversationId)).length;
+
   const languages = new Map<string, number>();
-  for (const conversation of replied) {
-    const said = (byConversation.get(conversation.id) ?? []).filter((message) => message.author === "PROSPECT").map((message) => message.body);
+  for (const journey of journeys) {
+    if (!journey.replied) continue;
+    const said = (byConversation.get(journey.conversation.id) ?? []).filter((message) => message.author === "PROSPECT").map((message) => message.body);
     const group = languageGroup(chatLanguageSample(said));
     languages.set(group, (languages.get(group) ?? 0) + 1);
   }
   const languageRows = [...languages.entries()].sort((a, b) => b[1] - a[1]);
+  const repliedCount = count("replied");
 
-  const funnel = [
-    { label: "Comments", value: comments },
-    { label: "Openers sent", value: openersSent },
-    { label: `Replied to ${agent}`, value: replied.length },
-    { label: "Shared phone", value: phones },
-    { label: "Sent to Zoho", value: zoho.length },
-  ];
-  const funnelTop = Math.max(1, ...funnel.map((step) => step.value));
-
-  const days = range === "today" ? 1 : range === "7d" ? 7 : 14;
-  const trend = Array.from({ length: days }, (_, index) => {
-    const date = new Date(now.getTime() - (days - 1 - index) * 86_400_000);
-    return { day: zonedDay(date, workspace.timezone), chats: 0, zoho: 0 };
-  });
+  // Daily chart, India days.
+  const trend: DayRow[] = istDays(now, chartDays).map((day) => ({ day, chats: 0, zoho: 0 }));
   const trendIndex = new Map(trend.map((row, index) => [row.day, index]));
-  for (const conversation of conversations) {
-    const index = trendIndex.get(zonedDay(conversation.createdAt, workspace.timezone));
+  for (const conversation of real) {
+    const index = trendIndex.get(istDay(conversation.createdAt));
     if (index !== undefined) trend[index]!.chats += 1;
   }
-  for (const lead of zoho) {
-    const index = trendIndex.get(zonedDay(lead.qualifiedAt ?? lead.updatedAt, workspace.timezone));
+  for (const lead of leads) {
+    if (lead.crmState !== "SYNCED") continue;
+    const index = trendIndex.get(istDay(sentAt(lead)));
     if (index !== undefined) trend[index]!.zoho += 1;
   }
-  const trendTop = Math.max(1, ...trend.map((row) => row.chats));
 
   const captions = new Map(media.map((item) => [item.externalId, { caption: item.caption, channel: item.channel }]));
   const posts = new Map<string, { chats: number; zoho: number }>();
-  for (const conversation of conversations) {
-    if (!conversation.sourceMediaId) continue;
-    const row = posts.get(conversation.sourceMediaId) ?? { chats: 0, zoho: 0 };
+  for (const journey of journeys) {
+    const mediaId = journey.conversation.sourceMediaId;
+    if (!mediaId) continue;
+    const row = posts.get(mediaId) ?? { chats: 0, zoho: 0 };
     row.chats += 1;
-    posts.set(conversation.sourceMediaId, row);
-  }
-  for (const lead of zoho) {
-    if (!lead.sourceMediaId) continue;
-    const row = posts.get(lead.sourceMediaId) ?? { chats: 0, zoho: 0 };
-    row.zoho += 1;
-    posts.set(lead.sourceMediaId, row);
+    if (journey.zoho) row.zoho += 1;
+    posts.set(mediaId, row);
   }
   const topPosts = [...posts.entries()].sort((a, b) => b[1].zoho - a[1].zoho || b[1].chats - a[1].chats).slice(0, 5);
 
-  const channels = (["INSTAGRAM", "FACEBOOK", "WHATSAPP"] as const).map((name) => ({
-    name,
-    chats: conversations.filter((conversation) => conversation.channel === name).length,
-    zoho: zoho.filter((lead) => lead.channel === name).length,
-  }));
+  const channels = (["INSTAGRAM", "FACEBOOK", "WHATSAPP"] as const).map((name) => {
+    const mine = journeys.filter((journey) => journey.conversation.channel === name);
+    return { name, chats: mine.length, zoho: mine.filter((journey) => journey.zoho).length };
+  });
 
+  // Latest Zoho leads from these conversations. Answers are read by question label, as the team words them.
   const questions = parseLeadQuestions(workspace.leadQuestions);
-  const companyId = questions.find((question) => /company/i.test(question.label))?.id;
-  const volumeId = questions.find((question) => /volume|month/i.test(question.label))?.id;
-  const teamId = questions.find((question) => /team/i.test(question.label))?.id;
-  const answer = (lead: (typeof zoho)[number], id: string | undefined) => {
-    if (!id || !lead.answers || typeof lead.answers !== "object" || Array.isArray(lead.answers)) return "–";
-    const value = (lead.answers as Record<string, unknown>)[id];
-    return typeof value === "string" && value.trim() ? value : "–";
+  const homeId = questions.find((question) => /\bbhk\b/i.test(question.label))?.id;
+  const areaId = (questions.find((question) => /where is the home/i.test(question.label))
+    ?? questions.find((question) => /\b(project|locality|location)\b/i.test(question.label)))?.id;
+  const answer = (value: unknown, id: string | undefined): string | null => {
+    if (!id || !value || typeof value !== "object" || Array.isArray(value)) return null;
+    const text = (value as Record<string, unknown>)[id];
+    return typeof text === "string" && text.trim() ? text.trim() : null;
   };
-  const recent = [...zoho].sort((a, b) => (b.qualifiedAt ?? b.updatedAt).getTime() - (a.qualifiedAt ?? a.updatedAt).getTime()).slice(0, 6);
+  const cohortContacts = new Set(contactIds);
+  const recentLeads: LeadRow[] = leads
+    .filter((lead) => lead.crmState === "SYNCED" && cohortContacts.has(lead.contactId))
+    .sort((a, b) => sentAt(b).getTime() - sentAt(a).getTime())
+    .slice(0, 8)
+    .map((lead) => ({
+      id: lead.id,
+      name: contactName(lead.contact),
+      channel: lead.channel,
+      home: answer(lead.answers, homeId) ?? lead.propertyType ?? "–",
+      area: answer(lead.answers, areaId) ?? lead.city ?? "–",
+      rating: lead.rating,
+      when: whenIST(sentAt(lead), now),
+    }));
 
   const link = (next: { channel?: string | null; range?: string }) => {
     const query = new URLSearchParams();
@@ -177,162 +234,149 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     query.set("range", next.range ?? range);
     return `/reports?${query.toString()}`;
   };
-  const pill = (active: boolean) =>
-    `rounded-full border px-3 py-1 ${active ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-white" : "border-[var(--color-line)] bg-white hover:bg-[var(--color-paper)]"}`;
+  const span = since
+    ? range === "today" ? `Today, ${istDateLabel(today, true)}` : `${istDateLabel(istDay(since))} – ${istDateLabel(today, true)}`
+    : "Since the first conversation";
 
   return (
     <section>
-      <PageTitle title="Reports" detail="How comments turn into conversations and Zoho leads. Counts are channel contacts, so one person on both Instagram and Facebook counts twice." />
-      <div className="mb-5 flex flex-wrap items-center gap-2 text-sm">
-        {(Object.keys(RANGES) as RangeKey[]).map((key) => (
-          <a key={key} href={link({ range: key })} className={pill(range === key)}>{RANGES[key]}</a>
-        ))}
-        <span className="mx-2 h-5 w-px bg-[var(--color-line)]" />
-        <a href={link({ channel: null })} className={pill(!channel)}>All channels</a>
-        <a href={link({ channel: "INSTAGRAM" })} className={pill(channel === "INSTAGRAM")}>Instagram</a>
-        <a href={link({ channel: "FACEBOOK" })} className={pill(channel === "FACEBOOK")}>Facebook</a>
-        <a href={link({ channel: "WHATSAPP" })} className={pill(channel === "WHATSAPP")}>WhatsApp</a>
-      </div>
-
-      <StatGrid columns={5} items={[
-        { label: "Comments", value: comments },
-        { label: "Conversations", value: replied.length },
-        { label: "Sent to Zoho", value: zoho.length },
-        { label: "Became a lead", value: percent(zoho.length, comments) },
-        { label: `${agent} reply time`, value: seconds(medianWait) },
-      ]} />
-      <div className="mt-3">
-        <StatGrid columns={5} items={[
-          { label: "Phones collected", value: phones },
-          { label: "Not interested", value: cold },
-          { label: "Handed to team", value: handedOff },
-          { label: "Messages from people", value: prospectMessages },
-          { label: `Replies by ${agent}`, value: aiReplies },
+      <PageTitle
+        title="Reports"
+        detail="Every number below follows the conversations that started in the chosen period, in India time. One person on two channels counts as two conversations."
+      />
+      <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+        <FilterGroup label="Period" options={(Object.keys(RANGES) as RangeKey[]).map((key) => ({ key, label: RANGES[key], href: link({ range: key }), active: range === key }))} />
+        <FilterGroup label="Channel" options={[
+          { key: "all", label: "All channels", href: link({ channel: null }), active: !channel },
+          { key: "INSTAGRAM", label: "Instagram", href: link({ channel: "INSTAGRAM" }), active: channel === "INSTAGRAM" },
+          { key: "FACEBOOK", label: "Facebook", href: link({ channel: "FACEBOOK" }), active: channel === "FACEBOOK" },
+          { key: "WHATSAPP", label: "WhatsApp", href: link({ channel: "WHATSAPP" }), active: channel === "WHATSAPP" },
         ]} />
+        <span className="text-[12px] text-[var(--color-muted)] sm:ml-auto">{span}</span>
       </div>
 
-      <div className="mt-5 grid gap-4 lg:grid-cols-2">
-        <Panel className="p-5">
-          <h2 className="text-[15px] font-semibold">Funnel</h2>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">From a comment to a lead in Zoho.</p>
-          <div className="mt-4 space-y-3">
-            {funnel.map((step, index) => (
-              <div key={step.label}>
-                <div className="flex justify-between text-sm">
-                  <span>{step.label}</span>
-                  <span className="font-semibold">
-                    {step.value}
-                    {index > 0 ? <span className="ml-2 font-normal text-[var(--color-muted)]">{percent(step.value, funnel[0]!.value)}</span> : null}
-                  </span>
-                </div>
-                <div className="mt-1 h-2.5 rounded-full bg-[var(--color-paper)]">
-                  <div className="h-2.5 rounded-full bg-[var(--color-accent)]" style={{ width: `${Math.max(2, (step.value / funnelTop) * 100)}%` }} />
-                </div>
-              </div>
-            ))}
-          </div>
+      <KpiTiles items={[
+        { label: "Conversations", value: started, note: `${repliedCount} replied to ${agent}` },
+        { label: "Leads in Zoho", value: zohoCount, note: started ? `${percentOf(zohoCount, started)} of conversations` : undefined, emphasis: true },
+        { label: "HOT leads", value: count("hot"), note: "Rated hot" },
+        { label: "Consultations / visits", value: offers, note: "Asked for one" },
+        { label: "Median reply time", value: duration(medianWait), note: `${agent}, first reply` },
+        { label: "Handed to team", value: count("handed"), note: "Staff took part" },
+      ]} />
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-5">
+        <Panel className="p-5 lg:col-span-3">
+          <PanelHeading title="Funnel" detail={`From the first message to a visit request. Each share is of the ${started} conversations started.`} />
+          <Funnel steps={[
+            { label: "Conversations started", value: started },
+            { label: "Details shared", value: count("details"), note: "Gave a phone or WhatsApp number" },
+            { label: "Qualified", value: count("qualified"), note: "Answered every must-have question" },
+            { label: "Sent to Zoho", value: zohoCount },
+            { label: "Consultation / experience centre requested", value: offers, note: `Said yes when ${agent} offered a free consultation or a visit` },
+          ]} />
         </Panel>
 
-        <Panel className="p-5">
-          <h2 className="text-[15px] font-semibold">Daily activity</h2>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">Conversations started, with Zoho leads in dark teal.</p>
-          <div className="mt-4 flex h-40 items-end gap-1.5">
-            {trend.map((row) => (
-              <div key={row.day} className="flex flex-1 flex-col items-center gap-1" title={`${row.day}: ${row.chats} conversations, ${row.zoho} Zoho leads`}>
-                <div className="relative flex w-full flex-1 items-end">
-                  <div className="flex w-full flex-col justify-end overflow-hidden rounded-t-md bg-[#cfe9e6]" style={{ height: `${(row.chats / trendTop) * 100}%` }}>
-                    <div className="w-full bg-[var(--color-accent-ink)]" style={{ height: row.chats ? `${(Math.min(row.zoho, row.chats) / row.chats) * 100}%` : 0 }} />
-                  </div>
-                </div>
-                <span className="text-[10px] text-[var(--color-muted)]">{row.day.slice(8)}</span>
+        <Panel className="p-5 lg:col-span-2">
+          <PanelHeading title="From comments" detail="Openers sent to people who commented on a post, in this period." />
+          <dl className="mt-5 divide-y divide-[var(--color-line)] text-sm">
+            {[
+              { label: "Comments answered", value: attempts.length, share: null },
+              { label: "Openers delivered", value: delivered.length, share: percentOf(delivered.length, attempts.length) },
+              { label: "Replied in messages", value: openerReplies, share: percentOf(openerReplies, attempts.length) },
+            ].map((row) => (
+              <div key={row.label} className="flex items-baseline justify-between gap-3 py-2.5">
+                <dt>{row.label}</dt>
+                <dd className="tabular-nums">
+                  <span className="text-[17px] font-semibold">{row.value}</span>
+                  <span className="ml-2 inline-block w-10 text-right text-[12px] text-[var(--color-muted)]">{row.share ?? ""}</span>
+                </dd>
               </div>
             ))}
-          </div>
+          </dl>
+          <p className="mt-3 text-[12px] text-[var(--color-muted)]">Shares are of comments answered. People who write to you directly on WhatsApp or in DMs are counted in the funnel, not here.</p>
         </Panel>
+      </div>
 
+      <Panel className="mt-4 p-5">
+        <PanelHeading
+          title="Daily activity"
+          detail={`Last ${chartDays} days in India time. Pale bars are conversations started; gold bars are leads sent to Zoho that day.`}
+        />
+        <DailyChart rows={trend} today={today} />
+      </Panel>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Panel className="p-5">
-          <h2 className="text-[15px] font-semibold">Languages people used</h2>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">{agent} replies in the same language and style.</p>
+          <PanelHeading title="Languages people used" detail={`${agent} replies in the same language and style. Share of the ${repliedCount} people who replied.`} />
           {languageRows.length ? (
             <div className="mt-4 space-y-3">
-              {languageRows.map(([name, count]) => (
+              {languageRows.map(([name, value]) => (
                 <div key={name}>
-                  <div className="flex justify-between text-sm"><span>{name}</span><span className="font-semibold">{count} <span className="ml-1 font-normal text-[var(--color-muted)]">{percent(count, replied.length)}</span></span></div>
-                  <div className="mt-1 h-2.5 rounded-full bg-[var(--color-paper)]">
-                    <div className="h-2.5 rounded-full bg-[var(--color-accent)]" style={{ width: `${(count / replied.length) * 100}%` }} />
+                  <div className="flex justify-between text-sm"><span>{name}</span><span className="tabular-nums font-semibold">{value} <span className="ml-1 font-normal text-[var(--color-muted)]">{percentOf(value, repliedCount)}</span></span></div>
+                  <div className="mt-1 h-2 rounded-full bg-[var(--color-paper)]">
+                    <div className="h-2 rounded-full bg-[var(--color-accent)]" style={{ width: `${(value / repliedCount) * 100}%` }} />
                   </div>
                 </div>
               ))}
             </div>
-          ) : <p className="mt-4 text-sm text-[var(--color-muted)]">No conversations in this range yet.</p>}
+          ) : <p className="mt-4 text-sm text-[var(--color-muted)]">No replies in this period yet.</p>}
         </Panel>
 
         <Panel className="p-5">
-          <h2 className="text-[15px] font-semibold">{agent} performance</h2>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">Speed and reliability of the AI replies.</p>
+          <PanelHeading title={`${agent} at work`} detail="Speed and reliability of the assistant's replies." />
           <dl className="mt-4 grid grid-cols-2 gap-4 text-sm">
-            <div><dt className="text-[var(--color-muted)]">Median reply time</dt><dd className="mt-1 text-[22px] font-semibold">{seconds(medianWait)}</dd></div>
-            <div><dt className="text-[var(--color-muted)]">Average reply time</dt><dd className="mt-1 text-[22px] font-semibold">{seconds(averageWait)}</dd></div>
-            <div><dt className="text-[var(--color-muted)]">Replies from the AI model</dt><dd className="mt-1 text-[22px] font-semibold">{percent(modelReplies, runs.length)}</dd></div>
-            <div><dt className="text-[var(--color-muted)]">Fallback replies</dt><dd className="mt-1 text-[22px] font-semibold">{fallbacks}</dd></div>
+            <div><dt className="text-[var(--color-muted)]">Median reply time</dt><dd className="mt-1 text-[22px] font-semibold tabular-nums">{duration(medianWait)}</dd></div>
+            <div><dt className="text-[var(--color-muted)]">Average reply time</dt><dd className="mt-1 text-[22px] font-semibold tabular-nums">{duration(averageWait)}</dd></div>
+            <div><dt className="text-[var(--color-muted)]">Messages from people</dt><dd className="mt-1 text-[22px] font-semibold tabular-nums">{prospectMessages}</dd></div>
+            <div><dt className="text-[var(--color-muted)]">Replies by {agent}</dt><dd className="mt-1 text-[22px] font-semibold tabular-nums">{aiReplies}</dd></div>
+            <div><dt className="text-[var(--color-muted)]">Written by the AI model</dt><dd className="mt-1 text-[22px] font-semibold tabular-nums">{percentOf(modelReplies, runs.length)}</dd></div>
+            <div><dt className="text-[var(--color-muted)]">Fallback replies</dt><dd className="mt-1 text-[22px] font-semibold tabular-nums">{fallbacks}</dd></div>
           </dl>
           <div className="mt-5 border-t border-[var(--color-line)] pt-4">
-            <h3 className="text-sm font-semibold">By channel</h3>
-            <div className="mt-2 space-y-2 text-sm">
+            <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-muted)]">By channel</h3>
+            <ul className="mt-2 space-y-2 text-sm">
               {channels.map((row) => (
-                <div key={row.name} className="flex items-center justify-between">
+                <li key={row.name} className="flex flex-wrap items-center justify-between gap-2">
                   <ChannelMark channel={row.name} />
-                  <span>{row.chats} conversations · <span className="font-semibold">{row.zoho} Zoho leads</span> · {percent(row.zoho, row.chats)}</span>
-                </div>
+                  <span className="tabular-nums">{row.chats} conversations · <span className="font-semibold">{row.zoho} in Zoho</span> <span className="text-[var(--color-muted)]">{percentOf(row.zoho, row.chats)}</span></span>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         </Panel>
       </div>
 
       <Panel className="mt-4 p-5">
-        <h2 className="text-[15px] font-semibold">Top posts</h2>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">Posts that started the most conversations and leads.</p>
+        <PanelHeading title="Top posts" detail="Posts whose comments started the most conversations and Zoho leads." />
         {topPosts.length ? (
-          <table className="mt-3 w-full text-sm">
-            <thead><tr className="text-left text-[12px] uppercase tracking-[0.04em] text-[var(--color-muted)]"><th className="py-2 font-semibold">Post</th><th className="font-semibold">Channel</th><th className="text-right font-semibold">Conversations</th><th className="text-right font-semibold">Zoho leads</th></tr></thead>
-            <tbody>
-              {topPosts.map(([id, row]) => {
-                const post = captions.get(id);
-                return (
-                  <tr key={id} className="border-t border-[var(--color-line)]">
-                    <td className="max-w-md truncate py-2 pr-3">{post?.caption?.replace(/\s+/g, " ").slice(0, 90) || "Post without caption"}</td>
-                    <td>{post ? <ChannelMark channel={post.channel} /> : "–"}</td>
-                    <td className="text-right">{row.chats}</td>
-                    <td className="text-right font-semibold">{row.zoho}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        ) : <p className="mt-3 text-sm text-[var(--color-muted)]">No post activity in this range yet.</p>}
+          <ol className="mt-3 divide-y divide-[var(--color-line)]">
+            {topPosts.map(([id, row], index) => {
+              const post = captions.get(id);
+              const caption = post?.caption?.replace(/\s+/g, " ").trim() || "Post without a caption";
+              return (
+                <li key={id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:gap-4">
+                  <div className="flex min-w-0 flex-1 items-start gap-3">
+                    <span className="mt-0.5 w-4 shrink-0 text-[12px] tabular-nums text-[var(--color-muted)]">{index + 1}</span>
+                    <p className="line-clamp-2 min-w-0 text-sm" title={caption}>{caption}</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-4 pl-7 text-sm tabular-nums sm:pl-0">
+                    {post ? <ChannelMark channel={post.channel} /> : null}
+                    <span><span className="font-semibold">{row.chats}</span> <span className="text-[var(--color-muted)]">conversations</span></span>
+                    <span><span className="font-semibold">{row.zoho}</span> <span className="text-[var(--color-muted)]">in Zoho</span></span>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        ) : <p className="mt-3 text-sm text-[var(--color-muted)]">No post activity in this period yet.</p>}
       </Panel>
 
-      {role === "VIEWER" ? null : <Panel className="mt-4 p-5">
-        <h2 className="text-[15px] font-semibold">Latest leads sent to Zoho</h2>
-        {recent.length ? (
-          <table className="mt-3 w-full text-sm">
-            <thead><tr className="text-left text-[12px] uppercase tracking-[0.04em] text-[var(--color-muted)]"><th className="py-2 font-semibold">Name</th><th className="font-semibold">Company</th><th className="font-semibold">Team</th><th className="font-semibold">Calls a month</th><th className="font-semibold">Channel</th><th className="text-right font-semibold">When</th></tr></thead>
-            <tbody>
-              {recent.map((lead) => (
-                <tr key={lead.id} className="border-t border-[var(--color-line)]">
-                  <td className="py-2 font-medium">{lead.contact.chosenName ?? "–"}</td>
-                  <td>{answer(lead, companyId)}</td>
-                  <td>{answer(lead, teamId)}</td>
-                  <td>{answer(lead, volumeId)}</td>
-                  <td><ChannelMark channel={lead.channel} /></td>
-                  <td className="text-right text-[var(--color-muted)]">{(lead.qualifiedAt ?? lead.updatedAt).toLocaleString("en-IN", { timeZone: workspace.timezone, day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : <p className="mt-3 text-sm text-[var(--color-muted)]">No Zoho leads in this range yet.</p>}
-      </Panel>}
+      {role === "VIEWER" ? null : (
+        <Panel className="mt-4 p-5">
+          <PanelHeading title="Latest leads in Zoho" detail="The most recent leads from conversations in this period." />
+          {recentLeads.length ? <LeadsTable rows={recentLeads} /> : <p className="mt-3 text-sm text-[var(--color-muted)]">No Zoho leads in this period yet.</p>}
+        </Panel>
+      )}
     </section>
   );
 }

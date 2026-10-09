@@ -26,6 +26,7 @@ import {
   connectionSender,
   deleteContactData,
   getPrisma,
+  handBack,
   ingestEvents,
   queuePostDescriptions,
   setConnectionPaused,
@@ -589,7 +590,8 @@ export async function sendStaffReply(formData: FormData) {
     where: { contactId: conversation.contactId, identityType: "MESSAGING_PARTICIPANT", channel: conversation.channel },
   });
   if (!participant) redirect(`${back}&error=${encodeURIComponent("This person has not replied in the direct message yet.")}`);
-  if (conversation.owner !== "HUMAN") await takeOver(getPrisma(), conversation.id, actor.userId);
+  // Replying to a chat Varun has, or one Varun handed to the team, makes it yours; someone else's stays theirs.
+  if (conversation.owner !== "HUMAN" || !conversation.ownerUserId) await takeOver(getPrisma(), conversation.id, actor.userId);
   const { config, keys } = integrationConfig();
   const result = await connectionSender({
     keys,
@@ -620,6 +622,7 @@ export async function sendStaffReply(formData: FormData) {
       connectionId: connection.id,
       conversationId: conversation.id,
       author: "STAFF",
+      staffUserId: actor.userId,
       body: text,
       externalMessageId: result.providerMessageId,
     },
@@ -636,4 +639,15 @@ export async function sendStaffReply(formData: FormData) {
   });
   revalidatePath("/inbox");
   redirect(back);
+}
+
+/** Hands a chat the team had back to Varun, who answers the customer's next message again. */
+export async function releaseConversation(formData: FormData) {
+  const conversationId = String(formData.get("conversationId") ?? "");
+  const { actor, workspace } = await requireWorkspace();
+  if (!workspace || !can(actor, "inbox.reply", workspace.id)) redirect("/overview?denied=1");
+  const owned = await getPrisma().conversation.findFirst({ where: { id: conversationId, workspaceId: workspace.id }, select: { id: true } });
+  if (!owned) redirect("/overview?denied=1");
+  await handBack(getPrisma(), owned.id, actor.userId);
+  revalidatePath("/inbox");
 }

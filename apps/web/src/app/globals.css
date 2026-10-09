@@ -13,6 +13,13 @@
   --color-fb: #1d4ed8;
   --color-wa: #047857;
   --color-shell: #0c0c0c;
+  --shadow-card: 0 1px 2px rgba(26, 22, 18, 0.04), 0 0 0 1px rgba(26, 22, 18, 0.05);
+  --shadow-lift: 0 10px 30px -12px rgba(26, 22, 18, 0.18), 0 0 0 1px rgba(26, 22, 18, 0.05);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-padding-top: 4rem;
 }
 
 body {
@@ -45,14 +52,35 @@ body {
   input::placeholder,
   textarea::placeholder { color: #8b93a0; }
 
+  ::selection { background: #ecdcb8; color: var(--color-ink); }
+
+  :focus { outline: none; }
+
   input:focus-visible,
   select:focus-visible,
   textarea:focus-visible,
   button:focus-visible,
-  a:focus-visible {
+  a:focus-visible,
+  summary:focus-visible,
+  [tabindex]:focus-visible {
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
   }
+
+  input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline-offset: 0;
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px rgba(141, 107, 47, 0.14);
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] { accent-color: var(--color-accent); }
+
+  summary { cursor: pointer; }
+  details.disclosure > summary { list-style: none; }
+  details.disclosure > summary::-webkit-details-marker { display: none; }
 
   button {
     border: 1px solid var(--color-line);
@@ -63,9 +91,11 @@ body {
     font-weight: 600;
     line-height: 1.2;
     cursor: pointer;
+    transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
   }
 
-  button:hover { background: #faf7f2; }
+  button:hover { background: #faf7f2; border-color: #d9cfbf; }
+  button:active:not(:disabled) { transform: translateY(0.5px); }
 
   button[class*="text-white"] {
     border-color: transparent;
@@ -100,10 +130,12 @@ body {
   th {
     padding: 0.7rem 0.85rem;
     border-bottom: 1px solid var(--color-line);
+    background: #faf8f4;
     color: var(--color-muted);
-    font-size: 12px;
+    font-size: 11.5px;
     font-weight: 600;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
     text-align: left;
     text-transform: uppercase;
   }
@@ -118,4 +150,18 @@ body {
 
   table a { font-weight: 600; }
   table a:hover { color: var(--color-accent-ink); }
+}
+
+/* Phones: 16px inputs stop iOS from zooming the page on focus. */
+@media (max-width: 640px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea { font-size: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

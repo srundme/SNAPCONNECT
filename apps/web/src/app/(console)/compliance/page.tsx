@@ -2,6 +2,7 @@ import { getPrisma } from "@snapsocial/db";
 import { disclosesAutomation } from "@snapsocial/domain";
 import { ChannelMark, Empty, PageTitle, Panel, StatGrid, StatusLabel } from "@/components/ui";
 import { requireWorkspace } from "@/lib/session";
+import { fullIST, whenIST } from "@/lib/format";
 
 const DAY = 86_400_000;
 const RATE_LIMIT = /rate|limit|too many|#4\b|#17\b|#32\b|#613\b|code"?:\s*(4|17|32|613)\b|spam|block|restrict|temporarily/i;
@@ -11,7 +12,7 @@ type Check = { label: string; value: number | string; good: boolean; detail: str
 export default async function CompliancePage() {
   const { workspace, role } = await requireWorkspace();
   if (!workspace) return <Empty title="No workspace" body="Select a workspace." />;
-  if (role === "VIEWER" || role === "AGENT") return <p>Permission denied.</p>;
+  if (role === "VIEWER" || role === "AGENT") return <Empty title="Admins only" body="Compliance checks are visible to admins." />;
   const db = getPrisma();
   const now = new Date();
   const since30 = new Date(now.getTime() - 30 * DAY);
@@ -127,7 +128,7 @@ export default async function CompliancePage() {
           <p className="mt-1 text-[22px] font-semibold tracking-tight">
             {overall === "ok" ? "All checks passing" : overall === "wait" ? "Passing, with send errors to review" : `${problems} check${problems === 1 ? "" : "s"} need attention`}
           </p>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">Checked {now.toLocaleString("en-IN", { timeZone: workspace.timezone, day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}.</p>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">Checked {fullIST(now)}.</p>
         </div>
         <StatusLabel tone={overall}>{overall === "ok" ? "Healthy" : overall === "wait" ? "Review" : "Action needed"}</StatusLabel>
       </Panel>
@@ -168,7 +169,7 @@ export default async function CompliancePage() {
                       <StatusLabel tone={connection.revokedAt ? "stop" : connection.automationPaused ? "wait" : "ok"}>{connection.revokedAt ? "Disconnected" : connection.automationPaused ? "Paused" : "Active"}</StatusLabel>
                     </div>
                     <p className="mt-2 text-[13px] text-[var(--color-muted)]">
-                      Webhook {connection.webhookVerifiedAt ? "verified" : "not verified"} · Subscribed to {connection.subscribedFields.join(", ") || "nothing"} · Last comment {connection.lastRealCommentAt ? connection.lastRealCommentAt.toLocaleString("en-IN", { timeZone: workspace.timezone, day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "none yet"}
+                      Webhook {connection.webhookVerifiedAt ? "verified" : "not verified"} · Subscribed to {connection.subscribedFields.join(", ") || "nothing"} · Last comment {connection.lastRealCommentAt ? whenIST(connection.lastRealCommentAt) : "none yet"}
                     </p>
                   </li>
                 ))}
@@ -196,7 +197,7 @@ export default async function CompliancePage() {
           <h2 className="text-[15px] font-semibold">Meta warnings</h2>
           <ul className="mt-3 space-y-2 text-sm">
             {limitErrors.slice(-5).reverse().map((attempt, index) => (
-              <li key={index} className="flex gap-3"><ChannelMark channel={attempt.channel} /><span className="text-[var(--color-muted)]">{attempt.createdAt.toLocaleString("en-IN", { timeZone: workspace.timezone })}</span><span>{(attempt.lastError ?? "").slice(0, 160)}</span></li>
+              <li key={index} className="flex flex-wrap gap-x-3 gap-y-1"><ChannelMark channel={attempt.channel} /><span className="text-[var(--color-muted)]">{whenIST(attempt.createdAt)}</span><span>{(attempt.lastError ?? "").slice(0, 160)}</span></li>
             ))}
           </ul>
         </Panel>

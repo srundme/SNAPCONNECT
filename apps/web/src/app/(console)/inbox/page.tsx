@@ -1,194 +1,189 @@
-import Link from "next/link";
-import { Send } from "lucide-react";
+import { FlaskConical } from "lucide-react";
 import { getPrisma } from "@snapsocial/db";
-import { replyEligibility } from "@snapsocial/domain";
-import { claimConversation, injectSimulation, sendStaffReply } from "@/lib/actions";
-import { ChannelMark, Empty, Notice } from "@/components/ui";
-import { clsx } from "clsx";
+import { can, parseLeadQuestions, replyEligibility } from "@snapsocial/domain";
+import { injectSimulation } from "@/lib/actions";
+import { Empty, Notice } from "@/components/ui";
 import { requireWorkspace } from "@/lib/session";
-import { ChatThread, LiveInbox } from "@/components/live-inbox";
+import { LiveInbox } from "@/components/live-inbox";
+import { ChatPane, type ChatMessage } from "@/components/inbox/chat-pane";
+import { ConversationList, type ListRow } from "@/components/inbox/conversation-list";
+import { LeadPanel } from "@/components/inbox/lead-panel";
+import { customerHandle, customerName, isTestContact, ownership, readAnswers } from "@/components/inbox/labels";
+import { readInboxState } from "@/components/inbox/params";
 
-function authorLabel(author: string) {
-  if (author === "PROSPECT") return "Them";
-  if (author === "AI") return "Assistant";
-  if (author === "STAFF") return "You";
-  return "System";
-}
+const LIST_SIZE = 60;
 
-function RatingChip({ rating }: { rating: string }) {
-  return (
-    <span className={clsx("rounded-full px-2 py-0.5 text-[11px] font-bold tracking-[0.04em]", rating === "HOT" ? "bg-[#fde8e1] text-[#a2381b]" : "bg-[var(--color-paper)] text-[var(--color-muted)]")}>
-      {rating}
-    </span>
-  );
-}
-
-function contactLabel(
-  channel: string,
-  contact: { username: string | null; displayName: string | null; chosenName: string | null },
-  phone: string | null,
-) {
-  if (channel === "WHATSAPP") {
-    const person = contact.chosenName ?? contact.displayName ?? "WhatsApp contact";
-    return phone ? `${person} · ${phone}` : person;
-  }
-  return contact.username ?? contact.displayName ?? "Prospect";
-}
-
-export default async function InboxPage({ searchParams }: { searchParams: Promise<{ id?: string; channel?: string; error?: string }> }) {
+export default async function InboxPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
-  const { workspace, role } = await requireWorkspace();
+  const state = readInboxState(params);
+  const error = typeof params.error === "string" ? params.error : undefined;
+  const { actor, workspace, role } = await requireWorkspace();
   if (!workspace) return <Empty title="No workspace" body="Select a workspace." />;
   if (role === "VIEWER") return <Empty title="Permission denied" body="Viewers do not receive transcripts." />;
-  const channel = params.channel === "INSTAGRAM" || params.channel === "FACEBOOK" || params.channel === "WHATSAPP" ? params.channel : undefined;
-  const conversations = await getPrisma().conversation.findMany({
-    where: { workspaceId: workspace.id, ...(channel ? { channel } : {}) },
-    include: { contact: true, messages: { orderBy: { createdAt: "asc" } } },
+  const db = getPrisma();
+  const me = actor.userId;
+  const canReply = can(actor, "inbox.reply", workspace.id);
+
+  const search = state.q;
+  const digits = search?.replace(/\D/g, "") ?? "";
+  const handle = search?.replace(/^@/, "");
+  const conversations = await db.conversation.findMany({
+    where: {
+      workspaceId: workspace.id,
+      ...(state.channel ? { channel: state.channel } : {}),
+      ...(state.view === "needs" ? { owner: "HUMAN" as const } : state.view === "mine" ? { ownerUserId: me } : state.view === "varun" ? { owner: "AI" as const } : {}),
+      ...(search ? {
+        OR: [
+          { contact: { displayName: { contains: search, mode: "insensitive" as const } } },
+          { contact: { chosenName: { contains: search, mode: "insensitive" as const } } },
+          { contact: { username: { contains: handle, mode: "insensitive" as const } } },
+          ...(digits.length >= 3 ? [{ contact: { leads: { some: { phoneE164: { contains: digits } } } } }] : []),
+          { messages: { some: { author: { in: ["PROSPECT" as const, "AI" as const, "STAFF" as const] }, body: { contains: search, mode: "insensitive" as const } } } },
+        ],
+      } : {}),
+    },
+    include: {
+      contact: { select: { id: true, displayName: true, username: true, chosenName: true } },
+      messages: { where: { author: { not: "SYSTEM" } }, orderBy: { createdAt: "desc" }, take: 1, select: { body: true, author: true, createdAt: true, voice: true } },
+    },
     orderBy: { updatedAt: "desc" },
-    take: 50,
+    take: LIST_SIZE * 3,
   });
-  const rated = await getPrisma().lead.findMany({
-    where: { workspaceId: workspace.id, archivedAt: null, contactId: { in: conversations.map((item) => item.contactId) }, rating: { in: ["HOT", "JUNK"] } },
-    select: { contactId: true, rating: true },
+  const tests = conversations.filter((item) => isTestContact(item.contact));
+  const visible = (state.tests ? conversations : conversations.filter((item) => !isTestContact(item.contact))).slice(0, LIST_SIZE);
+
+  const selectedBase = state.id
+    ? await db.conversation.findFirst({ where: { id: state.id, workspaceId: workspace.id }, include: { contact: true } })
+    : visible[0] ? await db.conversation.findFirst({ where: { id: visible[0].id, workspaceId: workspace.id }, include: { contact: true } }) : null;
+
+  const [leads, messages, lead, connection] = await Promise.all([
+    db.lead.findMany({
+      where: { workspaceId: workspace.id, archivedAt: null, contactId: { in: visible.map((item) => item.contactId) } },
+      select: { contactId: true, rating: true, handoffReason: true, phoneE164: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    selectedBase ? db.message.findMany({ where: { conversationId: selectedBase.id }, orderBy: { createdAt: "asc" } }) : Promise.resolve([]),
+    selectedBase ? db.lead.findFirst({ where: { contactId: selectedBase.contactId, archivedAt: null }, orderBy: { createdAt: "desc" } }) : Promise.resolve(null),
+    selectedBase ? db.channelConnection.findUnique({ where: { id: selectedBase.connectionId } }) : Promise.resolve(null),
+  ]);
+  const leadByContact = new Map<string, (typeof leads)[number]>();
+  for (const item of leads) if (!leadByContact.has(item.contactId)) leadByContact.set(item.contactId, item);
+
+  const staffIds = new Set<string>();
+  for (const item of visible) if (item.ownerUserId) staffIds.add(item.ownerUserId);
+  if (selectedBase?.ownerUserId) staffIds.add(selectedBase.ownerUserId);
+  for (const message of messages) if (message.staffUserId) staffIds.add(message.staffUserId);
+  const users = staffIds.size > 0 ? await db.user.findMany({ where: { id: { in: [...staffIds] } }, select: { id: true, name: true } }) : [];
+  const names = new Map(users.map((user) => [user.id, user.name?.trim() || "a team member"]));
+
+  const rows: ListRow[] = visible.map((item) => {
+    const last = item.messages[0];
+    const itemLead = leadByContact.get(item.contactId);
+    return {
+      id: item.id,
+      name: customerName(item.contact),
+      channel: item.channel,
+      preview: last ? (last.body.trim() || (last.voice ? "Voice note" : "")) : "No messages yet",
+      previewAuthor: !last ? null : last.author === "AI" ? "Varun" : last.author === "STAFF" ? "Team" : null,
+      at: last?.createdAt ?? item.updatedAt,
+      rating: itemLead?.rating ?? null,
+      owner: ownership(item, names, me, itemLead?.handoffReason ?? null),
+    };
   });
-  const ratings = new Map(rated.map((item) => [item.contactId, item.rating]));
-  const selected = conversations.find((item) => item.id === params.id) ?? conversations[0];
-  const lead = selected ? await getPrisma().lead.findFirst({ where: { contactId: selected.contactId, archivedAt: null }, include: { crm: true } }) : null;
-  const connection = selected ? await getPrisma().channelConnection.findUnique({ where: { id: selected.connectionId } }) : null;
-  const eligibility = selected && connection ? replyEligibility({
+
+  const eligibility = selectedBase && connection ? replyEligibility({
     now: new Date(),
-    lastUserMessageAt: selected.lastUserMessageAt,
+    lastUserMessageAt: selectedBase.lastUserMessageAt,
     paused: connection.automationPaused || workspace.automationPaused,
-    optedOut: Boolean(selected.contact.optedOutAt),
+    optedOut: Boolean(selectedBase.contact.optedOutAt),
     connectionReady: !connection.revokedAt,
-    ownerAllowsAutomation: selected.owner === "AI",
+    ownerAllowsAutomation: selectedBase.owner === "AI",
     manual: true,
   }) : null;
-  const name = selected ? contactLabel(selected.channel, selected.contact, lead?.phoneE164 ?? null) : "Prospect";
+
+  const chatMessages: ChatMessage[] = messages.map((message) => ({
+    id: message.id,
+    author: message.author,
+    body: message.body,
+    createdAt: message.createdAt,
+    voice: message.voice,
+    voiceClipId: message.voiceClipId,
+    staffName: message.staffUserId ? names.get(message.staffUserId) ?? "Team" : null,
+  }));
+
+  const showSimulation = workspace.mode === "SIMULATION" && role !== "AGENT";
+
   return (
     <section>
-      {workspace.mode === "SIMULATION" && role !== "AGENT" ? (
-        <form action={injectSimulation} className="mb-4 flex flex-wrap gap-2">
-          <button name="scenario" value="instagram-comment" type="submit">Simulate Instagram comment</button>
-          <button name="scenario" value="instagram-reply" type="submit">Simulate Instagram reply</button>
-          <button name="scenario" value="facebook-comment" type="submit">Simulate Facebook comment</button>
-          <button name="scenario" value="facebook-reply" type="submit">Simulate Messenger reply</button>
-        </form>
-      ) : null}
       <LiveInbox />
-      {params.error ? <Notice tone="stop">{params.error}</Notice> : null}
-      {conversations.length === 0 ? <Empty title="No conversations" body="A matching comment shows up here after the worker processes it." /> : (
-        <div className="grid h-[calc(100dvh-7.5rem)] min-h-[560px] overflow-hidden rounded-2xl bg-white shadow-[0_1px_0_rgba(20,23,28,0.06)] lg:grid-cols-[300px_minmax(0,1fr)_260px]">
-          <div className="min-h-0 overflow-y-auto border-b border-[var(--color-line)] lg:border-b-0 lg:border-r">
-            <div className="flex flex-wrap gap-1 border-b border-[var(--color-line)] p-3">
-              {[
-                ["/inbox", "All", !channel],
-                ["/inbox?channel=INSTAGRAM", "Instagram", channel === "INSTAGRAM"],
-                ["/inbox?channel=FACEBOOK", "Facebook", channel === "FACEBOOK"],
-                ["/inbox?channel=WHATSAPP", "WhatsApp", channel === "WHATSAPP"],
-              ].map(([href, label, active]) => (
-                <Link key={String(href)} href={String(href)} className={clsx("shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-[13px] font-semibold", active ? "bg-[var(--color-ink)] text-white" : "text-[var(--color-muted)] hover:bg-[var(--color-paper)]")}>{label}</Link>
-              ))}
-            </div>
-            <ul>
-              {conversations.map((item) => {
-                const label = contactLabel(item.channel, item.contact, null);
-                const last = item.messages.at(-1);
-                return (
-                  <li key={item.id}>
-                    <Link className={clsx("block border-b border-[var(--color-line)] px-4 py-3", item.id === selected?.id && "bg-[#f4fbfa]")} href={`/inbox?id=${item.id}${channel ? `&channel=${channel}` : ""}`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="truncate text-sm font-semibold">{label}</p>
-                        <span className="flex shrink-0 items-center gap-1.5">
-                          {ratings.get(item.contactId) ? <RatingChip rating={ratings.get(item.contactId)!} /> : null}
-                          <ChannelMark channel={item.channel} />
-                        </span>
-                      </div>
-                      <p className="mt-1 truncate text-[13px] text-[var(--color-muted)]">{last?.body ?? "No message yet"}</p>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-          <div className="flex min-h-0 flex-col border-b border-[var(--color-line)] lg:border-b-0 lg:border-r">
-            {selected ? (
-              <>
-                <div className="flex items-center justify-between border-b border-[var(--color-line)] px-4 py-3">
-                  <div>
-                    <p className="font-semibold">{name}</p>
-                    <p className="text-[12px] text-[var(--color-muted)]">{selected.owner === "HUMAN" ? "You are replying" : selected.owner === "AI" ? "Assistant is replying" : "Paused"}</p>
-                  </div>
-                  <ChannelMark channel={selected.channel} />
-                </div>
-                <ChatThread key={selected.id} count={selected.messages.length} className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto p-4">
-                  {selected.messages.map((message) => {
-                    const inbound = message.author === "PROSPECT";
-                    return (
-                      <li key={message.id} className={clsx("max-w-[82%]", inbound ? "justify-self-start" : "justify-self-end")}>
-                        <p className={clsx("mb-1 text-[11px] font-semibold uppercase tracking-[0.04em]", inbound ? "text-[var(--color-muted)]" : "text-right text-[var(--color-accent-ink)]")}>{authorLabel(message.author)}{message.voice ? " · Voice note" : ""}</p>
-                        <p className={clsx("rounded-2xl px-3 py-2 text-sm leading-5", inbound ? "rounded-tl-md bg-[var(--color-paper)]" : message.author === "STAFF" ? "rounded-tr-md bg-[var(--color-ink)] text-white" : "rounded-tr-md bg-[#f4ead2]")}>{message.body}</p>
-                        {message.voiceClipId ? (
-                          <audio controls preload="none" className="mt-1 h-8 w-56 justify-self-end" src={`/api/voice/${message.voiceClipId}`} />
-                        ) : null}
-                      </li>
-                    );
-                  })}
-                </ChatThread>
-                <form action={sendStaffReply} className="shrink-0 border-t border-[var(--color-line)] p-3">
-                  <input type="hidden" name="conversationId" value={selected.id} />
-                  <div className="flex items-end gap-2">
-                    <label className="min-w-0 flex-1">
-                      <span className="sr-only">Reply</span>
-                      <textarea name="body" disabled={!eligibility?.allowed} rows={2} placeholder={eligibility?.allowed ? "Write a reply" : "Reply is unavailable"} />
-                    </label>
-                    <button className="inline-flex shrink-0 items-center gap-1.5 border-transparent bg-[var(--color-accent)] text-white hover:bg-[#745722]" type="submit" disabled={!eligibility?.allowed}>
-                      <Send size={15} aria-hidden />
-                      Send
-                    </button>
-                  </div>
-                  <p className="mt-2 text-[12px] text-[var(--color-muted)]">{eligibility?.allowed ? `Sends on the same ${selected.channel === "WHATSAPP" ? "WhatsApp" : selected.channel === "INSTAGRAM" ? "Instagram" : "Facebook"} chat.` : eligibility?.reason}</p>
-                </form>
-              </>
-            ) : null}
-          </div>
-          <aside className="min-h-0 overflow-y-auto p-4 text-sm">
-            {selected && lead ? (
-              <>
-                <div className="flex items-center justify-between">
-                  <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--color-muted)]">Lead</p>
-                  {lead.rating === "HOT" || lead.rating === "JUNK" ? <RatingChip rating={lead.rating} /> : null}
-                </div>
-                {lead.ratingReason && lead.rating !== "UNRATED" ? <p className="mt-1 text-[12px] leading-5 text-[var(--color-muted)]">{lead.ratingReason}</p> : null}
-                <dl className="mt-3 grid gap-3">
-                  {[
-                    ["City", lead.city ?? "Not yet"],
-                    ["Account type", lead.projectType ?? "Not yet"],
-                    ["Budget", lead.budgetRaw ?? "Not yet"],
-                    ["Phone", lead.phoneE164 ?? "Not yet"],
-                  ].map(([label, value]) => (
-                    <div key={label}>
-                      <dt className="text-[12px] text-[var(--color-muted)]">{label}</dt>
-                      <dd className="font-medium">{value}</dd>
-                    </div>
-                  ))}
-                </dl>
-                <p className="mt-4 text-[12px] leading-5 text-[var(--color-muted)]">{selected.channel === "WHATSAPP" ? "This person is chatting from this WhatsApp number." : "A valid number is not proof that the person owns it, or that it is on WhatsApp."}</p>
-                <p className="mt-5 text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--color-muted)]">Memory</p>
-                <p className="mt-2 whitespace-pre-line text-[13px] leading-5">
-                  {selected.contact.memory ?? "Nothing older than the last 20 messages yet. The assistant reads those directly."}
-                </p>
-                {selected.owner !== "HUMAN" ? (
-                  <form action={claimConversation} className="mt-5">
-                    <input type="hidden" name="conversationId" value={selected.id} />
-                    <button className="w-full border-transparent bg-[var(--color-ink)] text-white hover:bg-black" type="submit">Take over</button>
-                  </form>
-                ) : <p className="mt-5 text-[13px] text-[var(--color-muted)]">You own this chat. A new assistant reply will not be sent while you do.</p>}
-              </>
-            ) : <p className="text-[var(--color-muted)]">Select a conversation.</p>}
-          </aside>
+      <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="font-[family-name:var(--font-display)] text-[32px] font-medium leading-none tracking-tight">Inbox</h1>
+          <p className="mt-1.5 text-[13.5px] text-[var(--color-muted)]">Every customer chat, who has it, and what Varun has learnt so far.</p>
         </div>
-      )}
+        {showSimulation ? (
+          <form action={injectSimulation} className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--color-muted)]"><FlaskConical size={13} aria-hidden /> Practice</span>
+            <button name="scenario" value="instagram-comment" type="submit" className="px-2.5 py-1.5 text-[12.5px]">Instagram comment</button>
+            <button name="scenario" value="instagram-reply" type="submit" className="px-2.5 py-1.5 text-[12.5px]">Instagram reply</button>
+            <button name="scenario" value="facebook-comment" type="submit" className="px-2.5 py-1.5 text-[12.5px]">Facebook comment</button>
+            <button name="scenario" value="facebook-reply" type="submit" className="px-2.5 py-1.5 text-[12.5px]">Messenger reply</button>
+          </form>
+        ) : null}
+      </header>
+      {error ? <Notice tone="stop">{error}</Notice> : null}
+      <div className="grid overflow-hidden rounded-2xl bg-white shadow-[0_1px_0_rgba(20,23,28,0.06),0_8px_24px_-12px_rgba(26,22,18,0.08)] lg:grid-cols-[300px_minmax(0,1fr)] xl:h-[calc(100dvh-11rem)] xl:min-h-[600px] xl:grid-cols-[316px_minmax(0,1fr)_300px]">
+        <div className="flex max-h-[46dvh] min-h-0 flex-col border-b border-[var(--color-line)] lg:h-[74dvh] lg:max-h-none lg:border-b-0 lg:border-r xl:h-auto">
+          <ConversationList rows={rows} state={state} selectedId={selectedBase?.id} hiddenTests={state.tests ? 0 : tests.length} />
+        </div>
+        <div className="flex h-[78dvh] min-h-0 flex-col border-b border-[var(--color-line)] lg:h-[74dvh] xl:h-auto xl:border-b-0 xl:border-r">
+          {selectedBase ? (
+            <ChatPane
+              conversationId={selectedBase.id}
+              channel={selectedBase.channel}
+              name={customerName(selectedBase.contact)}
+              handle={customerHandle(selectedBase.channel, selectedBase.contact, lead?.phoneE164 ?? null)}
+              rating={lead?.rating ?? null}
+              owner={ownership(selectedBase, names, me, lead?.handoffReason ?? null)}
+              messages={chatMessages}
+              state={state}
+              canReply={canReply}
+              replyAllowed={Boolean(eligibility?.allowed)}
+              replyReason={eligibility?.reason ?? (connection ? null : "The channel for this chat is missing.")}
+            />
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center px-8 py-16 text-center">
+              <p className="font-[family-name:var(--font-display)] text-[26px] leading-tight">No chat open</p>
+              <p className="mt-2 max-w-sm text-[13.5px] leading-5 text-[var(--color-muted)]">
+                {conversations.length === 0 && !state.q && state.view === "all" && !state.channel
+                  ? "When a customer comments or messages on Instagram, Facebook or WhatsApp, Varun replies and the chat shows up here."
+                  : "Pick a chat from the list to read it and reply."}
+              </p>
+            </div>
+          )}
+        </div>
+        <aside className="min-h-0 overflow-y-auto bg-[#fdfcfa] lg:col-span-2 xl:col-span-1">
+          {selectedBase ? (
+            <LeadPanel
+              lead={lead ? {
+                rating: lead.rating,
+                ratingReason: lead.ratingReason,
+                crmState: lead.crmState,
+                phoneE164: lead.phoneE164,
+                email: lead.email,
+                answers: readAnswers(lead.answers),
+              } : null}
+              questions={parseLeadQuestions(workspace.leadQuestions)}
+              chosenName={selectedBase.contact.chosenName}
+              channel={selectedBase.channel}
+              memory={selectedBase.contact.memory}
+              memoryUpdatedAt={selectedBase.contact.memoryUpdatedAt}
+            />
+          ) : (
+            <p className="p-5 text-[13px] text-[var(--color-muted)]">Lead details appear here when a chat is open.</p>
+          )}
+        </aside>
+      </div>
     </section>
   );
 }

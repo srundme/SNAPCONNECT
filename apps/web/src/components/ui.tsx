@@ -16,10 +16,10 @@ export function StatusLabel({ tone, children }: { tone: "ok" | "wait" | "stop" |
   return <span className={clsx("inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-semibold leading-5", color)}>{children}</span>;
 }
 
-function ChannelGlyph({ channel }: { channel: "INSTAGRAM" | "FACEBOOK" | "WHATSAPP" }) {
+export function ChannelGlyph({ channel, size = 12 }: { channel: "INSTAGRAM" | "FACEBOOK" | "WHATSAPP"; size?: number }) {
   if (channel === "WHATSAPP") {
     return (
-      <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden>
+      <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden>
         <path d="M8 1.6a6.4 6.4 0 0 0-5.5 9.7L1.6 14.4l3.2-.9A6.4 6.4 0 1 0 8 1.6Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
         <path d="M6 5.2c.2-.3.6-.3.8 0l.5 1.1c.1.2 0 .5-.2.7l-.3.3c.4.8 1 1.4 1.8 1.8l.3-.3c.2-.2.5-.3.7-.2l1.1.5c.3.2.3.6 0 .8-.6.6-1.5.8-2.3.4A6 6 0 0 1 5.6 7.5c-.4-.8-.2-1.7.4-2.3Z" fill="currentColor" />
       </svg>
@@ -27,7 +27,7 @@ function ChannelGlyph({ channel }: { channel: "INSTAGRAM" | "FACEBOOK" | "WHATSA
   }
   if (channel === "INSTAGRAM") {
     return (
-      <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden>
+      <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden>
         <rect x="1.5" y="1.5" width="13" height="13" rx="4" fill="none" stroke="currentColor" strokeWidth="1.6" />
         <circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" strokeWidth="1.6" />
         <circle cx="11.6" cy="4.4" r="0.8" fill="currentColor" />
@@ -35,7 +35,7 @@ function ChannelGlyph({ channel }: { channel: "INSTAGRAM" | "FACEBOOK" | "WHATSA
     );
   }
   return (
-    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden>
+    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden>
       <path d="M9.2 14V8.7h1.8l.3-2H9.2V5.4c0-.6.2-1 .9-1H11.4V2.6c-.3 0-.9-.1-1.6-.1-1.6 0-2.7 1-2.7 2.8v1.4H5.4v2h1.7V14h2.1Z" fill="currentColor" />
     </svg>
   );
@@ -99,4 +99,38 @@ export function StatGrid({ items, columns = 4 }: { items: Array<{ label: string;
 
 export function Panel({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={clsx("overflow-hidden rounded-2xl bg-white shadow-[0_1px_0_rgba(20,23,28,0.06)]", className)}>{children}</div>;
+}
+
+/** Small pill for a workspace role: Admin, Agent, Viewer. */
+export function RoleChip({ role }: { role: string | null | undefined }) {
+  const label = roleName(role);
+  const style = role === "ADMIN" || role === "SUPER_ADMIN"
+    ? "bg-[#f4ead2] text-[#6e5420]"
+    : role === "AGENT"
+      ? "bg-[#eef1f4] text-[#334155]"
+      : "bg-[#f4f5f7] text-[#57606d]";
+  return <span className={clsx("inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-semibold leading-5", style)}>{label}</span>;
+}
+
+export function roleName(role: string | null | undefined): string {
+  if (role === "SUPER_ADMIN") return "Platform owner";
+  if (role === "ADMIN") return "Admin";
+  if (role === "AGENT") return "Agent";
+  if (role === "VIEWER") return "Viewer";
+  return "No access";
+}
+
+/** A quiet "Technical details" style disclosure. */
+export function Disclosure({ summary, children, className }: { summary: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <details className={clsx("disclosure group", className)}>
+      <summary className="inline-flex cursor-pointer select-none items-center gap-1 rounded-md text-[13px] font-medium text-[var(--color-muted)] hover:text-[var(--color-ink)]">
+        <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden className="transition-transform group-open:rotate-90">
+          <path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        {summary}
+      </summary>
+      <div className="mt-2">{children}</div>
+    </details>
+  );
 }
