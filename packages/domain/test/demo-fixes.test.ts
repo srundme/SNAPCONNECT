@@ -131,6 +131,8 @@ describe("names from the profile", () => {
   it("reads a person's name from a profile name or handle, not a brand", async () => {
     const { profilePersonName } = await import("../src/index");
     expect(profilePersonName(null, "riteesh.shetty_93")).toBe("Riteesh Shetty");
+    expect(profilePersonName(null, "gopi.talks")).toBe("Gopi");
+    expect(profilePersonName(null, "priya_vlogs")).toBe("Priya");
     expect(profilePersonName("Priya Nair", "pn_1990")).toBe("Priya Nair");
     expect(profilePersonName(null, "karighars_interiors")).toBeNull();
     expect(profilePersonName(null, "xx_99_xx")).toBeNull();

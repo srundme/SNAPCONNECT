@@ -105,7 +105,7 @@ export function nameConcern(name: string | null | undefined, profileNames: Array
   return null;
 }
 
-const NOT_A_PERSON = /\b(official|interiors?|designs?|designer|studio|homes?|realty|realtors?|estates?|store|shop|media|tv|world|india|bangalore|bengaluru|blr|pvt|ltd|llp|group|team|fans?|page|club|official|the|creations?|decor|furniture|kitchens?|builders?|properties|vlogs?|photography|events?|foods?|travels?|fashion|boutique|salon|academy|official)\b/i;
+const NOT_A_PERSON = /\b(official|interiors?|designs?|designer|studio|homes?|realty|realtors?|estates?|store|shop|media|tv|world|india|bangalore|bengaluru|blr|pvt|ltd|llp|group|team|fans?|page|club|official|the|creations?|decor|furniture|kitchens?|builders?|properties|photography|events?|foods?|travels?|fashion|boutique|salon|academy|official)\b/i;
 
 /**
  * A person's name read from their profile name or handle, like "Riteesh Shetty" from
@@ -123,6 +123,11 @@ export function profilePersonName(displayName: string | null | undefined, userna
       .trim()
       .split(/\s+/)
       .filter(Boolean);
+    // A brand or page ("Tech World Official") is never a person; a personal handle word is dropped: @gopi.talks is Gopi.
+    if (NOT_A_PERSON.test(words.join(" ")) || /\btech\b/i.test(words.join(" "))) return null;
+    const HANDLE_WORDS = /^(talks|talk|vlogs?|vlogger|diaries|diary|life|lifestyle|daily|clicks|shots|photos?|fitness|traveller|eats|art|arts|real|its|im|mr|ms|dr|xo|blog|blogs|creates)$/i;
+    while (words.length > 1 && HANDLE_WORDS.test(words[words.length - 1]!)) words.pop();
+    while (words.length > 1 && HANDLE_WORDS.test(words[0]!)) words.shift();
     if (!words.length || words.length > 3) return null;
     if (!words.every((word) => /^\p{L}{2,}$/u.test(word))) return null;
     if (!words.some((word) => word.length >= 3)) return null;
