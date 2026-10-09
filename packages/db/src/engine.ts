@@ -3012,7 +3012,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     // Fixed lines (call wait, small home, commercial, rooms only, not now) are already exact and are not re-read.
     const cannedReply = Boolean(waited || smallHome || commercial || roomsOnly || pausing)
       // Exact questions the next turn is matched against must reach the customer word for word.
-      || Boolean(draft && /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time)\b/i.test(draft));
+      || Boolean(draft && EXACT_ASK.test(draft));
     const review = nudge === 0 && draft && validated.reply && !cannedReply
       ? await reviewReply(runtime, { customer: freshText, draft, earlier: earlierReplies.slice(-2), askingPrice: askingPrice(freshText), language: languageSample ? languageName(languageSample) : "English" })
       : null;
@@ -3022,6 +3022,14 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           nameKnown: Boolean(recordedName),
           metBefore: Boolean(elsewhere) || conversation.messages.some((message) => message.author === "AI"),
           agentName: workspace.agentName,
+          // While they are changing a detail, asking for the new one is right.
+          collected: /\b(change|changed|wrong|update|correct(?:ion)?|new|different|another|instead|actually|mistake)\b/i.test(freshText)
+            ? []
+            : questions.filter((question) => {
+                const value = question.kind === "name" ? recordedName : question.kind === "phone" ? recordedPhone : recordedAnswers[question.id];
+                return Boolean(value?.trim()) && !missingNow.includes(question) && question !== nextDetail && question !== bhkAgain
+                  && !checkedIds.includes(question.id) && !(question.kind === "phone" && wrongNumber);
+              }),
         }));
     const bubbleOptions = { casual: agent.casualTexting, split: agent.splitMessages, ...(keep ? { keep } : {}) };
     const freshBubbles = addressed ? humanBubbles(addressed, earlierReplies, keepCase, bubbleOptions) : [];
@@ -4322,20 +4330,27 @@ function dropPlanMentions(text: string): string {
 const VISIT_OFFER = "Shall I book a free consultation for you, or would you like to visit our experience centre?";
 const TYPE_ASK = "Is it an apartment, villa or independent house?";
 
+/** Questions the code writes word for word (checks and confirmations). They are never trimmed or reworded. */
+const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time)\b/i;
+
 /**
  * Code, not the model, decides what is already known: a name we have is never asked again, and someone
  * Varun has already chatted with (here or on another channel) is never introduced to him again.
  */
 export function withoutKnownAsks<T extends string | null | undefined>(
   text: T,
-  known: { nameKnown: boolean; metBefore: boolean; agentName?: string | null },
+  known: { nameKnown: boolean; metBefore: boolean; agentName?: string | null; collected?: LeadQuestion[] },
 ): T {
   if (!text) return text;
   const agent = (known.agentName ?? "Varun").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const intro = new RegExp(`\\b(?:this is|i am|i'm|im|myself|my name is)\\s+${agent}\\b|\\b${agent}\\b[^.?!]*\\b(?:assistant|from the)\\b`, "i");
   // Their own name only: "the property name" or "the builder's name" are other questions.
   const theirName = /\b(?:your|ur|aapka|unga|ungal)\s+(?:good\s+|full\s+)?(?:name|naam|peru)\b|\bwhat (?:should|can|shall) (?:i|we) call you\b|\bwho (?:am i|are we) (?:speaking|chatting|talking) (?:with|to)\b|\bam i chatting with\b|\bshall i note your name\b/i;
-  const keep = (part: string) => !(known.nameKnown && isQuestionSentence(part) && theirName.test(part)) && !(known.metBefore && intro.test(part));
+  // Any other detail already collected (place, home, possession, number, email…) is not asked again either.
+  const others = (known.collected ?? []).filter((question) => question.kind !== "name");
+  const askedAgain = (part: string) => isQuestionSentence(part) && !EXACT_ASK.test(part)
+    && ((known.nameKnown && theirName.test(part)) || others.some((question) => questionAsked(question, part)));
+  const keep = (part: string) => !askedAgain(part) && !(known.metBefore && intro.test(part));
   const out = text
     .split(/\n+/)
     .map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).map((part) => part.trim()).filter(Boolean).filter(keep).join(" ").replace(/^\.+\s*/, ""))

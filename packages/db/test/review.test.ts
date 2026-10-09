@@ -13,6 +13,16 @@ describe("second check", () => {
       .toBe("Hi, I am Varun from The KariGhars. May I know your name?");
   });
 
+  it("never asks again for any detail already collected", () => {
+    const place = { id: "place", kind: "text" as const, label: "Where is the home: which area, and what is the property name?", required: true, zohoField: null };
+    const possession = { id: "possession", kind: "text" as const, label: "When do you get possession, or is the home already ready?", required: true, zohoField: null };
+    const known = { nameKnown: true, metBefore: true, agentName: "Varun", collected: [place, possession] };
+    expect(withoutKnownAsks("Got it sir. When do you get possession, or is the home already ready?", known)).toBe("Got it sir.");
+    expect(withoutKnownAsks("Got it sir. Which area is the home in, and what is the property name?", known)).toBe("Got it sir.");
+    expect(withoutKnownAsks("Got it sir. Which property is it in Whitefield?", known)).toBe("Got it sir. Which property is it in Whitefield?");
+    expect(withoutKnownAsks("Noted. Which number should the team call you on?", known)).toBe("Noted. Which number should the team call you on?");
+  });
+
   it("keeps only one question per reply, the last one", () => {
     expect(oneQuestion("Got it a 3BHK\nWhat kind of interiors are you looking for? When do you get possession, or is the home already ready?"))
       .toBe("Got it a 3BHK\nWhen do you get possession, or is the home already ready?");
