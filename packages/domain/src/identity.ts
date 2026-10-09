@@ -104,3 +104,30 @@ export function nameConcern(name: string | null | undefined, profileNames: Array
   if (nameFitsProfile(name, profile) === false) return { kind: "profile_mismatch", name, profile: profile.join(" / ") };
   return null;
 }
+
+const NOT_A_PERSON = /\b(official|interiors?|designs?|designer|studio|homes?|realty|realtors?|estates?|store|shop|media|tv|world|india|bangalore|bengaluru|blr|pvt|ltd|llp|group|team|fans?|page|club|official|the|creations?|decor|furniture|kitchens?|builders?|properties|vlogs?|photography|events?|foods?|travels?|fashion|boutique|salon|academy|official)\b/i;
+
+/**
+ * A person's name read from their profile name or handle, like "Riteesh Shetty" from
+ * "riteesh.shetty_93", or null when it is a brand, a page or not a name at all.
+ */
+export function profilePersonName(displayName: string | null | undefined, username: string | null | undefined): string | null {
+  const read = (raw: string | null | undefined): string | null => {
+    if (!raw) return null;
+    const words = raw
+      .normalize("NFKC")
+      .replace(/\(old test[^)]*\)/gi, "")
+      .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, " ")
+      .replace(/[._\-]+/g, " ")
+      .replace(/\d+/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (!words.length || words.length > 3) return null;
+    if (!words.every((word) => /^\p{L}{2,}$/u.test(word))) return null;
+    if (!words.some((word) => word.length >= 3)) return null;
+    const name = words.map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(" ");
+    return NOT_A_PERSON.test(name) ? null : name;
+  };
+  return read(displayName) ?? read(username);
+}

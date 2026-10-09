@@ -126,3 +126,14 @@ describe("no compliments on their answers", () => {
     expect(dropEmptyPraise("That is a comfortable size sir.")).toBe("That is a comfortable size sir.");
   });
 });
+
+describe("names from the profile", () => {
+  it("reads a person's name from a profile name or handle, not a brand", async () => {
+    const { profilePersonName } = await import("../src/index");
+    expect(profilePersonName(null, "riteesh.shetty_93")).toBe("Riteesh Shetty");
+    expect(profilePersonName("Priya Nair", "pn_1990")).toBe("Priya Nair");
+    expect(profilePersonName(null, "karighars_interiors")).toBeNull();
+    expect(profilePersonName(null, "xx_99_xx")).toBeNull();
+    expect(profilePersonName("Tech World Official", null)).toBeNull();
+  });
+});

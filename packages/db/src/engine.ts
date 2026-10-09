@@ -106,6 +106,7 @@ import {
   phoneProblem,
   dropRepeatedSentences,
   fullWords,
+  profilePersonName,
   dropDesignTalk,
   asksAboutDesign,
   humanBubbles,
@@ -1241,8 +1242,10 @@ async function handleMessageEdit(db: Db, connectionId: string, body: Record<stri
     channel: conversation.channel,
   });
   const paused = connection.automationPaused || connection.workspace.automationPaused || Boolean(connection.revokedAt);
+  // The corrected detail reaches the lead and Zoho straight away, before any reply is written.
+  const detailsChanged = await refreshLeadDetails(db, runtime, conversation.id, phoneChanged);
   if (conversation.owner !== "AI" || paused || contact.optedOutAt) {
-    await refreshLeadDetails(db, runtime, conversation.id, phoneChanged);
+    // Staff own the chat or automation is paused: the lead is updated, no reply.
   } else {
     await db.outboxJob.create({
       data: {
@@ -1255,6 +1258,7 @@ async function handleMessageEdit(db: Db, connectionId: string, body: Record<stri
           editedFrom: original.body.slice(0, 300),
           editedTo: text.slice(0, 300),
           ...(phoneChanged ? { phoneChanged: true } : {}),
+          ...(detailsChanged ? { detailsChanged: true } : {}),
         },
         availableAt: new Date(runtime.now().getTime() + (runtime.replySettleMs ?? 0)),
       },
@@ -1267,13 +1271,13 @@ async function handleMessageEdit(db: Db, connectionId: string, body: Record<stri
  * Re-reads the edited chat without replying, for chats staff own or automation has paused,
  * so a corrected name, answer or call time still reaches the lead and the same Zoho record.
  */
-async function refreshLeadDetails(db: Db, runtime: Runtime, conversationId: string, alreadyChanged: boolean) {
+async function refreshLeadDetails(db: Db, runtime: Runtime, conversationId: string, alreadyChanged: boolean): Promise<boolean> {
   const conversation = await db.conversation.findUniqueOrThrow({
     where: { id: conversationId },
     include: { messages: { orderBy: { createdAt: "asc" } }, contact: true, workspace: true },
   });
   const lead = await db.lead.findFirst({ where: { contactId: conversation.contactId, archivedAt: null }, include: { crm: true } });
-  if (!lead || conversation.contact.optedOutAt) return;
+  if (!lead || conversation.contact.optedOutAt) return false;
   const questions = parseLeadQuestions(conversation.workspace.leadQuestions);
   const form = questions.length ? await readLeadForm(runtime, questions, conversation.messages) : null;
   const answers = { ...answerRecord(lead.answers), ...(form?.answers ?? {}) };
@@ -1298,6 +1302,7 @@ async function refreshLeadDetails(db: Db, runtime: Runtime, conversationId: stri
       data: { workspaceId: lead.workspaceId, type: "CRM_SYNC", payload: { leadId: lead.id, contactId: conversation.contactId } },
     });
   }
+  return changed;
 }
 
 /**
@@ -1923,6 +1928,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       for (const question of questions) {
         if (/budget/i.test(question.label) && priceShock(absorbed.answers[question.id] ?? "")) delete absorbed.answers[question.id];
       }
+      // "Shall I note your name as Riteesh Shetty?" answered yes: that is their name.
+      const offeredName = lastAsk.match(/\bshall I note your name as ([^?]+)\?/i)?.[1]?.trim();
+      if (offeredName && /^(?:yes|yeah|ya|yep|yup|sure|ok(?:ay)?|correct|right|haan|ha|aama|ji|please|yes please|that'?s (?:me|right|correct))\b/i.test(freshText.trim()) && !/\b(?:no|not|wrong)\b/i.test(freshText)) {
+        absorbed.name = offeredName;
+      }
       absorbed.name = ignoreAgentGreeting(absorbed.name, prospectBodies, workspace.agentName);
       if (conversation.contact.chosenName && ignoreAgentGreeting(conversation.contact.chosenName, prospectBodies, workspace.agentName) === null) {
         absorbed.name = null;
@@ -1994,7 +2004,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     const wrongInEdit = editedTo ? wrongPhoneIn(editedTo, phoneRegion) : null;
     if (editedTo && lastSpoken?.author === "AI") {
-      const detailsChanged = payload.phoneChanged === true
+      const detailsChanged = payload.phoneChanged === true || payload.detailsChanged === true
         || recordedName !== conversation.contact.chosenName
         || recordedPhone !== lead.phoneE164
         || JSON.stringify(recordedAnswers) !== JSON.stringify(answerRecord(lead.answers))
@@ -2698,8 +2708,15 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const homeSaved = questions.filter((question) => /\bbhk\b/i.test(question.label)).map((question) => recordedAnswers[question.id] ?? "").join(" ");
     const needsType = /\d\s*-?\s*bhk\b/i.test(homeSaved) && /\bhouse\b/i.test(homeSaved) && !homeTypeName(homeSaved)
       && !spoken.some((message) => message.author === "AI" && /\bindependent house\b/i.test(message.body));
-    // A check against the project lookup comes first, then the plain home type.
-    const confirmAsk = projectAsk ?? (needsType ? TYPE_ASK : null);
+    // Instagram or Facebook: when the profile carries a real name, confirm it instead of asking for it.
+    const profileName = conversation.channel !== "WHATSAPP" && !recordedName && nextDetail?.kind === "name"
+      && !spoken.some((message) => message.author === "AI" && /\bshall I note your name as\b/i.test(message.body))
+      ? profilePersonName(conversation.contact.displayName, conversation.contact.username)
+      : null;
+    const personal = profileName && runtime.llm.addressFor ? await runtime.llm.addressFor(profileName).then((word) => word !== "bro").catch(() => false) : false;
+    const nameAsk = profileName && personal ? `Shall I note your name as ${profileName}?` : null;
+    // A check against the project lookup comes first, then the name, then the plain home type.
+    const confirmAsk = projectAsk ?? nameAsk ?? (needsType ? TYPE_ASK : null);
     const held = confirmAsk && heldBase && Number(payload.followUp ?? 0) === 0 && !holdScript && !offerConsultation && !needsTime && !chasingCall
       ? [heldBase.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n"), confirmAsk].filter(Boolean).join("\n")
       : heldBase;
@@ -2974,6 +2991,11 @@ async function writeOpening(
   const sample = chatLanguageSample([input.comment]);
   const guessedAddress = agent.addressSirMam && input.name && runtime.llm.addressFor ? await runtime.llm.addressFor(input.name).catch(() => null) : null;
   const address = guessedAddress === "bro" ? null : guessedAddress;
+  // Their profile carries a real name: the opener confirms it instead of asking for it.
+  const profile = first?.kind === "name" ? profilePersonName(null, input.name) : null;
+  const confirmName = profile && runtime.llm.addressFor
+    ? await runtime.llm.addressFor(profile).then((word) => word !== "bro").catch(() => false)
+    : false;
   try {
     const raw = await runtime.llm.complete({
       system: [
@@ -2986,7 +3008,7 @@ async function writeOpening(
           ? `They commented in ${languageName(sample)}, like "${sample}". Write the whole message, the question too, in exactly that language and style.`
           : "Write the whole message, the question too, in the language and style of their comment: plain English for an English comment; Tamil, Hindi or another Indian language typed in English letters (Tanglish, Hinglish) when they wrote that way.",
         address ? `Address them only as ${address}.` : "",
-        "You do not know their real name yet. Never use their profile name or username.",
+        "You do not know their real name yet. Never use their profile name or username, except in the one name question you are told to ask.",
         "Someone just commented on a post. You are sending them their first private message about it.",
         "This is only an enquiry: do not sound like they have already chosen you, and do not oversell.",
       ].filter(Boolean).join("\n\n"),
@@ -3000,7 +3022,9 @@ async function writeOpening(
           `1. Say hi and that you are ${workspace.agentName ?? "the"} AI assistant for ${workspace.brandName}, in a few words.`,
           "2. If the comment asks something (in any language), answer exactly that in one short sentence using only the knowledge base, never quoting a price (follow the pricing rule). If it only says hi, praises the post or says they are interested, thank them for reaching out in a few plain words. This sentence asks nothing.",
           `Only say what their comment actually says. Never claim they praised, appreciated or asked about something they did not write. If they name something ${workspace.brandName} does not offer (like an integration, an app or a product), do not repeat it back as if it were our work; just thank them and talk about home interiors.`,
-          first
+          confirmName && profile
+            ? `3. End with exactly this question: "Shall I note your name as ${profile}?"`
+            : first
             ? `3. End with one natural question, in the same language as the rest, asking for: ${first.label} That is only the topic: do not copy its words.`
             : "3. End by asking how you can help, in the same language as the rest.",
           "If the comment is in Tanglish (Tamil in English letters, like \"evlo aagum\") or Hinglish (like \"kitna hoga\"), every sentence must be in that same style, not English.",
