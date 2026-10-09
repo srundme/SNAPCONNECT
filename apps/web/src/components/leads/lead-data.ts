@@ -4,7 +4,8 @@ import { isOldTest } from "@/lib/format";
 /** Short, scannable column / card labels for the workspace's lead questions. */
 export function shortLabel(question: Pick<LeadQuestion, "label" | "kind">): string {
   const label = question.label.toLowerCase();
-  if (question.kind === "name" || /\bname\b/.test(label)) return "Name";
+  // "…what is the property name?" is the place question, not their name.
+  if (question.kind === "name" || (/\bname\b/.test(label) && !/\b(property|project|builder|society|apartment|company|business)\b/.test(label))) return "Name";
   if (question.kind === "phone" || /\b(phone|mobile|number)\b/.test(label)) return "Phone";
   if (/e-?mail/.test(label)) return "Email";
   if (/\bbhk\b/.test(label)) return "Home";
