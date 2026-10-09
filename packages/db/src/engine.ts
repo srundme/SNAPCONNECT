@@ -2913,7 +2913,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : hoursReply
       ? hoursReply
       : wrongNumber && phoneQuestion && (!validated.reply || echoesWrongNumber || !replyAsksFor(phoneQuestion, validated.reply))
-      ? `Hmm, ${phoneProblem(wrongNumber)}. ${scriptQuestionFor(phoneQuestion, languageSample ? languageName(languageSample) : null)}`
+      ? `Sorry, ${phoneProblem(wrongNumber)}. ${scriptQuestionFor(phoneQuestion, languageSample ? languageName(languageSample) : null)}`
       : target && validated.reply
       ? questionAsked(target, validated.reply) || echoesScript(target, validated.reply) || asksSomething(validated.reply)
         || /\b(which room|what do (?:u|you) like|do (?:u|you) have (?:any )?more|what (?:u|you) like most|kaunsa room|kya pasand)\b/i.test(validated.reply) || validated.reply.split(/(?<=[.!?])\s+|\n+|(?<=\.\.)(?=[^\s.])/).some(isQuestionSentence) || (askedByThem && validated.reply.length >= 60) || raisesConcern(latestUser) || customerComplaint(latestUser) || Boolean(situationHandoff)
@@ -3036,24 +3036,24 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : smallHome && !smallAsked
       ? `just to confirm, is it a ${smallLabel} home?`
       : smallHome && smallDenied
-      ? "ok. how many BHK is it?"
+      ? "Thank you for clarifying. How many BHK is your home?"
       : smallHome
       ? spoken.some((message) => message.author === "AI" && /\b2 BHK homes and above\b/i.test(message.body))
-        ? "thank you. if you have a bigger home to do, just message here"
-        : "thank you for reaching out. The KariGhars takes up full-home interiors only for 2 BHK homes and above, so we won't be able to take up this one"
+        ? "Thank you. We would be glad to help whenever you plan a larger home, please message us here anytime."
+        : "Thank you for reaching out. At The KariGhars we take up full home interiors for 2 BHK homes and above, so we may not be the right fit for this one. We would be happy to help whenever you plan a larger home."
       : commercial
-      ? spoken.some((message) => message.author === "AI" && /\bhome interiors only\b/i.test(message.body))
-        ? "if there is a home to do, just message here sir"
-        : "we do home interiors only sir, not an office, shop or clinic. if there is a home to do, just say so"
+      ? spoken.some((message) => message.author === "AI" && /\b(?:home interiors only|specialise in home interiors)\b/i.test(message.body))
+        ? "We would be glad to help whenever you have a home in mind, please message us here anytime."
+        : "Thank you for considering us. We specialise in home interiors, so offices, shops and clinics are outside what we take up. We would be glad to help whenever you have a home in mind."
       : roomsOnly
         ? spoken.some((message) => message.author === "AI" && /\bfull home\b/i.test(message.body) && /\b(single room|room by room|one project)\b/i.test(message.body))
           ? (withoutShock?.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n")
-            || "whenever u want the whole home done, message here sir")
-          : "we take up only full-home interiors, for 2 BHK homes and above, not a single room. if you want the whole home done, just let me know"
+            || "Whenever you would like the whole home done, please message us here.")
+          : "Thank you for sharing that. We specialise in full home interiors for 2 BHK homes and above rather than a single room, so the whole home can be designed together. If you would like the whole home done, we would be happy to help."
         : pausing
-          ? spoken.some((message) => message.author === "AI" && /\bwhenever u are ready\b/i.test(message.body))
-            ? "whenever u are ready, message here sir"
-            : "no problem sir. whenever u are ready, just message here"
+          ? spoken.some((message) => message.author === "AI" && /\bwhenever (?:u|you) are ready\b/i.test(message.body))
+            ? "Whenever you are ready, please message us here."
+            : "Of course, no problem at all. Whenever you are ready, please message us here."
           : withoutShock;
     const offeredBase = steered && !proceeding ? dropUnaskedCallback(steered, false) : steered;
     // They asked where the experience centre is: the link from the knowledge base answers it. Never an invented address.
