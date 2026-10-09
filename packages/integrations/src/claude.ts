@@ -32,7 +32,7 @@ export type Claude = {
   model: string;
   text(call: ClaudeCall): Promise<string>;
   /** Forces one tool call and returns its input: JSON shaped by `schema`. */
-  json<T>(call: ClaudeCall & { name: string; description: string; schema: Record<string, unknown> }): Promise<T>;
+  json<T>(call: ClaudeCall & { name: string; description: string; schema: Record<string, unknown>; serverTools?: Array<Record<string, unknown>> }): Promise<T>;
 };
 
 export function claudeClient(options: { apiKey: string; model?: string; fetchImpl?: typeof fetch }): Claude {
@@ -80,19 +80,25 @@ export function claudeClient(options: { apiKey: string; model?: string; fetchImp
       const result = await send(base(call), call.timeoutMs ?? 60_000);
       return result.content.filter((block) => block.type === "text").map((block) => String(block.text ?? "")).join("").trim();
     },
-    async json<T>(call: ClaudeCall & { name: string; description: string; schema: Record<string, unknown> }) {
+    async json<T>(call: ClaudeCall & { name: string; description: string; schema: Record<string, unknown>; serverTools?: Array<Record<string, unknown>> }) {
       // Opus does not take a forced tool_choice, so the tool is offered and the instruction says to always use it.
       const withTool = {
         ...base({ ...call, system: typeof call.system === "string"
           ? `${call.system}\n\nAlways answer by calling the ${call.name} tool exactly once. Never answer in plain text.`
           : [...call.system, { type: "text" as const, text: `Always answer by calling the ${call.name} tool exactly once. Never answer in plain text.` }] }),
-        tools: [{ name: call.name, description: call.description, input_schema: call.schema }],
+        tools: [...(call.serverTools ?? []), { name: call.name, description: call.description, input_schema: call.schema }],
         tool_choice: { type: "auto" },
       };
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        const result = await send(withTool, call.timeoutMs ?? 60_000);
-        const used = result.content.find((block) => block.type === "tool_use" && block.name === call.name);
-        if (used) return used.input as T;
+        let body: Record<string, unknown> = withTool;
+        // A server tool (web search) may pause a long turn: hand its work back and let it finish.
+        for (let step = 0; step < 4; step += 1) {
+          const result = await send(body, call.timeoutMs ?? 60_000);
+          const used = result.content.find((block) => block.type === "tool_use" && block.name === call.name);
+          if (used) return used.input as T;
+          if (result.stop_reason !== "pause_turn") break;
+          body = { ...withTool, messages: [...(withTool.messages as unknown[]), { role: "assistant", content: result.content }] };
+        }
       }
       throw new ClaudeError(`Claude did not call ${call.name}.`, true);
     },

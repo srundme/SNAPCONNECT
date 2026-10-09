@@ -12,7 +12,7 @@ export type PlaceInfo = {
   address?: string | null;
   /** BHK sizes the project is advertised with. Not this customer's home. */
   bhkOptions?: number[];
-  source?: "Google Maps" | "OpenStreetMap" | "Brave Search";
+  source?: "Google Maps" | "OpenStreetMap" | "Brave Search" | "Claude web search";
   /** The developer, when a listing names one ("by Prestige Group"). */
   builder?: string | null;
   /** Advertised sizes per BHK, like { "3": "1450-1650 sq ft" }. */
@@ -28,7 +28,7 @@ export type PlaceInfo = {
 };
 
 /** A place they named that looks like a project but could not be found, so the team can check it. */
-export type PlaceMissing = { missing: string; source: "Google Maps" | "Brave Search" };
+export type PlaceMissing = { missing: string; source: "Google Maps" | "Brave Search" | "Claude web search" };
 
 export type PlaceLookup = (query: string, city?: string) => Promise<PlaceInfo | PlaceMissing | null>;
 
@@ -450,5 +450,78 @@ export function bestPlaceLookup(google: PlaceLookup | null, osm: PlaceLookup, we
     if (fromOsm && !("missing" in fromOsm)) return fromOsm;
     if (fromWeb && !("missing" in fromWeb)) return fromWeb;
     return (fromWeb && "missing" in fromWeb ? fromWeb : null) ?? (fromGoogle && "missing" in fromGoogle ? fromGoogle : null) ?? null;
+  };
+}
+
+/**
+ * Finds a Bengaluru property with Claude and its web search: Claude reads the results and understands short forms
+ * ("APR"), misspellings ("Concord") and listing pages, then reports one clean answer. Low confidence is "not found".
+ */
+export function claudePlaceLookup(options: { claude: import("./claude").Claude }): PlaceLookup {
+  const schema = {
+    type: "object",
+    properties: {
+      found: { type: "boolean", description: "True only if you are confident this is one real residential property in or near the city." },
+      confidence: { type: "string", enum: ["high", "medium", "low"] },
+      name: { type: ["string", "null"], description: "The property's proper name, like 'Adarsh Palm Retreat'." },
+      locality: { type: ["string", "null"], description: "The area or main road, like 'Sarjapur Road' or 'Bellandur'." },
+      city: { type: ["string", "null"] },
+      kind: { type: ["string", "null"], enum: ["apartment", "villa", null], description: "Mostly apartments or mostly villas." },
+      bhk_options: { type: "array", items: { type: "integer" }, description: "BHK sizes the project offers, if known." },
+      ready_to_move: { type: ["boolean", "null"] },
+      under_construction: { type: ["boolean", "null"] },
+      possession_year: { type: ["integer", "null"] },
+      builder: { type: ["string", "null"] },
+      url: { type: ["string", "null"], description: "The most reliable page you used." },
+      short_form: { type: ["string", "null"], description: "If what they typed is a short form of the name (like 'APR'), what they typed." },
+      corrected_from: { type: ["string", "null"], description: "If what they typed was misspelt, what they typed." },
+    },
+    required: ["found", "confidence", "name", "locality", "city", "kind", "bhk_options", "ready_to_move", "under_construction", "possession_year", "builder", "url", "short_form", "corrected_from"],
+  };
+  return async (query, city) => {
+    const answer = await options.claude.json<{
+      found: boolean; confidence: string; name: string | null; locality: string | null; city: string | null; kind: "apartment" | "villa" | null;
+      bhk_options: number[]; ready_to_move: boolean | null; under_construction: boolean | null; possession_year: number | null; builder: string | null;
+      url: string | null; short_form: string | null; corrected_from: string | null;
+    }>({
+      system: "You identify residential properties (apartment complexes, villa communities, gated layouts) in Indian cities for a home interiors company. Search the web, then report what you found. A listing page title (like 'Villas for Sale') is not a property. A builder name alone is not a property. If you are not confident it is one real property, set found to false.",
+      messages: [{ role: "user", content: `A customer wrote this as the property of their home: "${query}"${city ? `. City: ${city}` : ""}. Which property is it?` }],
+      name: "report_property",
+      description: "Report the property you identified.",
+      schema,
+      serverTools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3, user_location: { type: "approximate", city: city ?? "Bengaluru", country: "IN" } }],
+      maxTokens: 2000,
+      timeoutMs: 90_000,
+    });
+    if (!answer.found || !answer.name || answer.confidence === "low") return { missing: query, source: "Claude web search" };
+    return {
+      name: answer.name,
+      locality: answer.locality,
+      city: answer.city ?? city ?? null,
+      pincode: null,
+      underConstruction: answer.under_construction === true,
+      readyToMove: answer.ready_to_move === true ? true : undefined,
+      possessionYear: answer.possession_year,
+      kind: answer.kind,
+      bhkOptions: (answer.bhk_options ?? []).filter((count) => count >= 1 && count <= 9),
+      source: "Claude web search",
+      builder: answer.builder,
+      url: answer.url,
+      confirm: Boolean(answer.short_form || answer.corrected_from || answer.confidence === "medium"),
+      shortForm: answer.short_form,
+      correctedFrom: answer.corrected_from,
+    };
+  };
+}
+
+/** The first lookup that answers; the next one is tried when it fails. */
+export function firstAnswering(primary: PlaceLookup, backup: PlaceLookup): PlaceLookup {
+  return async (query, city) => {
+    try {
+      return await primary(query, city);
+    } catch (error) {
+      console.warn(`Property lookup failed, trying the backup: ${error instanceof Error ? error.message : String(error)}`);
+      return backup(query, city);
+    }
   };
 }

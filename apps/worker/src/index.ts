@@ -3,7 +3,7 @@ import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { loadConfig, loadDotEnv } from "@snapsocial/config";
 import { connectionSender, getPrisma, processAvailableJobs, recoverStaleJobs, sendDailySummaries, simulationRuntime } from "@snapsocial/db";
-import { bravePlaceLookup, cartesiaSpeaker, claudeClient, claudeVision, fixtureLlm, ollamaLlm, sarvamDocumentReader, sarvamLlm, sarvamTranscriber, sarvamVision, whatsappMediaUrl } from "@snapsocial/integrations";
+import { bravePlaceLookup, cartesiaSpeaker, claudeClient, claudePlaceLookup, claudeVision, firstAnswering, fixtureLlm, ollamaLlm, sarvamDocumentReader, sarvamLlm, sarvamTranscriber, sarvamVision, whatsappMediaUrl } from "@snapsocial/integrations";
 
 loadDotEnv(process.cwd());
 
@@ -54,9 +54,12 @@ const runtime = simulationRuntime({
   // Voice clip links and the "open chat" link in team alerts.
   publicBaseUrl: config.APP_BASE_URL,
   replySettleMs: 2500,
-  lookupPlace: config.BRAVE_SEARCH_API_KEY
-    ? bravePlaceLookup({ apiKey: config.BRAVE_SEARCH_API_KEY })
-    : async () => null,
+  // Claude searches the web and understands short forms and misspellings; Brave answers if Claude's search fails.
+  lookupPlace: claude
+    ? firstAnswering(claudePlaceLookup({ claude }), config.BRAVE_SEARCH_API_KEY ? bravePlaceLookup({ apiKey: config.BRAVE_SEARCH_API_KEY }) : async () => null)
+    : config.BRAVE_SEARCH_API_KEY
+      ? bravePlaceLookup({ apiKey: config.BRAVE_SEARCH_API_KEY })
+      : async () => null,
   pause: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   ...(claude ? { claude } : {}),
 });
