@@ -106,6 +106,7 @@ import {
   phoneProblem,
   dropRepeatedSentences,
   fullWords,
+  hindiEndings,
   dropDeferral,
   profilePersonName,
   dropDesignTalk,
@@ -2619,7 +2620,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           mustAsk: target ?? nextQuestion ?? null,
         })
       : askedNumber;
-    const inLanguage = numbered && !languageSample ? dropIndicSentences(numbered) || numbered : numbered;
+    const inLanguageBase = numbered && !languageSample ? dropIndicSentences(numbered) || numbered : numbered;
+    // A Hinglish chat never gets Tamil endings like "kitchen la".
+    const inLanguage = inLanguageBase && languageSample && /hinglish|hindi/i.test(languageName(languageSample)) ? hindiEndings(inLanguageBase) : inLanguageBase;
     const greetedOnce = inLanguage && earlierReplies.length ? dropRepeatGreeting(inLanguage) : inLanguage;
     const newName = recordedName && recordedName !== conversation.contact.chosenName ? recordedName : null;
     const greeted = greetedOnce && !languageSample && !situationHandoff ? naturalAcknowledgement(greetedOnce, earlierReplies, newName) : greetedOnce;

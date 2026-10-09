@@ -160,6 +160,13 @@ export function dropDeferral(text: string): string {
   return kept || text;
 }
 
+/** Tamil endings that slip into a Hinglish reply: "kitchen la" is Tamil, Hindi says "kitchen mein". */
+export function hindiEndings(text: string): string {
+  return text
+    .replace(/(\p{L}{3,})\s+la\b(?!\s*(?:la|di)\b)/giu, "$1 mein")
+    .replace(/(\p{L}{3,})\s+ku\b/giu, "$1 ko");
+}
+
 /** The knowledge base without its price lines: prices are never told to customers, so the model never sees them. */
 export function withoutPrices(text: string): string {
   return text

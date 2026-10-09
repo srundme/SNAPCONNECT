@@ -137,3 +137,13 @@ describe("names from the profile", () => {
     expect(profilePersonName("Tech World Official", null)).toBeNull();
   });
 });
+
+describe("Hinglish endings", () => {
+  it("swaps Tamil endings for Hindi ones", async () => {
+    const { hindiEndings } = await import("../src/index");
+    expect(hindiEndings("kitchen aur bathroom la Century Ply Club Prime BWP use hota hai aur wardrobe la Century Ply WIN MR"))
+      .toBe("kitchen aur bathroom mein Century Ply Club Prime BWP use hota hai aur wardrobe mein Century Ply WIN MR");
+    expect(hindiEndings("team ku bata dunga")).toBe("team ko bata dunga");
+    expect(hindiEndings("la la land")).toBe("la la land");
+  });
+});

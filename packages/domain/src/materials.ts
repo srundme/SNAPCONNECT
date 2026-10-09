@@ -60,7 +60,7 @@ export function parseWarranty(value: unknown): WarrantyTerms | null {
 
 const MATERIAL_TOPIC = /\b(materials?|ply(?:wood)?|wood|board|hdf|mdf|particle ?board|hinges?|channels?|drawers?|hardware|fittings?|sliding|appliances?|chimney|hood|hob|oven|otg|glass|mirror|finish(?:es)?|laminates?|acrylics?|veneers?|lacquer|pu|brands?|quality|termite|borer|water ?proof|waterproof|moisture|bwp|bwr|blum|hettich|h[aä]fele|century|aristo|siemens|bosch|grass)\b/i;
 const WARRANTY_TOPIC = /\b(warranty|warrantee|guarantee|guaranty|after ?sales?|lifetime|life ?time)\b/i;
-const WHY = /\b(why|difference|different|differ|compare|comparison|vs|versus|better|which is better|reason)\b/i;
+const WHY = /\b(why|difference|different|differ|compare|comparison|vs|versus|better|which is better|reason|kyun|kyon|kyu|farak|fark|antar|yen|enna vithiyasam|vithiyasam|vyatyasa)\b/i;
 const NOT_COVERED = /\b(not covered|doesn'?t cover|does not cover|exclusions?|what is covered|what'?s covered|terms|conditions|claim|damage|scratch\w*|chipping|misuse)\b/i;
 
 function matches(entry: MaterialEntry, text: string): boolean {

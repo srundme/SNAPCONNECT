@@ -261,7 +261,9 @@ export function salesBriefing(input: SalesBriefingInput): string {
       : "- Never use dashes, hyphens, semicolons, quotes or brackets.",
     ...(settings.laughter ? [] : ["- Never write haha, hehe, lol or any laughter."]),
     ...(settings.emojis ? [] : ["- Never use emojis."]),
-    ...(local ? ["- In Tanglish or Hinglish, never join a word and its ending with a hyphen. Write 'team ku', 'correct ah', 'working hours la', 'enna nu', 'number ah', not 'team-ku', 'correct-a', 'hours-la', 'enna-nu'."] : []),
+    ...(tamil ? ["- In Tanglish, never join a word and its ending with a hyphen. Write 'team ku', 'correct ah', 'working hours la', 'enna nu', 'number ah', not 'team-ku', 'correct-a', 'hours-la', 'enna-nu'."] : []),
+    ...(hindi ? ["- In Hinglish, use Hindi endings only: 'kitchen mein', 'team ko', 'aapke liye'. Never Tamil or Kannada endings like 'la', 'ku', 'ah', 'nu', 'alli' or words like 'irukku', 'pannunga', 'illa'."] : []),
+    ...(local && !tamil && !hindi ? ["- Never join a word and its ending with a hyphen."] : []),
     "- Write full, natural sentences that flow the way people speak, not word-by-word translations of English.",
     "- Good replies, only to show the feel. Write your own words for this person, never copy these. ADDRESS stands for the sir or mam you picked, or nothing:",
     ...(tamil
