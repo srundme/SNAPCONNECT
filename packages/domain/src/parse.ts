@@ -122,7 +122,8 @@ export function swapNumber(text: string, oldE164: string, newE164: string): stri
 }
 
 export function wrongPhoneIn(text: string, defaultRegion = "IN", minDigits = 6): string | null {
-  const runs = digitRuns(text, minDigits);
+  // Digits inside an email ("karthik1990@gmail.com") are not a phone number.
+  const runs = digitRuns(text.replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, " "), minDigits);
   if (!runs.length) return null;
   if (runs.some((run) => parsePhone(run, defaultRegion).kind === "valid")) return null;
   const first = runs[0]!;

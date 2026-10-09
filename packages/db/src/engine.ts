@@ -141,6 +141,7 @@ import {
   dropUnaskedCallback,
   dropUnaskedPrice,
   dropTimelinePromise,
+  openDays,
   dropProcessTalk,
   dropAskReason,
   asksTimeline,
@@ -1738,6 +1739,12 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         phoneRegion,
         nameReadElsewhere: readsName,
       });
+      // Re-reading the chat must never undo a fuller saved answer: "Adarsh Palm Retreat, Sarjapur Road"
+      // (confirmed) beats the "Adarsh palm retreat" they first typed.
+      for (const [id, saved] of Object.entries(recordedAnswers)) {
+        const read = (absorbed.answers[id] ?? "").trim();
+        if (!read || (saved.length > read.length && saved.toLowerCase().includes(read.toLowerCase()))) absorbed.answers[id] = saved;
+      }
       form = await readLeadForm(runtime, questions, conversation.messages, phoneRegion, workspace.agentName);
       if (form) {
         formRead = true;
@@ -2416,9 +2423,6 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const justAnsweredPart = (question: LeadQuestion) => Boolean(homeKind && /\bbhk\b/i.test(question.label) && freshText.toLowerCase().includes(homeKind));
     const askLimit = (_question: LeadQuestion) => 2;
     const justAsked = (question: LeadQuestion) => timesAsked(question) >= askLimit(question) || (!justAnsweredPart(question) && lastTwoAi.some((body) => askedIn(question, body)));
-    const optionalNext = complete && !complete.cold
-      ? questions.find((question) => complete.optional.includes(question.label) && !spoken.some((message) => message.author === "AI" && questionAsked(question, message.body)))
-      : undefined;
     const modelNext = form?.next ? questions.find((question) => question.id === form?.next) : undefined;
     const homeTypeMissing = missingNow.find((question) => /\bbhk\b/i.test(question.label) && !ignored(question) && !justAsked(question));
     const skipsHomeType = Boolean(modelNext && homeTypeMissing && modelNext !== homeTypeMissing && questions.indexOf(modelNext) > questions.indexOf(homeTypeMissing));
@@ -2430,7 +2434,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const skipDetail = (question: LeadQuestion) => scopeAsk(question) || (hasDesigner && /\b(style|must-have|reference|pooja)\b/i.test(question.label));
     const nameFirst = missingNow.find((question) => question.kind === "name" && !ignored(question) && !justAsked(question));
     const modelPick = !nameFirst && modelNext && !skipDetail(modelNext) && !skipsHomeType && !ignored(modelNext) && !justAsked(modelNext)
-      && (missingNow.includes(modelNext) || (!missingNow.length && Boolean(optionalNext) && complete?.optional.includes(modelNext.label)))
+      && missingNow.includes(modelNext)
       ? modelNext
       : undefined;
     const scopeNow = questions.filter(scopeAsk).map((question) => recordedAnswers[question.id] ?? "").find(Boolean) ?? "";
@@ -2465,7 +2469,17 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const choseBoth = /\b(both|dono|donon|rendum|rendu|eradu)\b/i.test(freshText);
     // "Before the visit I want to know the materials" is a question, not a booking.
     const conditional = /\?|\b(before|first (?:i|tell|let)|want to know|what|which|how|why|tell me)\b/i.test(freshText);
-    const freshOfferAnswer = offerJustMade ? plainYes ? "consultation" as const : choseBoth ? "experience" as const : conditional ? "unclear" as const : await readOfferAnswer(runtime, lastAiBody, freshText) : null;
+    // Plain words need no model: "book a consultation", "I'll visit the centre".
+    const saysConsultation = /\b(book|yes|want|need|go ahead with|fix)\b[^?]*\bconsult\w*/i.test(freshText);
+    const saysVisit = /\b(visit|come|coming|drop by|see)\b[^?]*\b(cent(?:re|er)|showroom|experience)\b/i.test(freshText);
+    const freshOfferAnswer = offerJustMade
+      ? plainYes ? "consultation" as const
+        : choseBoth || (saysConsultation && saysVisit) ? "experience" as const
+        : conditional ? "unclear" as const
+        : saysVisit ? "experience" as const
+        : saysConsultation ? "consultation" as const
+        : await readOfferAnswer(runtime, lastAiBody, freshText)
+      : null;
     if (freshOfferAnswer && freshOfferAnswer !== "unclear") {
       await db.message.create({
         data: { workspaceId: workspace.id, connectionId: conversation.connectionId, conversationId, author: "SYSTEM", body: `Offer answer: ${freshOfferAnswer} | ${freshText.slice(0, 200)}`, createdAt: runtime.now() },
@@ -2484,7 +2498,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       || offerAnswers.some((body) => /^Offer answer: (?:consultation|experience)\b/.test(body));
     const consultationDeclined = spoken.some((message, index) => message.author === "PROSPECT" && aboutConsultation(index) && /^(?:no+|nope|nah|not now|no thanks|later)(?:\s+(?:sir|mam|ji))?\.?$/i.test(message.body.trim()))
       || offerAnswers.some((body) => body.startsWith("Offer answer: not_now"));
-    const offerConsultation = Boolean(complete?.ready && !complete.cold && !holdScript && !proceeding && !agreedConsultation && !consultationAsked && !consultationDeclined);
+    // A detail they dodged twice is not worth a third ask: move on to the visit offer instead of stalling.
+    const exhausted = Boolean(complete && !complete.ready && !complete.cold && missingNow.length && recordedPhone
+      && missingNow.every((question) => timesAsked(question) >= askLimit(question) || ignored(question)));
+    const offerConsultation = Boolean((complete?.ready || exhausted) && !complete?.cold && !holdScript && !proceeding && !agreedConsultation && !consultationAsked && !consultationDeclined);
     // They named a day and time for the consultation or visit: the team confirms it, so tell them now.
     const slot = (agreedConsultation || proceeding) ? requestedTime(freshText, runtime.now(), agent.workingHours) : null;
     if (slot) {
@@ -2527,7 +2544,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : undefined;
     const nextDetail = holdScript || offerConsultation || needsTime || chasingCall || onlyHello
       ? undefined
-      : bhkAgain ?? phoneFirst ?? modelPick ?? missingNow.find((question) => !skipDetail(question) && !ignored(question) && !justAsked(question)) ?? (optionalNext && !skipDetail(optionalNext) ? optionalNext : undefined) ?? missingNow.find((question) => !skipDetail(question) && !justAsked(question));
+      // Optional details (style, carpet area, timeline) are never asked: once the must-haves are in, the visit offer comes next.
+      : bhkAgain ?? phoneFirst ?? modelPick ?? missingNow.find((question) => !skipDetail(question) && !ignored(question) && !justAsked(question)) ?? missingNow.find((question) => !skipDetail(question) && !justAsked(question));
     const phoneQuestion = questions.find((question) => question.kind === "phone");
     const wrongNumber = phoneQuestion && !complete?.cold
       ? wrongInEdit ?? wrongPhoneIn(latestProspect, phoneRegion, nextDetail?.kind === "phone" ? 6 : 8)
@@ -2907,7 +2925,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const planText = planAsk ? local?.get(planAsk) ?? planAsk : null;
     const addsPlan = Boolean(planText && composed && !pending && !asksSomething(composed) && !checkedIds.length && !situationHandoff && !askedByThem && !passedReply && !hoursReply
       && !PLAN_MENTION.test(composed));
-    const focused = asksOptionalInstead && composed
+    // A question about an optional detail the customer never brought up is dropped.
+    const optionalTopicRaised = optionalOnly.some((question) => (question.label.toLowerCase().match(/[a-z]{5,}/g) ?? []).some((word) => freshText.toLowerCase().includes(word.slice(0, 5))));
+    const focused = !asksOptionalInstead && !addsPlan && composed && optionalOnly.length && !optionalTopicRaised
+      ? withoutOptional(composed) || composed
+      : asksOptionalInstead && composed
       ? [withoutOptional(composed), askQuestion(pending!)].filter(Boolean).join("\n")
       : addsPlan && composed
         ? [withoutOptional(composed), planText].filter(Boolean).join("\n")
@@ -3099,6 +3121,18 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const slotNoted = slot?.inside && Number(payload.followUp ?? 0) === 0
       ? `Noted, ${slot.day} at ${slot.clock}${choseVisit ? " at our experience centre" : " for your free consultation"}.\n${recordedPhone ? `Our team will call you on ${recordedPhone} to confirm it.` : "Our team will confirm it with you here."}`
       : null;
+    // "Tomorrow" with no time: ask the time that day, or say the day is the weekly off.
+    const dayWord = freshText.match(/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i)?.[1]?.toLowerCase() ?? null;
+    const dayName = dayWord === "today" || dayWord === "tomorrow"
+      ? new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", weekday: "long" }).format(new Date(runtime.now().getTime() + (dayWord === "tomorrow" ? 86_400_000 : 0)))
+      : dayWord ? dayWord.charAt(0).toUpperCase() + dayWord.slice(1) : null;
+    const openSet = openDays(agent.workingHours);
+    const hoursText = agent.workingHours.match(/\d{1,2}(?::\d{2})?\s*(?:am|pm)\s*(?:to|-|–)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)/i)?.[0] ?? "10 AM to 7 PM";
+    const dayOnly = dayWord && (agreedConsultation || proceeding) && !prospectBodies.some((body) => requestedTime(body, runtime.now(), agent.workingHours)) && Number(payload.followUp ?? 0) === 0
+      ? openSet && dayName && !openSet.has(dayName)
+        ? `${dayName} is our weekly off. Which other day and time suits you? We are open ${hoursText}.`
+        : `${dayWord === "today" || dayWord === "tomorrow" ? dayWord.charAt(0).toUpperCase() + dayWord.slice(1) : dayName} works. What time suits you, between ${hoursText}?`
+      : null;
     // "How do we get started?": the next step, said plainly by the code.
     const timeGiven = prospectBodies.some((body) => requestedTime(body, runtime.now(), agent.workingHours)?.inside);
     const getStarted = /\b(how (?:do|can|shall|should) (?:we|i) (?:get started|start|begin|proceed|go ahead)|what(?:'s| is) the (?:next step|process)|next steps?|how to (?:start|proceed|begin)|what should i do next)\b/i.test(freshText) && Number(payload.followUp ?? 0) === 0
@@ -3114,7 +3148,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const welcomeBack = onlyHello && introduced && Number(payload.followUp ?? 0) === 0 && !slotNoted && !getStarted
       ? `Hi${firstName ? ` ${firstName}` : ""}, welcome back.\n${pendingAsk ? askQuestion(pendingAsk) : "How can we help you today?"}`
       : null;
-    const withConsult = getStarted
+    const withConsult = dayOnly
+      ? dayOnly
+      : getStarted
       ? getStarted
       : welcomeBack
       ? welcomeBack
@@ -4475,7 +4511,7 @@ const VISIT_OFFER = "Shall I book a free consultation for you, or would you like
 const TYPE_ASK = "Is it an apartment, villa or independent house?";
 
 /** Questions the code writes word for word (checks and confirmations). They are never trimmed or reworded. */
-const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends|is that [^?]+ (?:on|in|at)|we have already done|welcome back|the first step is|our team will call you(?: on \+?\d+)? to confirm it)\b/i;
+const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends|is that [^?]+ (?:on|in|at)|we have already done|welcome back|the first step is|what time suits you|is our weekly off|our team will call you(?: on \+?\d+)? to confirm it)\b/i;
 
 /**
  * Code, not the model, decides what is already known: a name we have is never asked again, and someone

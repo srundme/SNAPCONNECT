@@ -261,6 +261,9 @@ export function preferLatestPlace(current: string, texts: string[]): string {
     if (!PLACE_FIX.test(cleaned) || cleaned.length < 8 || cleaned.length > 160) continue;
     if (/^\s*(?:actually|sorry|i meant)[, ]+\d\s*-?\s*bhk\b/i.test(cleaned)) continue;
     if (notAPlaceSentence(cleaned)) continue;
+    // "Sorry villa" or "actually 4 BHK" corrects the home, not where it is.
+    const rest = cleaned.replace(/^(?:actually|sorry|i meant|not that)[, ]+/i, "").replace(/^(?:it'?s|its|it is)\s+/i, "");
+    if (/^(?:an?\s+)?(?:\d\s*-?\s*bhk\s*)?(?:apartments?|flats?|villas?|independent house|bungalow|duplex|penthouse|row house)\b|^\d\s*-?\s*bhk\b|\b(?:possession|ready|bhk)\b/i.test(rest) && !/\b(?:in|at|near|on)\s+[A-Z]/.test(rest)) continue;
     next = cleaned.replace(/^(?:actually|sorry|i meant)[, ]+/i, "").trim();
   }
   return next;

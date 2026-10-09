@@ -798,7 +798,7 @@ function askedAbout(question: LeadQuestion, aiText: string): boolean {
   return keywords.some((word) => ask.includes(word.slice(0, Math.max(4, word.length - 2))));
 }
 
-const LABEL_FILLER = new Set(["what", "which", "when", "where", "your", "their", "this", "that", "with", "have", "know", "would", "like", "much", "many", "about", "there", "from", "into", "they", "them", "please", "share", "tell", "kind", "type", "home"]);
+const LABEL_FILLER = new Set(["what", "which", "when", "where", "your", "their", "this", "that", "with", "have", "know", "would", "like", "much", "many", "about", "there", "from", "into", "they", "them", "please", "share", "tell", "kind", "type", "home", "help", "more", "also", "photos", "reference"]);
 
 export function scriptQuestionFor(question: LeadQuestion, language?: string | null): string {
   const local = language?.startsWith("Tanglish") ? TANGLISH_QUESTIONS : language?.startsWith("Hinglish") ? HINGLISH_QUESTIONS : null;
@@ -933,7 +933,7 @@ export function dropAnsweredQuestions(reply: string, questions: LeadQuestion[], 
   if (!answered.size) return reply;
   const repeatsAnswer = (sentence: string) => {
     if (!isQuestionSentence(sentence) && !ASKING.test(sentence)) return false;
-    if (/\b(which day|what day|what time|day and time|time suits?|suit (?:u|you)|convenient time|good time)\b/i.test(sentence)) return false;
+    if (/\b(which day|what day|what time|which time|day and time|time suits?|suit (?:u|you)|suits (?:u|you)|convenient time|good time)\b/i.test(sentence)) return false;
     const scored = questions.map((question) => ({ question, score: askScore(question, sentence) })).filter((item) => item.score > 0);
     if (!scored.length) return false;
     const best = Math.max(...scored.map((item) => item.score));

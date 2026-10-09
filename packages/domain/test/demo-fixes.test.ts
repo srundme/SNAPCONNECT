@@ -316,3 +316,17 @@ describe("Gopi 9 Oct fixes", () => {
     expect(dropProcessTalk("We have these details and will take it from here.")).toBe("");
   });
 });
+
+describe("9 Oct full-flow fixes", () => {
+  it("never saves the first message as the style answer because the greeting said 'help'", async () => {
+    const { absorbTranscript } = await import("../src/qualify");
+    const questions = [{ id: "style", kind: "text" as const, label: "Any style you love or must-haves, like more storage or a pooja space? Reference photos help too.", required: false, zohoField: null }];
+    const read = absorbTranscript({ questions, messages: [{ author: "AI", body: "Yes, this is The KariGhars. How can I help with your home?" }, { author: "PROSPECT", body: "Hi varun. I want to do interiors for my house" }], name: null, phoneE164: null, answers: {} });
+    expect(read.answers.style).toBeUndefined();
+  });
+  it("reads 'Sorry villa' as a home correction, not a new property", async () => {
+    const { preferLatestPlace } = await import("../src/sense");
+    expect(preferLatestPlace("Adarsh Palm Retreat, Sarjapur Road", ["Adarsh palm retreat", "Sorry villa", "Home is ready"])).toBe("Adarsh Palm Retreat, Sarjapur Road");
+    expect(preferLatestPlace("Prestige Lakeside", ["sorry, it's in Whitefield, Sobha Dream Acres"])).toBe("it's in Whitefield, Sobha Dream Acres");
+  });
+});
