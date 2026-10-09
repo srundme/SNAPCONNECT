@@ -1,5 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
+import { normalizeMetaPayload } from "@snapsocial/domain";
 import { createPrisma } from "../src/client";
+import { ingestEvents } from "../src/index";
 import { linkByPhoneOrEmail, linkContacts, mergePersonLeads, personLeads, processAvailableJobs, seedDemo, simulationRuntime, suggestMatches, unlinkContact, type Runtime } from "../src/index";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -125,6 +127,35 @@ describeDb("one person across channels", () => {
     expect(upserts[0]!.description).toMatch(/Channels: Instagram, WhatsApp/);
     const waMapping = await db.crmMapping.findUniqueOrThrow({ where: { leadId: whats.lead.id } });
     expect(waMapping.crmId).toBe(firstMapping.crmId);
+  });
+
+  it("continues on Instagram from where WhatsApp left off, without asking anything again", async () => {
+    const { workspace, ig, wa, person } = await setup();
+    await db.channelConnection.update({ where: { id: ig.id }, data: { mode: "SIMULATION" } });
+    const answered = { where: "Adarsh Palm Retreat", home: "4 BHK Villa", when: "Ready", email: "riteesh@example.com" };
+    const whats = await person(wa.id, "WHATSAPP", { displayName: "Riteesh", chosenName: "Riteesh Shetty" }, { answers: answered, phoneE164: "+919663918222" });
+    const sender = `igsid-${Date.now()}`;
+    const insta = await db.contact.create({ data: { workspaceId: workspace.id, connectionId: ig.id, channel: "INSTAGRAM", username: "riteesh.s" } });
+    await db.contactIdentity.create({ data: { workspaceId: workspace.id, connectionId: ig.id, contactId: insta.id, channel: "INSTAGRAM", identityType: "MESSAGING_PARTICIPANT", externalId: sender, evidence: "INBOUND_MESSAGE" } });
+    await db.lead.create({ data: { workspaceId: workspace.id, contactId: insta.id, channel: "INSTAGRAM", connectionId: ig.id, activeContactKey: insta.id, sourceType: "DIRECT_MESSAGE", testRecord: true } });
+    await linkContacts(db, { workspaceId: workspace.id, contactId: insta.id, otherId: whats.contact.id, evidence: "STAFF" });
+
+    const now = new Date(Date.now() - 60_000);
+    const events = normalizeMetaPayload("INSTAGRAM", {
+      object: "instagram",
+      entry: [{ id: ig.externalAccountId, messaging: [{ sender: { id: sender }, recipient: { id: ig.externalAccountId }, timestamp: now.getTime(), message: { mid: `mid-${now.getTime()}`, text: "Hi, I am back about my home interiors" } }] }],
+    }, now);
+    await ingestEvents(db, { channel: "INSTAGRAM", mode: "SIMULATION", events, receivedAt: now });
+    await drain();
+
+    const igLead = await db.lead.findFirstOrThrow({ where: { contactId: insta.id, archivedAt: null } });
+    expect(igLead.answers).toMatchObject(answered);
+    expect(igLead.phoneE164).toBe("+919663918222");
+    const replies = await db.message.findMany({ where: { conversation: { contactId: insta.id }, author: "AI" } });
+    const text = replies.map((reply) => reply.body).join("\n");
+    expect(replies.length).toBeGreaterThan(0);
+    expect(text).not.toMatch(/\b(your name|which area|how many BHK|apartment, villa|possession|which number|email)\b/i);
+    expect(text).toMatch(/free consultation|experience centre/i);
   });
 
   it("staff can separate a contact joined by mistake", async () => {
