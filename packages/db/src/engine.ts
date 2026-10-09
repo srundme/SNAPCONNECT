@@ -140,6 +140,9 @@ import {
   dropEmptyPraise,
   dropUnaskedCallback,
   dropUnaskedPrice,
+  dropTimelinePromise,
+  asksTimeline,
+  TIMELINE_LINE,
   askingPrice,
   readyToProceed,
   mediaNote,
@@ -2938,7 +2941,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? `${offeredBase}\nhere is our experience centre: ${centreLink}`
       : offeredBase;
     // Never a price figure in any reply. A price question gets the quote line instead.
-    const pricedOut = offered ? dropUnaskedPrice(offered) : offered;
+    // Never a promise of how long the work takes: the team decides that after seeing the site.
+    const untimed = offered ? dropTimelinePromise(dropUnaskedPrice(offered)) : offered;
+    const pricedOut = untimed !== null && untimed !== undefined && asksTimeline(freshText) && !/\btimeline depends\b/i.test(untimed)
+      ? beforeQuestion(untimed, TIMELINE_LINE)
+      : untimed;
     // No designer, 3D, layout or site visit talk unless they asked about it.
     const undesigned = pricedOut && !asksAboutDesign(freshText) ? dropDesignTalk(pricedOut) || pricedOut : pricedOut;
     const undeferred = undesigned && materialsNote && !UNLISTED_DETAIL.test(freshText) ? dropDeferral(undesigned) : undesigned;
@@ -2949,7 +2956,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const unpriced = presentHours ? weVoice(dropDayAnnouncement(presentHours)) : presentHours;
     const quotedBefore = spoken.some((message) => message.author === "AI" && /quoted by our team|share the exact budget/i.test(message.body));
     const heldBase = askingPrice(freshText) && !quotedBefore && !/\b(?:quoted by our team|share the exact budget)\b/i.test(unpriced ?? "")
-      ? [unpriced, QUOTE_LINE].filter(Boolean).join("\n")
+      ? beforeQuestion(unpriced ?? "", QUOTE_LINE)
       : unpriced;
     // 8. They said only "house": ask the type once. The BHK is never asked again.
     const homeSaved = questions.filter((question) => /\bbhk\b/i.test(question.label)).map((question) => recordedAnswers[question.id] ?? "").join(" ");
@@ -3264,6 +3271,7 @@ export async function reviewReply(
           "- comment on or praise their answer (\"sounds spacious\", \"lovely project\"), or say something odd or untrue;",
           "- promise a booking, a call time, a date, a discount, or next steps the company did not confirm;",
           `- give a price, a lakh figure or a starting price${input.askingPrice ? " (they asked the price: say we share the exact budget after understanding the requirement, scope and materials)" : ""};`,
+          "- say how many days, weeks or months the work takes;",
           "- talk about designers, 3D designs, layouts or site visits, or use short forms like u, ur, pls, im.",
           `A fix is a short acknowledgement or a direct answer to what they asked, in ${input.language}, warm and plain, one or two short sentences, with NO question and no new facts. If nothing is needed before the question, return an empty lead.`,
         ].filter(Boolean).join("\n"),
@@ -3279,6 +3287,7 @@ export async function reviewReply(
     let newLead = verdict.lead.trim().split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?") && !isQuestionSentence(part)).join(" ");
     newLead = dropEmptyPraise(dropDesignTalk(newLead) || newLead);
     if (!input.askingPrice) newLead = dropUnaskedPrice(newLead);
+    newLead = dropTimelinePromise(newLead);
     newLead = weVoice(newLead).trim();
     const fixed = [newLead, ...questions].filter(Boolean).join("\n");
     if (!fixed) return null;
@@ -3339,6 +3348,7 @@ async function writeOpening(
         workspace.knowledgeBase ? `Knowledge base (the only facts you may use):\n${withoutPrices(workspace.knowledgeBase).slice(0, 12000)}` : "",
         agent.rules ? `Team rules:\n${agent.rules}` : "",
         "Pricing: never give any price, lakh figure or starting price. If they ask, say we will share the exact budget after understanding the requirement, the scope and the materials.",
+        `Time to finish: never say how many days, weeks or months the work takes. If they ask, say: "${TIMELINE_LINE}"`,
         sample
           ? `They commented in ${languageName(sample)}, like "${sample}". Write the whole message, the question too, in exactly that language and style.`
           : "Write the whole message, the question too, in the language and style of their comment: plain English for an English comment; Tamil, Hindi or another Indian language typed in English letters (Tanglish, Hinglish) when they wrote that way.",
@@ -3372,7 +3382,7 @@ async function writeOpening(
     const text = raw.replace(/^(?:message|reply)\s*:\s*/i, "").replace(/^["'“]+|["'”]+$/g, "").trim();
     if (!text || text.length > 700 || !text.includes("?")) return null;
     // The opener never volunteers budget talk, and asks one thing.
-    const trimmed = oneQuestion(askingPrice(input.comment) ? text : dropUnaskedPrice(text));
+    const trimmed = oneQuestion(dropTimelinePromise(askingPrice(input.comment) ? text : dropUnaskedPrice(text)));
     return humanizeReply(trimmed.includes("?") ? trimmed : text);
   } catch (error) {
     console.warn(`Opening message failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -4332,7 +4342,7 @@ const VISIT_OFFER = "Shall I book a free consultation for you, or would you like
 const TYPE_ASK = "Is it an apartment, villa or independent house?";
 
 /** Questions the code writes word for word (checks and confirmations). They are never trimmed or reworded. */
-const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time)\b/i;
+const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends)\b/i;
 
 /**
  * Code, not the model, decides what is already known: a name we have is never asked again, and someone
@@ -4359,6 +4369,14 @@ export function withoutKnownAsks<T extends string | null | undefined>(
     .filter(Boolean)
     .join("\n");
   return (out || "How can we help you today?") as T;
+}
+
+/** Puts an answer line after what was said and before the question, so they get the answer first. */
+export function beforeQuestion(text: string, line: string): string {
+  const parts = text.split(/\n+/).flatMap((row) => row.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/)).map((part) => part.trim()).filter(Boolean);
+  const first = parts.findIndex((part) => isQuestionSentence(part));
+  if (first < 0) return [text.trim(), line].filter(Boolean).join("\n");
+  return [parts.slice(0, first).join(" "), line, parts.slice(first).join(" ")].filter(Boolean).join("\n");
 }
 
 /**

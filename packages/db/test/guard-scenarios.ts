@@ -62,15 +62,21 @@ const ASKS: Record<Lang, Record<string, Array<{ text: string; key: string }>>> =
 };
 
 // What the customer asked and the answer that must survive. `design` = they asked about design, `price` = they asked price.
-type Topic = { ask: string; answer: string; key: string; design?: boolean; price?: boolean; bot?: boolean; material?: boolean };
+type Topic = { ask: string; answer: string; key: string; design?: boolean; price?: boolean; bot?: boolean; material?: boolean; drop?: RegExp };
+const DAYS = /\b\d+\s*(?:(?:to|-|se)\s*\d+\s*)?(?:days?|din|weeks?|months?)\b/i;
 const TOPICS: Record<Lang, Topic[]> = {
   en: [
     { ask: "Which plywood do you use?", answer: "We use BWP grade plywood for the kitchen and bathrooms.", key: "bwp grade plywood", material: true },
     { ask: "What hinges do you use?", answer: "We use Hettich hinges with soft close on every shutter.", key: "hettich hinges", material: true },
     { ask: "Is there a warranty?", answer: "The modular kitchen comes with a lifetime warranty on the hardware.", key: "lifetime warranty", material: true },
-    { ask: "How long does it take?", answer: "A full home usually takes about 60 to 90 days.", key: "60 to 90 days" },
-    { ask: "How long will the work take?", answer: "When the site is ready, we finish a full home in about 75 days.", key: "75 days" },
-    { ask: "How fast can you finish?", answer: "Can be done in about 60 days after you sign off.", key: "60 days" },
+    // The client's rule: never commit to how long the work takes. The model's promise must go, the team line must come.
+    { ask: "How long does it take?", answer: "A full home usually takes about 60 to 90 days.", key: "timeline depends", drop: DAYS },
+    { ask: "How long will the work take?", answer: "When the site is ready, we finish a full home in about 75 days.", key: "timeline depends", drop: DAYS },
+    { ask: "How fast can you finish?", answer: "Can be done in about 60 days after you sign off.", key: "timeline depends", drop: DAYS },
+    // Answers that start like questions must still reach them.
+    { ask: "Do you do civil work too?", answer: "Can handle the full home, from civil changes to the final cleaning.", key: "civil changes", },
+    { ask: "Can I see your materials?", answer: "When you visit the experience centre, you can see every material we use.", key: "see every material" },
+    { ask: "How long is the warranty?", answer: "The hardware has a 10 year warranty.", key: "10 year warranty", material: true },
     { ask: "Do you work in Whitefield?", answer: "We work across Bengaluru, including Whitefield and Sarjapur.", key: "across bengaluru" },
     { ask: "Do you do villas?", answer: "Yes, we do villas and independent houses too.", key: "villas and independent houses" },
     { ask: "What is the price for 3bhk?", answer: QUOTE_LINE, key: "exact budget", price: true },
@@ -84,12 +90,12 @@ const TOPICS: Record<Lang, Topic[]> = {
   ],
   hinglish: [
     { ask: "Plywood kaunsa use karte ho?", answer: "Hum kitchen mein BWP plywood use karte hain.", key: "bwp plywood", material: true },
-    { ask: "Kitna time lagega?", answer: "Pura ghar lagbhag 60 se 90 din mein ho jata hai.", key: "60 se 90 din" },
+    { ask: "Kitna time lagega?", answer: "Pura ghar lagbhag 60 se 90 din mein ho jata hai.", key: "timeline depends", drop: DAYS },
     { ask: "Price kya hai 3bhk ka?", answer: QUOTE_LINE, key: "exact budget", price: true },
   ],
   tanglish: [
     { ask: "Enna plywood use panreenga?", answer: "Kitchen ku BWP plywood dhan use panrom.", key: "bwp plywood", material: true },
-    { ask: "Evlo naal aagum?", answer: "Full veedu 60 to 90 days la mudichiduvom.", key: "60 to 90 days" },
+    { ask: "Evlo naal aagum?", answer: "Full veedu 60 to 90 days la mudichiduvom.", key: "timeline depends", drop: DAYS },
   ],
 };
 
@@ -121,6 +127,7 @@ const BAD_EN: Bad[] = [
   { name: "team-voice", text: "The team will confirm the details.", drop: /\bthe team will\b/i, keep: "confirm the details" },
   { name: "short-forms", text: "Pls share ur photos if u have them.", drop: /\b(pls|ur|u)\b/i, keep: "photos" },
   { name: "callback", text: "Our team will call you shortly.", drop: /will call you shortly/i },
+  { name: "timeline", text: "We usually finish a full home in 45 days.", drop: /45 days/i },
 ];
 const BAD_HINGLISH: Bad[] = [
   { name: "female-hindi", text: "Main aapko details bataungi.", drop: /bataungi/i, keep: "bataunga" },
@@ -174,6 +181,7 @@ export function build(count: number): Scenario[] {
     if (topic) {
       parts.push(topic.answer);
       mustKeep.push(topic.key);
+      if (topic.drop) mustDrop.push({ name: "timeline", re: topic.drop });
     }
     // 0 to 2 bad insertions, plus the structural risks.
     const bads = lang === "en" ? BAD_EN : lang === "hinglish" ? BAD_HINGLISH : [];

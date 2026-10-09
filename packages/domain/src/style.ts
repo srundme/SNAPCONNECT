@@ -230,6 +230,29 @@ export function dropUnaskedPrice(text: string): string {
   return kept;
 }
 
+/** The client's line when they ask how long the work takes. The time is the team's call, never Varun's. */
+export const TIMELINE_LINE = "The timeline depends on the site and the scope of work, so we will confirm it once we understand your requirement.";
+
+const DURATION = /\b(?:\d+(?:\s*(?:to|-|–|or|se)\s*\d+)?|a|one|two|three|four|five|six|few|a few|couple of)\s*(?:working\s+)?(?:days?|weeks?|months?|din|dino|naal|naatkal|maasam|masam|mahine|mahina|hafte)\b/i;
+const WORK_TIME = /\b(take|takes|taking|took|finish\w*|complet\w*|done|deliver\w*|handover|hand over|ready|execut\w*|install\w*|within|turnaround|lagega|lagta|lag jata|ho jata|ho jayega|mudich\w*|mudiyum|aagum|agum|kuduthiduvom|work|project)\b/i;
+
+/** True when they ask how long the work will take. */
+export function asksTimeline(text: string): boolean {
+  return /\b(how long|how much time|how many (?:days|weeks|months)|time ?line|duration|how fast|how soon|deadline|when will (?:it|you|the work|everything) (?:be )?(?:finish|complete|done|ready)|kitna time|kitne din|kitna samay|evlo naal|evlo days|evlo time|eppo mudiyum|eppo mudi)\b/i.test(text);
+}
+
+/**
+ * Varun never commits to how long the work takes: it depends on the site, and the team decides it.
+ * Drops any statement that promises a duration ("about 60 to 90 days", "done in 6 weeks"). Questions stay.
+ */
+export function dropTimelinePromise(text: string): string {
+  return text
+    .split(/\n+/)
+    .map((line) => line.split(/(?<=[.!?।])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => isQuestionSentence(part) || !(DURATION.test(part) && WORK_TIME.test(part))).join(" ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 /** Removes a promised callback the customer did not ask for. Keeps the rest of the reply. */
 export function dropUnaskedCallback(text: string, proceeding: boolean): string {
   if (proceeding || !/\b(?:team|we) will call\b/i.test(text)) return text;

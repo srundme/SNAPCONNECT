@@ -148,6 +148,8 @@ function check(scenario: Scenario, sent: string) {
     const question = QUESTIONS.find((item) => item.id === id)!;
     if (asks.some((ask) => (id === "name" ? /\byour (?:good )?name\b|\bwhat should i call you\b/i.test(ask) : questionAsked(question, ask)))) out.push({ ...base, problem: `re-asked collected: ${id}` });
   }
+  const lastAsk = sent.lastIndexOf("?");
+  for (const answer of ["timeline depends", "exact budget"]) if (lastAsk >= 0 && sent.toLowerCase().indexOf(answer) > lastAsk) out.push({ ...base, problem: "answer after the question" });
   if (/\b(lakh|crore|starts? from)\b|₹/i.test(sent)) out.push({ ...base, problem: "price sent" });
   return out;
 }

@@ -247,3 +247,18 @@ describe("an area is not a property", () => {
     expect(builderOnly("Concord project")).toBe("Concorde");
   });
 });
+
+describe("never commits to how long the work takes", () => {
+  it("drops duration promises and keeps everything else", async () => {
+    const { dropTimelinePromise, asksTimeline } = await import("../src/style");
+    expect(dropTimelinePromise("A full home usually takes about 60 to 90 days. Which area is it in?")).toBe("Which area is it in?");
+    expect(dropTimelinePromise("We can get it done in 6 weeks.")).toBe("");
+    expect(dropTimelinePromise("Pura ghar 60 se 90 din mein ho jata hai.")).toBe("");
+    expect(dropTimelinePromise("The hardware has a 10 year warranty.")).toBe("The hardware has a 10 year warranty.");
+    expect(dropTimelinePromise("Got it, possession in 3 months.")).toBe("Got it, possession in 3 months.");
+    expect(dropTimelinePromise("We are open 7 days a week except Monday.")).toBe("We are open 7 days a week except Monday.");
+    expect(asksTimeline("how long will it take?")).toBe(true);
+    expect(asksTimeline("kitna time lagega")).toBe(true);
+    expect(asksTimeline("which plywood do you use?")).toBe(false);
+  });
+});

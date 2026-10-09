@@ -29,8 +29,11 @@ import {
   naturalAcknowledgement,
   questionAsked,
   weVoice,
+  asksTimeline,
+  dropTimelinePromise,
+  TIMELINE_LINE,
 } from "@snapsocial/domain";
-import { oneQuestion, withoutKnownAsks } from "../src/index";
+import { beforeQuestion, oneQuestion, withoutKnownAsks } from "../src/index";
 
 import { build, QUESTIONS, QUOTE_LINE, type Lang, type Scenario } from "./guard-scenarios";
 
@@ -53,11 +56,14 @@ const STAGES: Stage[] = [
   { name: "dropEmptyPraise", run: (text) => dropEmptyPraise(text) },
   { name: "easeAddress+switches", run: (text, s) => applyReplySwitches(easeAddress(text, s.metBefore ? EARLIER : []), { laughter: false, emojis: false, addressSirMam: true }) },
   { name: "dropUnaskedCallback", run: (text) => dropUnaskedCallback(text, false) },
-  { name: "dropUnaskedPrice", run: (text) => dropUnaskedPrice(text) },
+  { name: "dropUnaskedPrice+dropTimelinePromise", run: (text, s) => {
+    const untimed = dropTimelinePromise(dropUnaskedPrice(text));
+    return asksTimeline(s.customer) && !/timeline depends/i.test(untimed) ? beforeQuestion(untimed, TIMELINE_LINE) : untimed;
+  } },
   { name: "dropDesignTalk", run: (text, s) => (asksAboutDesign(s.customer) ? text : dropDesignTalk(text) || text) },
   { name: "dropDeferral", run: (text, s) => (s.material ? dropDeferral(text) : text) },
   { name: "weVoice+dropDayAnnouncement", run: (text) => weVoice(dropDayAnnouncement(text)) },
-  { name: "quoteLine", run: (text, s) => (askingPrice(s.customer) && !/exact budget/i.test(text) ? [text, QUOTE_LINE].filter(Boolean).join("\n") : text) },
+  { name: "quoteLine", run: (text, s) => (askingPrice(s.customer) && !/exact budget/i.test(text) ? beforeQuestion(text, QUOTE_LINE) : text) },
   {
     name: "withoutKnownAsks",
     run: (text, s) => withoutKnownAsks(text, {
@@ -97,6 +103,8 @@ function run(scenario: Scenario): Failure[] {
   // "…? And what is the property name?" is one question in two parts.
   const distinct = new Set(asks.filter((ask) => !/^(?:and|also|or|aur)\b/i.test(ask.trim())).map(detail)).size;
   if (distinct > 1) failures.push({ ...base, problem: `${distinct} questions sent`, stage: "-" });
+  const lastAsk = text.lastIndexOf("?");
+  for (const answer of ["timeline depends", "exact budget"]) if (lastAsk >= 0 && text.toLowerCase().indexOf(answer) > lastAsk) failures.push({ ...base, problem: "answer after the question", stage: "-" });
   if (!text.trim()) failures.push({ ...base, problem: "empty reply", stage: "-" });
   for (const id of scenario.collected) {
     const question = QUESTIONS.find((item) => item.id === id)!;
