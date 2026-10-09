@@ -32,6 +32,7 @@ export type BrainAnswer = {
   handoff: boolean;
   flag: string | null;
   opt_out: boolean;
+  quiet?: boolean;
 };
 
 export const BRAIN_TOOL_SCHEMA = {
@@ -51,6 +52,7 @@ export const BRAIN_TOOL_SCHEMA = {
     handoff: { type: "boolean" },
     flag: { type: ["string", "null"] },
     opt_out: { type: "boolean" },
+    quiet: { type: "boolean", description: "True only when their latest is just a reaction after your closing line: nothing is sent." },
   },
   required: ["bubbles", "details", "declined", "follow_up_at", "new_home", "offer_choice", "slot", "handoff", "flag", "opt_out"],
 } as const;

@@ -4295,7 +4295,11 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   // Only punctuation and case change; every word is Claude's.
   const keepCase = [workspace.brandName, workspace.agentName ?? "", ...workspace.brandName.split(/\s+/), "BHK", "AM", "PM"];
   const texted = (bubble: string) => fullWords(casualText(humanizeReply(bubble).replace(/(?<=[a-z])-(?=[a-z])/gi, " "), keepCase));
-  const bubbles = answer.bubbles.map((bubble) => bubble.trim()).filter(Boolean).slice(0, 3).map((bubble) => (agent.casualTexting ? texted(bubble) : bubble));
+  // A bare reaction to the closing line needs no answer: the chat already ended with ours.
+  const onlyReactions = latest.split("\n").every((line) => /^\(Reacted .* to your message\)$/.test(line.trim()));
+  const quiet = answer.quiet === true && onlyReactions;
+  if (quiet) diagnostics.push("Quiet: a reaction to the closing line, nothing sent");
+  const bubbles = quiet ? [] : answer.bubbles.map((bubble) => bubble.trim()).filter(Boolean).slice(0, 3).map((bubble) => (agent.casualTexting ? texted(bubble) : bubble));
   // A person reads the message, then types each bubble; Claude's thinking time counts toward the first one.
   const typingPause = (text: string) => Math.min(12_000, Math.max(2_000, 1_200 + text.length * 130));
   const readPause = Math.min(6_000, 800 + readingMs(latest));
