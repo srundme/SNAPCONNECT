@@ -281,3 +281,16 @@ describe("no back-office narration", () => {
     expect(dropProcessTalk("We have already done a 4 BHK home in Adarsh Palm Retreat.")).toBe("We have already done a 4 BHK home in Adarsh Palm Retreat.");
   });
 });
+
+describe("questions without a reason tacked on", () => {
+  it("asks plainly", async () => {
+    const { dropAskReason } = await import("../src/style");
+    expect(dropAskReason("May I know your name so I can suggest what works best for your home?")).toBe("May I know your name?");
+    expect(dropAskReason("Got it. Which area is your home in, to help you better?")).toBe("Got it. Which area is your home in?");
+    expect(dropAskReason("Could you share your number so that our team can call you?")).toBe("Could you share your number?");
+    expect(dropAskReason("Could you share the email for our team to forward the details?")).toBe("Could you share the email for our team to forward the details?");
+    expect(dropAskReason(VISIT)).toBe(VISIT);
+    expect(dropAskReason("We do villas too so we can help.")).toBe("We do villas too so we can help.");
+  });
+});
+const VISIT = "Shall I book a free consultation for you, or would you like to visit our experience centre?";

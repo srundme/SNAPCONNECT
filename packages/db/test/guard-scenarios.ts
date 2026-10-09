@@ -218,7 +218,14 @@ export function build(count: number): Scenario[] {
         kind += "+second-question";
       }
     }
-    parts.push(ask.text);
+    // The model sometimes tacks a reason on: "…so I can suggest what works best for your home?"
+    if (lang === "en" && random() < 0.12 && ask.text.endsWith("?") && next !== "done") {
+      parts.push(ask.text.replace(/\?$/, " so I can suggest what works best for your home?"));
+      mustDrop.push({ name: "ask-reason", re: /so I can suggest/i });
+      kind += "+reason";
+    } else {
+      parts.push(ask.text);
+    }
     out.push({
       id,
       lang,

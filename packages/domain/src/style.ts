@@ -268,6 +268,23 @@ export function dropProcessTalk(text: string): string {
     .join("\n");
 }
 
+// "May I know your name so I can suggest what works best for your home?": a person just asks.
+const ASK_REASON = /,?\s+(?:so(?: that)? (?:i|we|our team|the team) (?:can|could|may|will|would)|to (?:help|assist|guide|serve|understand|recommend|suggest)(?: you)?(?: better)?|in order to|for (?:me|us) to (?:help|suggest|guide|understand|recommend)|which will help|that will help|this will help|to better)\b[^?]*(?=\?)/i;
+
+/** Takes the reason off a question ("…so I can suggest what works best"), keeping the question itself. */
+export function dropAskReason(text: string): string {
+  return text
+    .split(/\n+/)
+    .map((line) => line.split(/(?<=[.!?।])\s+|(?<=\.\.)(?=[^\s.])/).map((part) => {
+      if (!part.includes("?")) return part;
+      const trimmed = part.replace(ASK_REASON, "");
+      // Keep the original when the reason was the whole question.
+      return trimmed.replace(/\?$/, "").trim().split(/\s+/).length >= 3 ? trimmed : part;
+    }).join(" ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 /** Removes a promised callback the customer did not ask for. Keeps the rest of the reply. */
 export function dropUnaskedCallback(text: string, proceeding: boolean): string {
   if (proceeding || !/\b(?:team|we) will call\b/i.test(text)) return text;

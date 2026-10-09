@@ -142,6 +142,7 @@ import {
   dropUnaskedPrice,
   dropTimelinePromise,
   dropProcessTalk,
+  dropAskReason,
   asksTimeline,
   TIMELINE_LINE,
   askingPrice,
@@ -2972,7 +2973,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : offeredBase;
     // Never a price figure in any reply. A price question gets the quote line instead.
     // Never a promise of how long the work takes: the team decides that after seeing the site.
-    const untimed = offered ? dropProcessTalk(dropTimelinePromise(dropUnaskedPrice(offered))) || offered : offered;
+    const untimed = offered ? dropAskReason(dropProcessTalk(dropTimelinePromise(dropUnaskedPrice(offered))) || offered) : offered;
     const pricedOut = untimed !== null && untimed !== undefined && asksTimeline(freshText) && !/\btimeline depends\b/i.test(untimed)
       ? beforeQuestion(untimed, TIMELINE_LINE)
       : untimed;
@@ -3323,7 +3324,7 @@ export async function reviewReply(
     let newLead = verdict.lead.trim().split(/(?<=[.!?])\s+/).filter((part) => !part.includes("?") && !isQuestionSentence(part)).join(" ");
     newLead = dropEmptyPraise(dropDesignTalk(newLead) || newLead);
     if (!input.askingPrice) newLead = dropUnaskedPrice(newLead);
-    newLead = dropProcessTalk(dropTimelinePromise(newLead));
+    newLead = dropAskReason(dropProcessTalk(dropTimelinePromise(newLead)));
     newLead = weVoice(newLead).trim();
     const fixed = [newLead, ...questions].filter(Boolean).join("\n");
     if (!fixed) return null;
@@ -3418,7 +3419,7 @@ async function writeOpening(
     const text = raw.replace(/^(?:message|reply)\s*:\s*/i, "").replace(/^["'“]+|["'”]+$/g, "").trim();
     if (!text || text.length > 700 || !text.includes("?")) return null;
     // The opener never volunteers budget talk, and asks one thing.
-    const trimmed = oneQuestion(dropTimelinePromise(askingPrice(input.comment) ? text : dropUnaskedPrice(text)));
+    const trimmed = oneQuestion(dropAskReason(dropTimelinePromise(askingPrice(input.comment) ? text : dropUnaskedPrice(text))));
     return humanizeReply(trimmed.includes("?") ? trimmed : text);
   } catch (error) {
     console.warn(`Opening message failed: ${error instanceof Error ? error.message : String(error)}`);

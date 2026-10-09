@@ -31,6 +31,8 @@ import {
   weVoice,
   asksTimeline,
   dropTimelinePromise,
+  dropProcessTalk,
+  dropAskReason,
   TIMELINE_LINE,
 } from "@snapsocial/domain";
 import { beforeQuestion, oneQuestion, withoutKnownAsks } from "../src/index";
@@ -57,7 +59,7 @@ const STAGES: Stage[] = [
   { name: "easeAddress+switches", run: (text, s) => applyReplySwitches(easeAddress(text, s.metBefore ? EARLIER : []), { laughter: false, emojis: false, addressSirMam: true }) },
   { name: "dropUnaskedCallback", run: (text) => dropUnaskedCallback(text, false) },
   { name: "dropUnaskedPrice+dropTimelinePromise", run: (text, s) => {
-    const untimed = dropTimelinePromise(dropUnaskedPrice(text));
+    const untimed = dropAskReason(dropProcessTalk(dropTimelinePromise(dropUnaskedPrice(text))) || text);
     return asksTimeline(s.customer) && !/timeline depends/i.test(untimed) ? beforeQuestion(untimed, TIMELINE_LINE) : untimed;
   } },
   { name: "dropDesignTalk", run: (text, s) => (asksAboutDesign(s.customer) ? text : dropDesignTalk(text) || text) },
