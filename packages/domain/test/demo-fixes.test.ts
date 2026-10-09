@@ -330,3 +330,10 @@ describe("9 Oct full-flow fixes", () => {
     expect(preferLatestPlace("Prestige Lakeside", ["sorry, it's in Whitefield, Sobha Dream Acres"])).toBe("it's in Whitefield, Sobha Dream Acres");
   });
 });
+
+describe("no empty promises", () => {
+  it("drops 'I will check that for you'", async () => {
+    const { dropProcessTalk } = await import("../src/style");
+    expect(dropProcessTalk("I will check that for you.\nCould you share your personal or work email?")).toBe("Could you share your personal or work email?");
+  });
+});

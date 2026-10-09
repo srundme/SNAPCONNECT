@@ -2021,7 +2021,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
               emailAsk = `Just to confirm, is your email ${email}?`;
             } else {
               delete absorbed.answers[emailQuestion.id];
-              emailAsk = "That email doesn't look right. Could you share the email you actually use?";
+              // A second try is worded differently, or it is dropped as a repeat of the first.
+              emailAsk = checksSoFar === 0
+                ? "That email doesn't look right. Could you share the email you actually use?"
+                : "That one doesn't look right either. Could you share your personal or work email, the one you check every day?";
             }
           } else if (problem && problem.kind !== "typo") {
             // Asked twice already: never loop. Keep it, marked unverified, and out of Zoho's Email field.
@@ -4481,7 +4484,7 @@ const VISIT_OFFER = "Shall I book a free consultation for you, or would you like
 const TYPE_ASK = "Is it an apartment, villa or independent house?";
 
 /** Questions the code writes word for word (checks and confirmations). They are never trimmed or reworded. */
-const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends|is that [^?]+ (?:on|in|at)|we have already done|welcome back|the first step is|what time suits you|is our weekly off|our team will call you(?: on \+?\d+)? to confirm it)\b/i;
+const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your name as|am I chatting with|which property is it|just to confirm, is your email|that one doesn't look right either|which [a-z ]+ property is it|is yours an? [a-z ]+ there or|shall I book a free consultation|not a real home|which day and time|timeline depends|is that [^?]+ (?:on|in|at)|we have already done|welcome back|the first step is|what time suits you|is our weekly off|our team will call you(?: on \+?\d+)? to confirm it)\b/i;
 
 const plainKey = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 

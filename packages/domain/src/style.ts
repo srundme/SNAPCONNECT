@@ -256,7 +256,7 @@ export function dropTimelinePromise(text: string): string {
 }
 
 // "I have saved your choice here so we can confirm": narrating the back office, which a salesperson never says.
-const PROCESS_TALK = /\bwe (?:already )?have (?:that|it|this|these details|the basics|your details)\b[^.?!]*[.!]?\s*$|\b(?:i|we)(?:'ve|\s+have|\s+had)?\s+(?:already\s+)?(?:saved|noted(?:\s+down)?|recorded|updated|stored|logged|captured|added|made a note of|passed (?:it|this|that) (?:on|to))\b[^.?!]*|\bso (?:we|the team) can confirm\b\s*[.!]?$/i;
+const PROCESS_TALK = /\b(?:i|we)(?:'ll|\s+will)\s+(?:check|look into|get back (?:to you )?on)\s+(?:that|this|it)(?:\s+for you)?\s*[.!]?\s*$|\bwe (?:already )?have (?:that|it|this|these details|the basics|your details)\b[^.?!]*[.!]?\s*$|\b(?:i|we)(?:'ve|\s+have|\s+had)?\s+(?:already\s+)?(?:saved|noted(?:\s+down)?|recorded|updated|stored|logged|captured|added|made a note of|passed (?:it|this|that) (?:on|to))\b[^.?!]*|\bso (?:we|the team) can confirm\b\s*[.!]?$/i;
 
 /** Drops sentences that only narrate saving or noting things. Keeps a sentence with a real time ("noted 4 PM tomorrow"). */
 export function dropProcessTalk(text: string): string {
