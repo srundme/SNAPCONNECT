@@ -47,6 +47,12 @@ describe("material questions get only the matching facts", () => {
     expect(dropDeferral("The team can confirm the exact specifications")).toBe("The team can confirm the exact specifications");
   });
 
+  it("never guesses a thickness the sheet does not give", () => {
+    const line = materialLine("Dono ke liye kaunsi thickness use hoti hai — 18mm ya 19mm? Aur kya aap quotation mein exact brand, grade aur thickness mention karoge?", materials, warranty)!;
+    expect(line).toMatch(/Never guess it/);
+    expect(line).not.toMatch(/do not add that the team will confirm/);
+  });
+
   it("stays out of chats that are not about materials", () => {
     expect(materialLine("I want interiors for my new 3 BHK house", materials, warranty)).toBeNull();
     expect(materialLine("my flat is in Whitefield", materials, warranty)).toBeNull();

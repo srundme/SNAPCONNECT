@@ -106,6 +106,8 @@ import {
   phoneProblem,
   dropRepeatedSentences,
   fullWords,
+  UNLISTED_DETAIL,
+  maleHindi,
   hindiEndings,
   dropDeferral,
   profilePersonName,
@@ -2622,7 +2624,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : askedNumber;
     const inLanguageBase = numbered && !languageSample ? dropIndicSentences(numbered) || numbered : numbered;
     // A Hinglish chat never gets Tamil endings like "kitchen la".
-    const inLanguage = inLanguageBase && languageSample && /hinglish|hindi/i.test(languageName(languageSample)) ? hindiEndings(inLanguageBase) : inLanguageBase;
+    const inLanguage = inLanguageBase && languageSample && /hinglish|hindi/i.test(languageName(languageSample)) ? maleHindi(hindiEndings(inLanguageBase)) : inLanguageBase;
     const greetedOnce = inLanguage && earlierReplies.length ? dropRepeatGreeting(inLanguage) : inLanguage;
     const newName = recordedName && recordedName !== conversation.contact.chosenName ? recordedName : null;
     const greeted = greetedOnce && !languageSample && !situationHandoff ? naturalAcknowledgement(greetedOnce, earlierReplies, newName) : greetedOnce;
@@ -2704,7 +2706,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const pricedOut = offered ? dropUnaskedPrice(offered) : offered;
     // No designer, 3D, layout or site visit talk unless they asked about it.
     const undesigned = pricedOut && !asksAboutDesign(freshText) ? dropDesignTalk(pricedOut) || pricedOut : pricedOut;
-    const unpriced = undesigned && materialsNote ? dropDeferral(undesigned) : undesigned;
+    const unpriced = undesigned && materialsNote && !UNLISTED_DETAIL.test(freshText) ? dropDeferral(undesigned) : undesigned;
     const quotedBefore = spoken.some((message) => message.author === "AI" && /quoted by our team/i.test(message.body));
     const heldBase = askingPrice(freshText) && !quotedBefore && !/\bquoted by our team\b/i.test(unpriced ?? "")
       ? [unpriced, QUOTE_LINE].filter(Boolean).join("\n")

@@ -167,6 +167,15 @@ export function hindiEndings(text: string): string {
     .replace(/(\p{L}{3,})\s+ku\b/giu, "$1 ko");
 }
 
+/** Varun is a man: first-person Hindi verbs take the male form, "karta hoon", "bataunga", never "karti hoon", "bataungi". */
+export function maleHindi(text: string): string {
+  const am = "(hoon|hun|hu|hoo)";
+  return text
+    .replace(new RegExp(`\\b(\\p{L}+)ti\\s+${am}\\b`, "giu"), "$1ta $2")
+    .replace(new RegExp(`\\b(rahi|gayi|gai|chuki|paayi|payi)\\s+${am}\\b`, "giu"), (_match, verb: string, be: string) => `${({ rahi: "raha", gayi: "gaya", gai: "gaya", chuki: "chuka", paayi: "paaya", payi: "paaya" } as Record<string, string>)[verb.toLowerCase()] ?? verb} ${be}`)
+    .replace(/\b(?!lungi\b)(\p{L}{2,})ungi\b/giu, "$1unga");
+}
+
 /** The knowledge base without its price lines: prices are never told to customers, so the model never sees them. */
 export function withoutPrices(text: string): string {
   return text

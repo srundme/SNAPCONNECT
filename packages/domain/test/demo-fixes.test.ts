@@ -147,3 +147,14 @@ describe("Hinglish endings", () => {
     expect(hindiEndings("la la land")).toBe("la la land");
   });
 });
+
+describe("Varun speaks Hindi as a man", () => {
+  it("turns female first-person forms into male ones", async () => {
+    const { maleHindi } = await import("../src/index");
+    expect(maleHindi("Main team se check karti hoon aur aapko bataungi")).toBe("Main team se check karta hoon aur aapko bataunga");
+    expect(maleHindi("main abhi dekh rahi hoon")).toBe("main abhi dekh raha hoon");
+    expect(maleHindi("main kar sakti hu")).toBe("main kar sakta hu");
+    expect(maleHindi("main bhejungi details")).toBe("main bhejunga details");
+    expect(maleHindi("Main team se check karta hoon")).toBe("Main team se check karta hoon");
+  });
+});
