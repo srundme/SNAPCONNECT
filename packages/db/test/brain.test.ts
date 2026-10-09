@@ -18,12 +18,15 @@ describeDb("Claude brain: facts in, words out", () => {
   const base = simulationRuntime();
   const calls: Array<{ system: string; messages: unknown[] }> = [];
   let scripted: Record<string, unknown>[] = [];
+  // Runs once, while Claude is "writing": a customer message that crosses the reply.
+  let whileWriting: (() => Promise<void>) | null = null;
   const runtime: Runtime = {
     ...base,
     claude: {
       model: "claude-test",
       async text() { return ""; },
       async json<T>(call: { system: unknown; messages: unknown[] }) {
+        if (whileWriting) { const send = whileWriting; whileWriting = null; await send(); }
         calls.push({ system: typeof call.system === "string" ? call.system : (call.system as Array<{ text: string }>).map((block) => block.text).join("\n"), messages: call.messages });
         return (scripted.shift() ?? { bubbles: ["Thank you."], details: {}, offer_choice: null, slot: null, handoff: false, flag: null, opt_out: false }) as T;
       },
@@ -121,6 +124,20 @@ describeDb("Claude brain: facts in, words out", () => {
     await say("Experience centre, tomorrow 4 pm", [reply(["Noted, tomorrow at 4 PM. Our team will call you to confirm."], { offer_choice: "experience_centre", slot: "tomorrow 4 pm" })]);
     expect(await db.teamAlert.count({ where: { conversationId: conversation.id, kind: "meeting" } })).toBe(1);
     expect(await db.teamAlert.count({ where: { conversationId: conversation.id, kind: "slot" } })).toBe(1);
+
+    // Crossed messages: a question that arrives while Claude is writing makes that reply out of date; it is not sent,
+    // and the next reply answers the new question.
+    const crossAt = new Date(Date.now() + 2_000);
+    whileWriting = async () => {
+      const events = normalizeMetaPayload("WHATSAPP", {
+        object: "whatsapp_business_account",
+        entry: [{ id: `waba-${stamp}`, changes: [{ field: "messages", value: { messaging_product: "whatsapp", metadata: { display_phone_number: "919000000001", phone_number_id: wa.externalAccountId }, contacts: [{ profile: { name: "Riteesh" }, wa_id: waId }], messages: [{ from: waId, id: `wamid.${stamp}.cross`, timestamp: String(Math.floor(crossAt.getTime() / 1000)), type: "text", text: { body: "First, what is the timeline?" } }] } }] }],
+      }, crossAt);
+      await ingestEvents(db, { channel: "WHATSAPP", mode: "SIMULATION", events, receivedAt: crossAt });
+    };
+    const crossed = await say("I have few doubts", [reply(["Sure sir, please share your doubts."]), reply(["The timeline depends on the site and the scope of work, sir."])]);
+    expect(crossed.join(" ")).not.toMatch(/please share your doubts/i);
+    expect(crossed.join(" ")).toMatch(/timeline depends/i);
 
     // Varun always has the last word: a closing "thank you" gets a reply.
     await db.lead.updateMany({ where: { contactId: contact.id }, data: { crmState: "SYNCED", qualification: "QUALIFIED" } });

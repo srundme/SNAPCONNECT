@@ -4220,6 +4220,9 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     await db.outboxJob.create({ data: { workspaceId: workspace.id, type: "CRM_SYNC", payload: { leadId: lead.id, contactId: conversation.contactId } } });
   }
 
+  // Messages that arrived while Claude was writing come in now; if there are any, this reply is out of date and the
+  // next turn answers everything together.
+  await takeArrivedMessages(db, runtime);
   // Send: the same bubbles, typing delay and voice as before.
   const fresh = await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } });
   if (fresh.revision !== expectedRevision || fresh.owner !== "AI") {
@@ -4274,7 +4277,15 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
         if (agent.typingDelay) {
           const wait = index === 0 ? Math.max(800, readPause + typingPause(bubble) - (Date.now() - started)) : 700 + typingPause(bubble);
           await signalTyping(db, runtime, conversation, connection).catch(() => undefined);
-          await runtime.pause?.(wait);
+          // A person stops typing when a new message comes in: check every 1.5 seconds while "typing".
+          for (let waited = 0; waited < wait; waited += 1_500) {
+            await runtime.pause?.(Math.min(1_500, wait - waited));
+            await takeArrivedMessages(db, runtime);
+            const current = await db.conversation.findUnique({ where: { id: conversation.id }, select: { revision: true } });
+            if (current?.revision !== expectedRevision) break;
+          }
+        } else {
+          await takeArrivedMessages(db, runtime);
         }
         const now = await db.conversation.findUnique({ where: { id: conversation.id }, select: { revision: true, owner: true } });
         if (!now || now.revision !== expectedRevision || now.owner !== "AI") {
