@@ -157,7 +157,7 @@ import {
   CALLBACK_TIME_KEY,
 } from "@snapsocial/domain";
 import { type Claude, type ClaudeMessage } from "@snapsocial/integrations";
-import { BRAIN_TOOL_SCHEMA, checksOnLatest, knowledgeBlock, placeFacts, readDetails, roleOf, type BrainAnswer } from "./brain-turn";
+import { BRAIN_TOOL_SCHEMA, checksOnLatest, knowledgeBlock, placeFacts, readDetails, roleOf, ruleBreaks, type BrainAnswer } from "./brain-turn";
 import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, neutralDirection, speechLocale, speechScript, speechSentences, zohoAdapter, ZohoOAuthError, type DocumentReader, type LlmProvider, type SendResult, type Speaker, type VoiceDirection, type ZohoAdapter } from "@snapsocial/integrations";
 import { randomBytes } from "node:crypto";
 import type { Db } from "./client";
@@ -4084,6 +4084,24 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   });
 
   const diagnostics: string[] = ["Claude brain"];
+  // Cost guard: a chat that has had this many replies in 24 hours goes to the team instead (no spam stop otherwise).
+  const repliesToday = await db.aiRun.count({ where: { conversationId: conversation.id, valid: true, diagnostic: { startsWith: "Claude brain" }, createdAt: { gte: new Date(runtime.now().getTime() - 86_400_000) } } });
+  if (repliesToday >= agent.dailyReplyCap) {
+    await handoff(db, conversation.id, lead.id, `Reached ${agent.dailyReplyCap} replies in 24 hours.`);
+    await alertTeam("person", `🙋 ${name ?? conversation.contact.displayName ?? "A customer"} has had ${repliesToday} replies from Varun today. Please take this chat.`);
+    await db.aiRun.create({ data: { workspaceId: workspace.id, conversationId: conversation.id, model: claude.model, simulated: false, latencyMs: 0, valid: false, diagnostic: `Daily reply cap ${agent.dailyReplyCap} reached; handed to the team.` } });
+    return "done";
+  }
+  // What Claude may quote: links, numbers and brands only from what we know.
+  const otherFirmMatch = latest.match(/\b(?:betw\w*n (?:you|u|karighars|the karighars) (?:and|&)|difference (?:with|from)|better than|than|vs\.?|versus|compared (?:to|with))\s+(?:the\s+)?([A-Za-z][\w&'.-]*(?:\s+[A-Z][\w&'.-]*){0,3})/)?.[1]?.trim() ?? null;
+  const ruleContext = {
+    latest,
+    allowedText: [knowledge, workspace.knowledgeBase ?? "", agent.completedProjects, agent.complaintContact, workspace.services].join("\n"),
+    allowedPhones: [lead.phoneE164, lead.whatsappE164, ...(agent.complaintContact.match(/\+?\d[\d\s-]{8,}\d/g) ?? []), ...((workspace.knowledgeBase ?? "").match(/\+?\d[\d\s-]{8,}\d/g) ?? [])].filter((value): value is string => Boolean(value)),
+    allowedEmails: Object.values(answerRecord(lead.answers)).filter((value) => value.includes("@")).map((value) => value.toLowerCase()),
+    previousAi: spoken.filter((message) => message.author === "AI").slice(-3).map((message) => message.body),
+    otherFirm: otherFirmMatch && !/karighars/i.test(otherFirmMatch) ? otherFirmMatch : null,
+  };
   let found = await lookupPlaceFor(placeQuestion ? answers[placeQuestion.id] ?? "" : "");
   let answer: BrainAnswer;
   try {
@@ -4107,11 +4125,16 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       diagnostics.push(`Rewritten with new facts: ${extra.join(" ").slice(0, 200)}`);
     }
     // The firm's never-rules, checked on the words Claude wrote. A break goes back to Claude once.
-    const broken = brainRuleBreaks(answer.bubbles, latest);
+    // The customer's own numbers and emails from this turn are theirs to see again.
+    ruleContext.allowedPhones.push(...(latest.match(/\+?\d[\d\s-]{8,}\d/g) ?? []));
+    ruleContext.allowedEmails.push(...(latest.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g) ?? []).map((value) => value.toLowerCase()));
+    const broken = ruleBreaks(answer.bubbles, ruleContext);
     if (broken.length) {
       answer = await ask(factsFor(extra, found), broken.join("\n"));
       diagnostics.push(`Rule check: ${broken.join("; ")}`);
-      if (brainRuleBreaks(answer.bubbles, latest).length) {
+      const still = ruleBreaks(answer.bubbles, ruleContext);
+      if (still.length) {
+        diagnostics.push(`Still broken: ${still.join("; ")}`);
         await handoff(db, conversation.id, lead.id, `Claude's reply broke a rule twice: ${broken.join("; ")}`.slice(0, 200));
         await alertTeam("person", `🙋 ${name ?? "A customer"}: Varun could not write a safe reply. Please take this chat.`);
         await db.aiRun.create({ data: { workspaceId: workspace.id, conversationId: conversation.id, model: claude.model, simulated: false, latencyMs: Date.now() - started, valid: false, diagnostic: diagnostics.join("; ").slice(0, 1000) } });
@@ -4136,7 +4159,10 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       phoneAgreed = true;
     }
   } catch (error) {
+    // Claude unreachable after its retries: the customer must not be left unanswered, so a person takes over.
     await db.aiRun.create({ data: { workspaceId: workspace.id, conversationId: conversation.id, model: claude.model, simulated: false, latencyMs: Date.now() - started, valid: false, diagnostic: `Claude brain failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}` } });
+    await handoff(db, conversation.id, lead.id, "Varun could not reach Claude to reply.");
+    await alertTeam("person", `🙋 ${name ?? conversation.contact.displayName ?? "A customer"}: Varun could not reply (Claude unavailable). Please reply to this chat.`);
     return "done";
   }
 
@@ -4275,23 +4301,6 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   }
   await refreshMemory(db, runtime, conversation.contact, spoken);
   return "done";
-}
-
-/** The firm's never-rules, checked on Claude's words: a price figure, a work duration, or a booking claim. */
-export function brainRuleBreaks(bubbles: string[], latest: string): string[] {
-  const text = bubbles.join(" ");
-  const breaks: string[] = [];
-  if (/₹|\brs\.?\s*\d|\b\d[\d,.]*\s*(?:lakhs?|lacs?|crores?|cr)\b|\bper\s*sq\.?\s*ft\b/i.test(text) && !/₹|\b\d[\d,.]*\s*(?:lakhs?|lacs?|crores?)\b/i.test(latest)) {
-    breaks.push("It gives a price or money figure. Never give any price, figure, range or estimate.");
-  }
-  if (/\b\d+\s*(?:(?:-|to|or)\s*\d+\s*)?(?:days?|weeks?|months?)\b/i.test(text) && /\b(take|takes|finish|complete|done|deliver|handover|ready|within)\b/i.test(text)) {
-    breaks.push("It says how long the work takes. Never give a duration; the timeline depends on the site and scope.");
-  }
-  if (/\b(?:is|has been|are)\s+(?:now\s+)?(?:booked|confirmed|scheduled)\b|\bbooking (?:is )?confirmed\b/i.test(text)) {
-    breaks.push("It says a visit or consultation is booked or confirmed. It is only a request; our team calls to confirm.");
-  }
-  if (bubbles.length > 3 || bubbles.some((bubble) => bubble.length > 500)) breaks.push("It is too long. 1 to 3 short messages.");
-  return breaks;
 }
 
 const MEMORY_WINDOW = 20;

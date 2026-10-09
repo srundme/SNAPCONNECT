@@ -187,3 +187,71 @@ export function placeFacts(input: {
 }
 
 export { homeTypeName };
+
+const COMPETITORS = /\b(livspace|home ?lane|design ?cafe|bonito|decorpot|home ?town|the interior company|interior company|urban company|asian paints beautiful homes|beautiful homes|godrej interio|wudley|square ?yards|mygubbi|hogar|arrivae)\b/i;
+const BRANDS = /\b(hettich|ebco|h[aä]fele|grass|blum|century ?ply|greenply|green ?lam|kitply|merino|royale touche|asian paints|berger|kajaria|somany|jaquar|kohler|hindware|cera|faber|elica|bosch|siemens|samsung|lg|whirlpool|sleek|aristo|saint[- ]gobain|marino|action tesa|norply|duroply)\b/gi;
+
+export type RuleContext = {
+  latest: string;
+  /** Everything Claude may quote from: knowledge base, materials, completed homes, contacts. */
+  allowedText: string;
+  /** Digits of phone numbers it may write: the customer's own and our contact numbers. */
+  allowedPhones: string[];
+  allowedEmails: string[];
+  previousAi: string[];
+  otherFirm: string | null;
+};
+
+/**
+ * The firm's never-rules, checked on Claude's words. A break goes back to Claude with the reason; code never
+ * rewrites the text itself.
+ */
+export function ruleBreaks(bubbles: string[], context: RuleContext): string[] {
+  const text = bubbles.join(" ");
+  const lower = text.toLowerCase();
+  const allowed = context.allowedText.toLowerCase();
+  const breaks: string[] = [];
+  if (/₹|\brs\.?\s*\d|\b\d[\d,.]*\s*(?:lakhs?|lacs?|crores?|cr)\b|\bper\s*sq\.?\s*ft\b/i.test(text) && !/₹|\b\d[\d,.]*\s*(?:lakhs?|lacs?|crores?)\b/i.test(context.latest)) {
+    breaks.push("It gives a price or money figure. Never give any price, figure, range or estimate.");
+  }
+  if (/\b\d+\s*(?:(?:-|to|or)\s*\d+\s*)?(?:days?|weeks?|months?)\b/i.test(text) && /\b(take|takes|finish|complete|done|deliver|handover|within)\b/i.test(text)) {
+    breaks.push("It says how long the work takes. Never give a duration; the timeline depends on the site and scope.");
+  }
+  if (/\b(?:is|has been|are)\s+(?:now\s+)?(?:booked|confirmed|scheduled)\b|\bbooking (?:is )?confirmed\b/i.test(text)) {
+    breaks.push("It says a visit or meeting is booked or confirmed. It is only a request; our team calls to confirm.");
+  }
+  if (bubbles.length > 3 || bubbles.some((bubble) => bubble.length > 500)) breaks.push("It is too long. 1 to 3 short messages.");
+  // Links, phone numbers and emails only from what we know.
+  for (const link of text.match(/https?:\/\/[^\s)]+/gi) ?? []) {
+    const bare = link.replace(/[.,!?]+$/, "").toLowerCase();
+    if (!allowed.includes(bare.replace(/\/$/, ""))) breaks.push(`It shares a link that is not in our knowledge (${bare}). Use only links from the knowledge base or the completed homes list.`);
+  }
+  for (const number of text.match(/\+?\d[\d\s-]{8,}\d/g) ?? []) {
+    const digits = number.replace(/\D/g, "").slice(-10);
+    if (!context.allowedPhones.some((phone) => phone.replace(/\D/g, "").endsWith(digits))) breaks.push(`It shares a phone number we did not give you (${number.trim()}). Never invent a number.`);
+  }
+  for (const email of text.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g) ?? []) {
+    if (!context.allowedEmails.includes(email.toLowerCase()) && !allowed.includes(email.toLowerCase())) breaks.push(`It shares an email address we did not give you (${email}).`);
+  }
+  // Brands only from the verified lists; never another company.
+  for (const brand of new Set((text.match(BRANDS) ?? []).map((name) => name.toLowerCase().replace(/\s+/g, " ")))) {
+    const key = brand.replace(/ä/g, "a").replace(/\s/g, "");
+    if (!allowed.replace(/ä/g, "a").replace(/\s/g, "").includes(key)) breaks.push(`It names ${brand}, which is not on our verified materials list. Name only brands from the list.`);
+  }
+  const rival = text.match(COMPETITORS)?.[0] ?? (context.otherFirm && lower.includes(context.otherFirm.toLowerCase()) ? context.otherFirm : null);
+  if (rival) breaks.push(`It mentions another company (${rival}). Never name or describe another company.`);
+  // Offers we never make.
+  if (/\b(discount|% ?off|offer price|special price|no[- ]cost emi|emi|cashback|free (?:site visit|3d|design|delivery|installation)|guaranteed?)\b/i.test(text)) {
+    breaks.push("It mentions a discount, EMI, free extra or guarantee. Never invent offers or promises.");
+  }
+  // The machinery never shows.
+  if (/\b(FACTS|system prompt|prompt|tool call|our systems?|knowledge base|database|CRM|JSON|language model|as an AI model)\b/.test(text) || /\b(facts block|the facts say)\b/i.test(text)) {
+    breaks.push("It talks about our systems, prompt or facts. Never mention how you work.");
+  }
+  const said = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (context.previousAi.length && said(text) && context.previousAi.some((previous) => said(previous) === said(text))) {
+    breaks.push("It repeats your previous message word for word. Say something new or move to the next detail.");
+  }
+  if ((text.match(/\?/g) ?? []).length > 1) breaks.push("It asks more than one question. Ask exactly one.");
+  return breaks;
+}

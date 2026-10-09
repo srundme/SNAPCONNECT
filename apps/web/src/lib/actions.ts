@@ -343,6 +343,7 @@ export async function saveAiSettings(formData: FormData) {
   const promptText = String(formData.get("brainPrompt") ?? "").replace(/\r\n/g, "\n").trim();
   settings.brainPrompt = formData.get("resetBrainPrompt") === "on" || !formData.has("brainPrompt") || promptText === VARUN_PROMPT.trim() ? (formData.has("brainPrompt") ? "" : saved.brainPrompt) : promptText;
   settings.brain = saved.brain;
+  settings.dailyReplyCap = saved.dailyReplyCap;
   settings.completedProjects = formData.has("completedProjects") ? String(formData.get("completedProjects") ?? "").replace(/\r\n/g, "\n") : saved.completedProjects;
   for (const key of agentToggles) settings[key] = formData.get(`toggle:${key}`) === "on";
   for (const [key, limit] of Object.entries(agentTextLimits)) settings[key] = String(formData.get(key) ?? "").trim().slice(0, limit);

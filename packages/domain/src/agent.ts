@@ -45,6 +45,8 @@ export type AgentSettings = {
   brain: "live" | "off";
   /** The owner's own version of Varun's system prompt; empty means the built-in default. */
   brainPrompt: string;
+  /** Replies Varun may send one chat in 24 hours before the team takes over (a cost guard). */
+  dailyReplyCap: number;
 };
 
 export const defaultAgentSettings: AgentSettings = {
@@ -82,6 +84,7 @@ export const defaultAgentSettings: AgentSettings = {
   completedProjects: "",
   brain: "live",
   brainPrompt: "",
+  dailyReplyCap: 80,
 };
 
 const TOGGLES = [
@@ -149,6 +152,7 @@ export function parseAgentSettings(value: unknown): AgentSettings {
   if (typeof record.summaryTemplate === "string") settings.summaryTemplate = record.summaryTemplate.trim().replace(/[^a-z0-9_]/gi, "").slice(0, 80);
   if (typeof record.completedProjects === "string") settings.completedProjects = record.completedProjects.trim().slice(0, 20000);
   if (record.brain === "off" || record.brain === "live") settings.brain = record.brain;
+  if (Number.isFinite(Number(record.dailyReplyCap)) && Number(record.dailyReplyCap) >= 5) settings.dailyReplyCap = Math.min(500, Math.round(Number(record.dailyReplyCap)));
   if (typeof record.brainPrompt === "string") settings.brainPrompt = record.brainPrompt.replace(/\r\n/g, "\n").trim().slice(0, 40000);
   return settings;
 }

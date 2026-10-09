@@ -42,9 +42,15 @@ export async function yesterdayNumbers(db: Db, workspaceId: string, now: Date) {
     where: { workspaceId, owner: "HUMAN", sandbox: false },
     select: { messages: { where: { author: { in: ["PROSPECT", "AI", "STAFF"] } }, orderBy: { createdAt: "desc" }, take: 1, select: { author: true } }, contact: { select: { username: true, displayName: true } } },
   });
+  // How Varun did: replies sent, replies the checks sent back to Claude, chats handed to the team.
+  const runs = await db.aiRun.findMany({ where: { workspaceId, createdAt: { gte: from, lt: to }, diagnostic: { startsWith: "Claude brain" } }, select: { valid: true, diagnostic: true } });
+  const handedOver = await db.teamAlert.count({ where: { workspaceId, kind: "person", createdAt: { gte: from, lt: to } } });
   return {
     from,
     chats,
+    varunReplies: runs.filter((run) => run.valid).length,
+    rewrites: runs.filter((run) => /Rule check/.test(run.diagnostic ?? "")).length,
+    handedOver,
     newLeads: real.filter((lead) => lead.phoneE164).length,
     hot: real.filter((lead) => lead.rating === "HOT").length,
     meetings: new Set(meetings.map((item) => item.conversationId)).size,
@@ -80,6 +86,7 @@ export async function sendDailySummaries(db: Db, runtime: Runtime, now = runtime
       `${numbers.chats} chats · ${numbers.newLeads} new leads · ${numbers.hot} HOT`,
       `${numbers.meetings} consultations or visits requested · ${numbers.zoho} sent to Zoho`,
       numbers.waiting ? `${numbers.waiting} chat${numbers.waiting === 1 ? " is" : "s are"} waiting on the team now.` : "No chat is waiting on the team.",
+      `Varun: ${numbers.varunReplies} replies · ${numbers.rewrites} rewritten by the checks · ${numbers.handedOver} handed to the team`,
     ].join("\n") + link;
     const delivered: string[] = [];
     for (const owner of owners) {
