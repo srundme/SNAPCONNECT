@@ -106,6 +106,7 @@ import {
   phoneProblem,
   dropRepeatedSentences,
   fullWords,
+  dropDeferral,
   profilePersonName,
   dropDesignTalk,
   asksAboutDesign,
@@ -2699,7 +2700,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     // Never a price figure in any reply. A price question gets the quote line instead.
     const pricedOut = offered ? dropUnaskedPrice(offered) : offered;
     // No designer, 3D, layout or site visit talk unless they asked about it.
-    const unpriced = pricedOut && !asksAboutDesign(freshText) ? dropDesignTalk(pricedOut) || pricedOut : pricedOut;
+    const undesigned = pricedOut && !asksAboutDesign(freshText) ? dropDesignTalk(pricedOut) || pricedOut : pricedOut;
+    const unpriced = undesigned && materialsNote ? dropDeferral(undesigned) : undesigned;
     const quotedBefore = spoken.some((message) => message.author === "AI" && /quoted by our team/i.test(message.body));
     const heldBase = askingPrice(freshText) && !quotedBefore && !/\bquoted by our team\b/i.test(unpriced ?? "")
       ? [unpriced, QUOTE_LINE].filter(Boolean).join("\n")

@@ -148,6 +148,18 @@ export function asksAboutDesign(text: string): boolean {
   return DESIGN_TALK.test(text) || /\b(design|3d|render)\b/i.test(text);
 }
 
+const DEFERRAL = /\b(?:the |our )?team (?:can|will|would) (?:confirm|share|explain|check|tell you)\b[^.?!]*\b(?:spec\w*|details?|materials?|grades?|exact|more)\b/i;
+
+/** After a complete answer from the material list, "the team can confirm the specifications" is filler. */
+export function dropDeferral(text: string): string {
+  const kept = text
+    .split(/\n+/)
+    .map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => isQuestionSentence(part) || !DEFERRAL.test(part)).join(" ").trim())
+    .filter(Boolean)
+    .join("\n");
+  return kept || text;
+}
+
 /** The knowledge base without its price lines: prices are never told to customers, so the model never sees them. */
 export function withoutPrices(text: string): string {
   return text
