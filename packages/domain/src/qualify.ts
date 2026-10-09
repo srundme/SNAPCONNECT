@@ -778,8 +778,17 @@ function askedAbout(question: LeadQuestion, aiText: string): boolean {
   const requests = sentences.filter((part) => part.includes("?") || ASKING.test(part));
   const ask = (requests.length ? requests : sentences.slice(-1)).join(" ").toLowerCase();
   if (!ask) return false;
-  if (question.kind === "name") return /\b(name|peru|naam)\b/.test(ask) && !/company|business|brand|organi[sz]ation/.test(ask);
-  if (question.kind === "phone") return /\b(number|phone|mobile|no\.)\b/.test(ask) && !/\b(permission|use panna|mind)\b/.test(ask);
+  if (question.kind === "name") {
+    // "What is the property name?" or "property ka naam" asks about the home, not their name.
+    const own = ask
+      .replace(/\b(?:property|project|builder|society|apartment|building|community|developer|layout|villa|gated|company|business|brand)(?:'s)?\s+(?:ka\s+|oda\s+)?(?:name|naam|peru)\b/g, " ")
+      .replace(/\bname of (?:the|your|that)\s+(?:property|project|builder|society|apartment|building|community|developer|layout)\b/g, " ");
+    return /\b(name|peru|naam)\b/.test(own) && !/company|business|brand|organi[sz]ation/.test(own);
+  }
+  if (question.kind === "phone") {
+    const own = ask.replace(/\b(?:flat|door|tower|unit|house|plot|block|villa|floor)\s+(?:no\.?|number)\b/g, " ");
+    return /\b(number|phone|mobile|no\.)\b/.test(own) && !/\b(permission|use panna|mind)\b/.test(own);
+  }
   if (question.kind === "yesno") return /\bdemo\b/.test(ask);
   if (/company/i.test(question.label)) return /company|business name|brand|organi[sz]ation/.test(ask);
   if (/volume|month/i.test(question.label)) return /calls?\b.*\b(month|monthly|maasam|masam|mahine|mahina)|call volume|how many calls|kitne calls|kitni calls|evlo calls|(maasam|masam|mahine|mahina|month).*calls?\b/.test(ask);
@@ -896,6 +905,8 @@ const ASK_SYNONYMS: Record<string, string[]> = {
 
 /** A sentence that asks something, even when the model left out the question mark. */
 export function isQuestionSentence(sentence: string): boolean {
+  // "Can be done in 60 days." or "When the site is ready, we finish in 75 days." ends in a full stop: an answer, not a question.
+  if (!sentence.includes("?") && /[.!]\s*$/.test(sentence.trim())) return false;
   return sentence.includes("?")
     || /^\W*(?:(?:ok(?:ay)?|sure|got it|alright|noted|and|so|also)\W+)*(?:(?:sir|mam|ma'am)\W+)?(is|are|do|does|did|when|what|which|where|how|can|could|will|would|shall|may)\b/i.test(sentence);
 }

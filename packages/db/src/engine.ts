@@ -3019,6 +3019,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const addressed = nudge > 0
       ? followUpReply(nudge, agent.followUpHours.length)
       : oneQuestion(withoutKnownAsks(review?.fixed ?? draft, {
+          askedWho: asksIfBot,
           nameKnown: Boolean(recordedName),
           metBefore: Boolean(elsewhere) || conversation.messages.some((message) => message.author === "AI"),
           agentName: workspace.agentName,
@@ -3030,7 +3031,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
                 return Boolean(value?.trim()) && !missingNow.includes(question) && question !== nextDetail && question !== bhkAgain
                   && !checkedIds.includes(question.id) && !(question.kind === "phone" && wrongNumber);
               }),
-        }));
+        }), questions);
     const bubbleOptions = { casual: agent.casualTexting, split: agent.splitMessages, ...(keep ? { keep } : {}) };
     const freshBubbles = addressed ? humanBubbles(addressed, earlierReplies, keepCase, bubbleOptions) : [];
     // When every sentence repeats an earlier reply, a repeat still beats leaving the customer unanswered. Follow-ups can stay quiet.
@@ -4339,7 +4340,7 @@ const EXACT_ASK = /\b(did you mean|have we spoken before on|shall I note your na
  */
 export function withoutKnownAsks<T extends string | null | undefined>(
   text: T,
-  known: { nameKnown: boolean; metBefore: boolean; agentName?: string | null; collected?: LeadQuestion[] },
+  known: { nameKnown: boolean; metBefore: boolean; agentName?: string | null; collected?: LeadQuestion[]; askedWho?: boolean },
 ): T {
   if (!text) return text;
   const agent = (known.agentName ?? "Varun").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -4350,7 +4351,8 @@ export function withoutKnownAsks<T extends string | null | undefined>(
   const others = (known.collected ?? []).filter((question) => question.kind !== "name");
   const askedAgain = (part: string) => isQuestionSentence(part) && !EXACT_ASK.test(part)
     && ((known.nameKnown && theirName.test(part)) || others.some((question) => questionAsked(question, part)));
-  const keep = (part: string) => !askedAgain(part) && !(known.metBefore && intro.test(part));
+  // "Are you a bot?" gets an honest "Yes, I am Varun, the AI assistant", even from someone met before.
+  const keep = (part: string) => !askedAgain(part) && !(known.metBefore && !known.askedWho && intro.test(part));
   const out = text
     .split(/\n+/)
     .map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).map((part) => part.trim()).filter(Boolean).filter(keep).join(" ").replace(/^\.+\s*/, ""))
@@ -4363,13 +4365,24 @@ export function withoutKnownAsks<T extends string | null | undefined>(
  * One question per reply, like a person texting. When the draft asks two things, only the last question
  * stays: that is the detail the system wants next. The statements around it are kept.
  */
-export function oneQuestion<T extends string | null | undefined>(text: T): T {
+export function oneQuestion<T extends string | null | undefined>(text: T, questions: LeadQuestion[] = []): T {
   if (!text) return text;
   const lines = text.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).map((part) => part.trim()).filter(Boolean));
   const asks = lines.flat().filter((part) => isQuestionSentence(part));
   if (asks.length < 2) return text;
-  const keep = asks[asks.length - 1];
-  return lines.map((parts) => parts.filter((part) => !isQuestionSentence(part) || part === keep).join(" ")).filter(Boolean).join("\n") as T;
+  // "Which area is it in? And what is the property name?" is one detail asked in two sentences: both stay.
+  const detailOf = (part: string) => questions.find((question) => questionAsked(question, part.includes("?") ? part : `${part}?`))?.id ?? null;
+  const last = asks[asks.length - 1]!;
+  const lastDetail = detailOf(last);
+  const keep = new Set([last]);
+  // "…? And what is the property name?" continues the question before it.
+  const continues = (part: string) => /^(?:and|also|or|aur|illa)\b/i.test(part.trim());
+  for (let index = asks.length - 2; index >= 0; index -= 1) {
+    const after = asks[index + 1]!;
+    if (!continues(after) && !(lastDetail && detailOf(asks[index]!) === lastDetail)) break;
+    keep.add(asks[index]!);
+  }
+  return lines.map((parts) => parts.filter((part) => !isQuestionSentence(part) || keep.has(part)).join(" ")).filter(Boolean).join("\n") as T;
 }
 // Prices are never revealed: the team quotes after seeing the home.
 const QUOTE_LINE = "We will share the exact budget after understanding your requirement, the scope and the materials you choose.";
