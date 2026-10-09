@@ -28,6 +28,8 @@ export type AgentSettings = {
   /** The material specification, one entry per area. Not on the Agent page form, so saving keeps it. */
   materials: MaterialEntry[];
   warranty: WarrantyTerms | null;
+  /** The team's project short forms, one per line: "APR = Adarsh Palm Retreat". */
+  projectAliases: string;
 };
 
 export const defaultAgentSettings: AgentSettings = {
@@ -56,6 +58,7 @@ export const defaultAgentSettings: AgentSettings = {
   zohoRatingField: "",
   materials: [],
   warranty: null,
+  projectAliases: "",
 };
 
 const TOGGLES = [
@@ -115,6 +118,7 @@ export function parseAgentSettings(value: unknown): AgentSettings {
   if (Number.isFinite(line) && line >= 0 && line <= 10_000) settings.hotBudgetLakhs = Math.round(line * 10) / 10;
   settings.materials = parseMaterials(record.materials);
   settings.warranty = parseWarranty(record.warranty);
+  if (typeof record.projectAliases === "string") settings.projectAliases = record.projectAliases.trim().slice(0, 4000);
   return settings;
 }
 

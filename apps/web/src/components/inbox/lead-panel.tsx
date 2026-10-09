@@ -59,6 +59,19 @@ function SectionTitle({ children }: { children: ReactNode }) {
   return <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-muted)]">{children}</p>;
 }
 
+export type ProjectCard = {
+  name: string;
+  locality: string | null;
+  kind?: "apartment" | "villa" | null;
+  builder?: string | null;
+  bhkOptions?: number[];
+  sizes?: Record<string, string>;
+  readyToMove?: boolean;
+  possessionYear?: number | null;
+  underConstruction?: boolean;
+  url?: string | null;
+};
+
 export function LeadPanel({
   lead,
   questions,
@@ -69,7 +82,9 @@ export function LeadPanel({
   samePerson = [],
   possibleMatches = [],
   canDecide = false,
+  project = null,
 }: {
+  project?: ProjectCard | null;
   lead: PanelLead | null;
   questions: LeadQuestion[];
   chosenName: string | null;
@@ -136,6 +151,24 @@ export function LeadPanel({
           <p className="mt-2 text-[12px] leading-4 text-[var(--color-muted)]">
             {channel === "WHATSAPP" ? "They are chatting from this WhatsApp number." : "A valid number is not proof that the person owns it, or that it is on WhatsApp."}
           </p>
+        </section>
+      ) : null}
+
+      {project ? (
+        <section>
+          <SectionTitle>Project</SectionTitle>
+          <div className="mt-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-paper)]/60 p-3 text-[13px]">
+            <p className="font-medium text-[var(--color-ink)]">{project.name}</p>
+            <p className="text-[12.5px] text-[var(--color-muted)]">
+              {[project.kind ? (project.kind === "villa" ? "Villa project" : "Apartment project") : null, project.locality, project.builder ? `by ${project.builder}` : null].filter(Boolean).join(" · ")}
+            </p>
+            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[12.5px]">
+              {project.bhkOptions?.length ? (<><dt className="text-[var(--color-muted)]">Homes</dt><dd>{project.bhkOptions.join(", ")} BHK</dd></>) : null}
+              {project.sizes && Object.keys(project.sizes).length ? (<><dt className="text-[var(--color-muted)]">Sizes</dt><dd>{Object.entries(project.sizes).map(([bhk, size]) => `${bhk} BHK ${size}`).join(" · ")}</dd></>) : null}
+              {project.readyToMove || project.possessionYear || project.underConstruction ? (<><dt className="text-[var(--color-muted)]">Stage</dt><dd>{project.readyToMove ? "Ready to move" : project.possessionYear ? `Possession around ${project.possessionYear}` : "Under construction"}</dd></>) : null}
+            </dl>
+            <p className="mt-2 text-[11.5px] text-[var(--color-muted)]">From public listings, not the customer. {project.url ? <a href={project.url} target="_blank" rel="noreferrer" className="text-[var(--color-accent-ink)] underline underline-offset-2">Source</a> : null}</p>
+          </div>
         </section>
       ) : null}
 

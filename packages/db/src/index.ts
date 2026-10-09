@@ -4,3 +4,4 @@ export { ingestEvents, processAvailableJobs, recoverStaleJobs, simulationRuntime
 export type { Runtime, SendInput, SendConnection } from "./engine";
 export { connectionSender } from "./sender";
 export * from "./people";
+export * from "./projects";

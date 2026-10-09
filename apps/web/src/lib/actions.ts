@@ -333,6 +333,7 @@ export async function saveAiSettings(formData: FormData) {
   const saved = parseAgentSettings(workspace.agentSettings);
   settings.materials = saved.materials;
   settings.warranty = saved.warranty;
+  settings.projectAliases = formData.has("projectAliases") ? String(formData.get("projectAliases") ?? "").replace(/\r\n/g, "\n") : saved.projectAliases;
   for (const key of agentToggles) settings[key] = formData.get(`toggle:${key}`) === "on";
   for (const [key, limit] of Object.entries(agentTextLimits)) settings[key] = String(formData.get(key) ?? "").trim().slice(0, limit);
   settings.followUpHours = parseFollowUpHours(formData.get("followUpHours"));

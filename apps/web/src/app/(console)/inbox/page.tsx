@@ -1,6 +1,6 @@
 import { FlaskConical } from "lucide-react";
-import { getPrisma } from "@snapsocial/db";
-import { can, parseLeadQuestions, replyEligibility } from "@snapsocial/domain";
+import { applyProjectAliases, getPrisma, knownProject } from "@snapsocial/db";
+import { can, parseAgentSettings, parseLeadQuestions, placeAnswer, replyEligibility } from "@snapsocial/domain";
 import { injectSimulation } from "@/lib/actions";
 import { Empty, Notice } from "@/components/ui";
 import { requireWorkspace } from "@/lib/session";
@@ -66,6 +66,13 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     selectedBase ? db.lead.findFirst({ where: { contactId: selectedBase.contactId, archivedAt: null }, orderBy: { createdAt: "desc" } }) : Promise.resolve(null),
     selectedBase ? db.channelConnection.findUnique({ where: { id: selectedBase.connectionId } }) : Promise.resolve(null),
   ]);
+  // What public listings say about their project, from the project memory: no search from here.
+  // Same text and key the assistant used when it looked the project up.
+  const placeText = lead ? placeAnswer(parseLeadQuestions(workspace.leadQuestions), readAnswers(lead.answers)).slice(0, 120) : "";
+  const serviceCity = parseAgentSettings(workspace.agentSettings).serviceArea.split(/[,\n]+/)[0]?.trim() || undefined;
+  const project = placeText
+    ? await knownProject(db, applyProjectAliases(placeText, parseAgentSettings(workspace.agentSettings).projectAliases), serviceCity).catch(() => null)
+    : null;
   // Same person on other channels, and open "possibly the same person" suggestions, for the listed chats and the open one.
   const personContact = {
     id: true,
@@ -254,6 +261,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
               samePerson={samePerson}
               possibleMatches={possibleMatches}
               canDecide={canReply}
+              project={project}
             />
           ) : (
             <p className="p-5 text-[13px] text-[var(--color-muted)]">Lead details appear here when a chat is open.</p>

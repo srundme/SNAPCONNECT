@@ -33,6 +33,7 @@ function toRow(question: { label: string; zohoField: string | null; required: bo
 }
 
 export type AgentFormSettings = {
+  projectAliases: string;
   goal: string;
   pricingAnswer: string;
   workingHours: string;
@@ -232,6 +233,7 @@ export function AgentForm({
             <label>Working hours<input name="workingHours" maxLength={200} defaultValue={settings.workingHours} placeholder="Tuesday to Sunday, 10 AM to 7 PM" /></label>
             <label>Complaints go to<input name="complaintContact" maxLength={300} defaultValue={settings.complaintContact} placeholder="+91 70227 25656 or support@company.com" /></label>
             <label className="sm:col-span-2">Service area<input name="serviceArea" maxLength={300} defaultValue={settings.serviceArea} placeholder="Bengaluru, Bangalore" /><span className="text-[12px] text-[var(--color-muted)]">City names, comma separated. A home in another city is flagged for the team instead of promised.</span></label>
+            <label className="sm:col-span-2">Project short forms<textarea name="projectAliases" rows={4} maxLength={4000} defaultValue={settings.projectAliases} placeholder={"APR = Adarsh Palm Retreat\nPLH = Prestige Lakeside Habitat"} /><span className="text-[12px] text-[var(--color-muted)]">One per line. When a customer writes the short form, {settings.projectAliases ? "Varun" : "the assistant"} uses the full project name without searching.</span></label>
             <label className="sm:col-span-2">
               Holidays
               <textarea name="holidays" rows={3} maxLength={2000} defaultValue={settings.holidays} placeholder={"2026-11-08 Deepavali\n11-01 Kannada Rajyotsava"} />

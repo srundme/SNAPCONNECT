@@ -13,6 +13,18 @@ export type PlaceInfo = {
   /** BHK sizes the project is advertised with. Not this customer's home. */
   bhkOptions?: number[];
   source?: "Google Maps" | "OpenStreetMap" | "Brave Search";
+  /** The developer, when a listing names one ("by Prestige Group"). */
+  builder?: string | null;
+  /** Advertised sizes per BHK, like { "3": "1450-1650 sq ft" }. */
+  sizes?: Record<string, string>;
+  /** The page the facts came from, for staff. */
+  url?: string | null;
+  /** The match was not certain (a short form, a spelling fix or a one-word name): confirm it with the customer. */
+  confirm?: boolean;
+  /** The short form they typed, like "APR". */
+  shortForm?: string | null;
+  /** What they typed before the search engine corrected the spelling. */
+  correctedFrom?: string | null;
 };
 
 /** A place they named that looks like a project but could not be found, so the team can check it. */
@@ -34,9 +46,16 @@ function projectSegments(text: string): string[] {
   return text
     .split(/[,\n]+|\band\b/i)
     .map((part) => part.replace(/^\s*(?:it'?s |my |our |the )?(?:flat|home|house|apartment|villa|place)?\s*(?:is )?(?:in|at)\s+/i, "").trim())
-    .filter((part) => part.length >= 4 && /[a-z]{3}/i.test(part))
+    .filter((part) => (part.length >= 4 && /[a-z]{3}/i.test(part)) || isShortForm(part))
     .slice(0, 2);
 }
+
+/** "APR", "PSN", "SNN": two to five capital letters people use for a project. */
+function isShortForm(part: string): boolean {
+  return /^[A-Z]{2,5}$/.test(part.trim());
+}
+
+const PORTALS = /\b(99acres|magicbricks|housing\.com|nobroker|squareyards|makaan|proptiger|commonfloor)\b/i;
 
 function sameName(query: string, name: string): boolean {
   const words = (value: string) => value.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length >= 3);
@@ -191,7 +210,35 @@ export function googlePlaceLookup(options: { apiKey: string; fetcher?: typeof fe
   }
 }
 
-type BraveHit = { title?: string; description?: string };
+type BraveHit = { title?: string; description?: string; url?: string };
+
+/** The project's first words whose initials spell the short form: APR → "Adarsh Palm Retreat". */
+function initialsMatch(title: string, short: string): string | null {
+  const words = decodeEntities(title).split(/[\s|,\-–—:]+/).filter((word) => /^[A-Za-z][A-Za-z']*$/.test(word));
+  const letters = short.toUpperCase();
+  for (let start = 0; start + letters.length <= Math.min(words.length, 6); start += 1) {
+    const slice = words.slice(start, start + letters.length);
+    if (slice.map((word) => word[0]!.toUpperCase()).join("") === letters && slice.every((word) => word.length >= 2)) return slice.join(" ");
+  }
+  return null;
+}
+
+const BUILDERS = /\b(Prestige|Sobha|Brigade|Godrej|Puravankara|Provident|Purva|Adarsh|Concorde|Salarpuria|Sattva|Embassy|Total Environment|Mantri|Shriram|Assetz|Tata Housing|Mahindra|DLF|Rohan|Sumadhura|Vaswani|Nitesh|Bhartiya|Ozone|Mana|Arvind|Casagrand|Hiranandani|Birla|Lodha|Kolte Patil|SNN|Akshaya)\b/i;
+
+function builderFrom(written: string): string | null {
+  const by = written.match(/\bby\s+([A-Z][A-Za-z&.]+(?:\s+(?:Group|Builders|Developers|Projects|Estates|Realty|Properties|Housing|Constructions?|Infra))?)/);
+  if (by && !/^(the|our|a|an)$/i.test(by[1]!)) return by[1]!.trim();
+  return written.match(BUILDERS)?.[1] ?? null;
+}
+
+/** "3 BHK ... 1450 - 1650 sq ft" per BHK, only when a listing says it next to the BHK. */
+function sizesFrom(written: string): Record<string, string> {
+  const sizes: Record<string, string> = {};
+  for (const match of written.matchAll(/\b([1-9])\s*BHK\b[^.|]{0,40}?\b(\d{3,4}(?:\s*(?:-|–|to)\s*\d{3,4})?)\s*(?:sq\.?\s*ft|sqft|sft)/gi)) {
+    sizes[match[1]!] ??= `${match[2]!.replace(/\s*(?:–|to)\s*/, "-").replace(/\s+/g, "")} sq ft`;
+  }
+  return sizes;
+}
 
 function decodeEntities(text: string): string {
   return text.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ");
@@ -200,7 +247,8 @@ function decodeEntities(text: string): string {
 /** "Concorde Manhattans Apartment in Electronic City, Bangalore- Reviews, Photos" is the project "Concorde Manhattans". */
 function projectTitle(title: string, segment: string): string {
   const clean = decodeEntities(title);
-  const head = clean.split(/\s*\|\s*|\s+[-–—]\s+|-\s+(?=[A-Z])/)[0]?.trim() || clean.trim();
+  // "Prestige Lakeside Habitat by Prestige Group": the builder is kept separately, not in the name.
+  const head = (clean.split(/\s*\|\s*|\s+[-–—]\s+|-\s+(?=[A-Z])/)[0]?.trim() || clean.trim()).replace(/\s+by\s+[A-Z][\s\S]*$/, "").trim();
   const short = head.replace(/\s+(?:(?:luxury\s+)?(?:apartments?|flats?|villas?|residences?|homes?)\s+)?in\s+[a-z].*$/i, "").trim();
   if (short && nameInside(short, segment)) return short;
   return nameInside(head, segment) ? head : segment;
@@ -282,44 +330,100 @@ export function bravePlaceLookup(options: { apiKey: string; fetcher?: typeof fet
     return found;
   };
 
+  async function fetchHits(textQuery: string): Promise<{ results: BraveHit[]; altered: string | null }> {
+    const response = await fetcher(`${baseUrl}?q=${encodeURIComponent(textQuery)}&count=10&country=IN&search_lang=en&spellcheck=1`, {
+      headers: { Accept: "application/json", "X-Subscription-Token": options.apiKey },
+      signal: AbortSignal.timeout(options.timeoutMs ?? 6_000),
+    });
+    if (!response.ok) throw new Error(`Web search lookup failed with ${response.status}.`);
+    const body = (await response.json()) as { web?: { results?: BraveHit[] }; query?: { altered?: string } };
+    return { results: body.web?.results ?? [], altered: body.query?.altered?.trim() || null };
+  }
+
+  function build(hits: BraveHit[], name: string, extra: Pick<PlaceInfo, "confirm" | "shortForm" | "correctedFrom">): PlaceInfo {
+    // Property portals carry the cleanest facts, so they are read first.
+    const ordered = [...hits].sort((a, b) => Number(PORTALS.test(b.url ?? "")) - Number(PORTALS.test(a.url ?? "")));
+    const written = decodeEntities(ordered.map((item) => `${item.title ?? ""}. ${item.description ?? ""}`).join(" "));
+    const locality = localityFromSearch(written);
+    const foundCity = /\b(?:bengaluru|bangalore)\b/i.test(written) ? "Bengaluru" : null;
+    const bhkOptions = bhkOptionsFromSearch(written);
+    const stage = projectStage(written);
+    const sizes = sizesFrom(written);
+    return {
+      name,
+      locality,
+      city: foundCity,
+      pincode: written.match(/\b(560\d{3})\b/)?.[1] ?? null,
+      underConstruction: stage.underConstruction,
+      ...(stage.readyToMove ? { readyToMove: true } : {}),
+      ...(stage.possessionYear ? { possessionYear: stage.possessionYear } : {}),
+      kind: kindFromSearch(written),
+      address: [locality, foundCity].filter(Boolean).join(", ") || null,
+      ...(bhkOptions.length ? { bhkOptions } : {}),
+      builder: builderFrom(written),
+      ...(Object.keys(sizes).length ? { sizes } : {}),
+      url: ordered[0]?.url ?? null,
+      ...(extra.confirm ? { confirm: true } : {}),
+      ...(extra.shortForm ? { shortForm: extra.shortForm } : {}),
+      ...(extra.correctedFrom ? { correctedFrom: extra.correctedFrom } : {}),
+      source: "Brave Search",
+    };
+  }
+
   async function search(query: string, city?: string): Promise<PlaceInfo | PlaceMissing | null> {
     let unmatched: string | null = null;
     for (const segment of projectSegments(query)) {
-      if (nameWords(segment).length < 2) continue;
+      const short = isShortForm(segment) ? segment.trim() : null;
+      const oneWord = !short && nameWords(segment).length < 2;
+      if (oneWord && (nameWords(segment)[0]?.length ?? 0) < 4) continue;
       const spelled = correctAreaSpelling(segment);
-      const textQuery = city && !spelled.toLowerCase().includes(city.toLowerCase()) ? `${spelled} ${city}` : spelled;
-      const response = await fetcher(`${baseUrl}?q=${encodeURIComponent(textQuery)}&count=8&country=IN&search_lang=en`, {
-        headers: { Accept: "application/json", "X-Subscription-Token": options.apiKey },
-        signal: AbortSignal.timeout(options.timeoutMs ?? 6_000),
-      });
-      if (!response.ok) throw new Error(`Web search lookup failed with ${response.status}.`);
-      const results = ((await response.json()) as { web?: { results?: BraveHit[] } }).web?.results ?? [];
-      const hits = results.filter((item) => {
+      const withCity = (text: string) => (city && !text.toLowerCase().includes(city.toLowerCase()) ? `${text} ${city}` : text);
+      // A short form or a single word needs the project context to find the right page.
+      const textQuery = short || oneWord ? `${withCity(spelled)} apartments villas project` : withCity(spelled);
+      const first = await fetchHits(textQuery);
+      if (short) {
+        for (const item of first.results) {
+          const expanded = initialsMatch(item.title ?? "", short);
+          if (!expanded || NOT_THE_HOMES.test(item.title ?? "")) continue;
+          const same = first.results.filter((other) => nameInside(`${other.title ?? ""} ${other.description ?? ""}`, expanded));
+          return build(same.length ? same : [item], expanded, { confirm: true, shortForm: short });
+        }
+        unmatched ??= segment;
+        continue;
+      }
+      const matching = (results: BraveHit[], wanted: string) => results.filter((item) => {
         const text = `${item.title ?? ""} ${item.description ?? ""}`;
-        return nameInside(text, segment) && !NOT_THE_HOMES.test(item.title ?? "");
+        if (NOT_THE_HOMES.test(item.title ?? "")) return false;
+        if (!oneWord) return nameInside(text, wanted);
+        const word = nameWords(wanted)[0]!;
+        return nameWords(item.title ?? "").some((titleWord) => sameWord(titleWord, word));
       });
+      let hits = matching(first.results, spelled);
+      let correctedFrom: string | null = null;
+      let wanted = spelled;
+      // Brave's own spelling suggestion: "concord manhatan" becomes "concorde manhattan".
+      if (!hits.length && first.altered && first.altered.toLowerCase() !== textQuery.toLowerCase()) {
+        const retry = await fetchHits(first.altered);
+        const corrected = first.altered
+          .replace(/\s+apartments villas project$/i, "")
+          .replace(new RegExp(`\\s*\\b${(city ?? "Bengaluru").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b.*$`, "i"), "")
+          .trim();
+        hits = matching(retry.results, corrected);
+        if (hits.length) {
+          correctedFrom = segment;
+          wanted = corrected;
+        }
+      }
       if (!hits.length) {
         unmatched ??= segment;
         continue;
       }
-      const written = hits.map((item) => `${item.title ?? ""}. ${item.description ?? ""}`).join(" ");
-      const locality = localityFromSearch(written);
-      const foundCity = /\b(?:bengaluru|bangalore)\b/i.test(written) ? "Bengaluru" : null;
-      const bhkOptions = bhkOptionsFromSearch(written);
-      const stage = projectStage(written);
-      return {
-        name: projectTitle(hits[0]?.title ?? segment, segment),
-        locality,
-        city: foundCity,
-        pincode: written.match(/\b(560\d{3})\b/)?.[1] ?? null,
-        underConstruction: stage.underConstruction,
-        ...(stage.readyToMove ? { readyToMove: true } : {}),
-        ...(stage.possessionYear ? { possessionYear: stage.possessionYear } : {}),
-        kind: kindFromSearch(written),
-        address: [locality, foundCity].filter(Boolean).join(", ") || null,
-        ...(bhkOptions.length ? { bhkOptions } : {}),
-        source: "Brave Search",
-      };
+      const title = decodeEntities(hits[0]?.title ?? wanted);
+      const head = (title.split(/\s*\|\s*|\s+[-–—]\s+|-\s+(?=[A-Z])/)[0]?.trim() || wanted).replace(/\s+by\s+[A-Z][\s\S]*$/, "").trim();
+      const name = oneWord
+        ? head.replace(/\s+(?:(?:luxury\s+)?(?:apartments?|flats?|villas?|residences?|homes?)\s+)?in\s+[a-z].*$/i, "").trim() || head
+        : projectTitle(title, wanted);
+      return build(hits, name, { confirm: Boolean(oneWord || correctedFrom), correctedFrom });
     }
     return unmatched ? { missing: unmatched, source: "Brave Search" } : null;
   }

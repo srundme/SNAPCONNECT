@@ -689,3 +689,15 @@ model OauthState {
   expiresAt   DateTime
   usedAt      DateTime?
 }
+
+/// Projects looked up on the web, remembered so each one is searched once. Grows into the firm's own directory.
+model ProjectLookup {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  query     String
+  found     Boolean
+  result    Json?
+  hits      Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

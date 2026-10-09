@@ -167,6 +167,25 @@ describe("project lookup", () => {
     expect(await hits([{ title: "Sobha City", description: "Apartments in Bengaluru, priced around 560087 per home." }])("Sobha City", "Bengaluru")).not.toHaveProperty("bhkOptions");
     expect(await hits([{ title: "Brigade Woods", description: "Apartments in Bengaluru" }])("Brigade Utopia", "Bengaluru")).toEqual({ missing: "Brigade Utopia", source: "Brave Search" });
     expect(await hits([])("HSR Layout", "Bengaluru")).toBeNull();
+    const apr = await hits([
+      { title: "Adarsh Palm Retreat Villas in Bellandur, Bangalore | 99acres", description: "4 BHK villas by Adarsh Developers on Outer Ring Road, Bellandur. Ready to move.", url: "https://www.99acres.com/adarsh-palm-retreat" },
+    ])("APR", "Bengaluru");
+    expect(apr).toMatchObject({ name: "Adarsh Palm Retreat", shortForm: "APR", confirm: true, kind: "villa", url: "https://www.99acres.com/adarsh-palm-retreat" });
+    const oneWord = await hits([{ title: "Concorde Manhattans - Electronic City", description: "2 and 3 BHK apartments on Neeladri Road" }])("Concord", "Bengaluru");
+    expect(oneWord).toMatchObject({ name: "Concorde Manhattans", confirm: true, bhkOptions: [2, 3] });
+    const calls: string[] = [];
+    const spelling = await bravePlaceLookup({
+      apiKey: "test",
+      fetcher: (async (url: string) => {
+        calls.push(decodeURIComponent(url));
+        const first = calls.length === 1;
+        return new Response(JSON.stringify(first
+          ? { query: { altered: "Prestige Lakeside Habitat Bengaluru" }, web: { results: [{ title: "Lakes of Bengaluru", description: "A guide" }] } }
+          : { web: { results: [{ title: "Prestige Lakeside Habitat by Prestige Group", description: "3 BHK 1650 - 1950 sq ft apartments in Varthur, Bengaluru 560087", url: "https://www.magicbricks.com/plh" }] } }), { status: 200 });
+      }) as unknown as typeof fetch,
+    })("Prestij Lakesid Habitat", "Bengaluru");
+    expect(calls).toHaveLength(2);
+    expect(spelling).toMatchObject({ name: "Prestige Lakeside Habitat", correctedFrom: "Prestij Lakesid Habitat", confirm: true, builder: "Prestige Group", sizes: { "3": "1650-1950 sq ft" } });
     const concorde = await hits([{ title: "Concorde Manhattans Apartment in Electronic City, Bangalore- Reviews, Photos, Amenities, Price &amp; Floor Plan", description: "2 and 3 BHK apartments on Neeladri Road, Bengaluru. Ready to move." }])("concorde manhattans", "Bengaluru");
     expect(concorde).toMatchObject({ name: "Concorde Manhattans", kind: "apartment", bhkOptions: [2, 3] });
   });

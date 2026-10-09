@@ -143,6 +143,7 @@ import {
 import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, neutralDirection, speechLocale, speechScript, speechSentences, zohoAdapter, ZohoOAuthError, type DocumentReader, type LlmProvider, type SendResult, type Speaker, type VoiceDirection, type ZohoAdapter } from "@snapsocial/integrations";
 import { randomBytes } from "node:crypto";
 import type { Db } from "./client";
+import { applyProjectAliases, lookupProject } from "./projects";
 import { linkByPhoneOrEmail, linkContacts, mergePersonLeads, personContactIds, personLeads, primaryOf, rejectMatch, suggestMatches } from "./people";
 import type { Prisma } from "./generated/prisma/client";
 
@@ -1711,10 +1712,28 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           else delete absorbed.answers[placeQuestionEarly.id];
         }
       }
+      // "Did you mean Adarsh Palm Retreat in Bellandur?": a yes keeps the full name, a no clears the guess.
+      const offeredProject = lastAsk.match(/\bdid you mean (.+?)(?: in [^?]+)?\?/i)?.[1]?.trim();
+      let projectRejected = false;
+      if (offeredProject && placeQuestionEarly) {
+        if (/^(?:yes|yeah|ya|yep|yup|haan|ha|aama|ji|correct|right|sure|exactly|that one)\b/i.test(freshText.trim()) && !/\b(?:no|not|wrong)\b/i.test(freshText)) {
+          absorbed.answers[placeQuestionEarly.id] = offeredProject;
+        } else if (/^(?:no|nope|nah|nahi|illa|not|wrong)\b/i.test(freshText.trim())) {
+          projectRejected = true;
+          if (!/\d|[a-z]{4,}\s+[a-z]{4,}/i.test(freshText.replace(/^(?:no|nope|nah|nahi|illa|not|wrong)\b[\s,.]*/i, ""))) delete absorbed.answers[placeQuestionEarly.id];
+          memoryLines.push("They said it is not the project you suggested. Do not suggest it again. If they have not given the name another way, ask for the full project name in a few words.");
+        }
+      }
       const placeText = placeAnswer(questions, absorbed.answers).slice(0, 120);
       const ownLand = ownLandHome(prospectBodies.join("\n"));
-      const place = placeText && runtime.lookupPlace && !ownLand
-        ? await runtime.lookupPlace(placeText, agent.serviceArea.split(/[,\n]+/)[0]?.trim() || undefined).catch(() => null)
+      // The team's own short forms first, then a remembered or fresh lookup: never on follow-ups, at most 3 names a chat.
+      const projectQuery = placeText ? applyProjectAliases(placeText, agent.projectAliases) : "";
+      const lookupsSoFar = conversation.messages.filter((message) => message.author === "SYSTEM" && message.body.startsWith("Project check:")).length;
+      const place = projectQuery && !ownLand && !projectRejected
+        ? await lookupProject(db, runtime.lookupPlace as Parameters<typeof lookupProject>[1], projectQuery, agent.serviceArea.split(/[,\n]+/)[0]?.trim() || undefined, {
+          allowSearch: Number(payload.followUp ?? 0) === 0 && lookupsSoFar < 3,
+          now: runtime.now(),
+        })
         : null;
       const found = place && !("missing" in place) ? place : null;
       const mapType = found?.kind ? homeTypeName(found.kind) : null;
@@ -1791,6 +1810,12 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           projectAsk = `${found.name} mostly has ${options.join(" and ")} BHK homes, is yours a ${count} BHK?`;
           memoryLines.push(`They said ${count} BHK, but ${found.name} mostly lists ${options.join(" and ")} BHK homes. Ask once, lightly, only this: "${projectAsk}" Never name Google, Maps, Brave or any website.`);
         }
+      }
+      // A short form, a spelling fix or a one-word name is confirmed once before it is trusted.
+      if (found?.confirm && placeQuestionEarly && !offeredProject
+        && !spoken.some((message) => message.author === "AI" && /\bdid you mean\b/i.test(message.body) && message.body.toLowerCase().includes(found.name.toLowerCase()))) {
+        const typed = found.shortForm ?? found.correctedFrom ?? (absorbed.answers[placeQuestionEarly.id] ?? "").trim();
+        projectAsk = `${found.shortForm ? `By ${typed}, did` : "Did"} you mean ${found.name}${found.locality ? ` in ${found.locality}` : ""}?`;
       }
       const HOME_TYPE_ONLY = /^(?:it(?:'s| is) )?(?:an? )?(apartment|appartment|flat|villa|bungalow|independent house|individual house|row house|duplex|penthouse)(?: sir| ji)?\.?$/i;
       const SCOPE_ONLY = /^(?:(?:it(?:'s| is) )?(?:the )?(?:full|whole|entire|complete) (?:home|house|flat)|selected rooms|only (?:some|few) rooms)(?: sir| ji)?\.?$/i;
@@ -1947,9 +1972,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
             : found.possessionYear
               ? ` A listing mentions ${found.possessionYear}. That is not their date. Confirm once, like "is possession around ${found.possessionYear}?", and never invent a month.`
               : "";
-        const seen = `${found.name}${kindNote} is in ${where}.${found.underConstruction && !livesThere ? " It is marked as under construction." : ""}`;
+        const seen = `${found.name}${kindNote} is in ${where}.${found.builder ? ` Listings name the builder as ${found.builder}.` : ""}${found.underConstruction && !livesThere ? " It is marked as under construction." : ""}`;
         await noteOnce(`Project check: ${placeText.toLowerCase()}`, `Found on Brave Search: ${found.name}${kindNote}, ${found.address ?? where}${advertised ? `. Advertised as ${advertised}` : ""}${found.readyToMove ? ". Ready to move" : ""}${found.possessionYear ? `. Possession year mentioned: ${found.possessionYear}` : ""}`);
-        memoryLines.push(`A lookup of their project found: ${seen}${menuNote}${stageNote} If they have not said the locality, you may confirm it naturally once, like "that is in <locality> side, right?", and use the area to make your reply relevant. This is all you know about the project: never invent the builder, flat sizes, possession dates, amenities or prices. Never name Google, Maps, Brave or any website.`);
+        memoryLines.push(`A lookup of their project found: ${seen}${menuNote}${stageNote} If they have not said the locality, you may confirm it naturally once, like "that is in <locality> side, right?", and use the area to make your reply relevant. This is all you know about the project: never invent anything beyond it, like flat sizes, possession dates, amenities or prices. Never name Google, Maps, Brave or any website.`);
       } else if (place && "missing" in place) {
         await noteOnce(`Project check: ${placeText.toLowerCase()}`, `"${place.missing}" was not found on ${place.source}. Confirm the project name on the call.`);
         memoryLines.push("Their project name was not confirmed. Do not tell them a search failed and do not guess a different project. Keep the name they gave. If the home type or BHK is still unknown, ask whether it is an apartment or a villa, and how many BHK.");
@@ -1959,7 +1984,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         const scopeValue = questions.filter((question) => /full home|selected rooms|scope/i.test(question.label)).map((question) => absorbed.answers[question.id] ?? "").find(Boolean) ?? "";
         const budget = budgetValue ? budgetLakhs(budgetValue) : null;
         if (budget && budget.low < agent.hotBudgetLakhs) {
-          memoryLines.push("Treat their budget like any other answer: acknowledge it warmly in a few words and carry on with the next detail. Never call the budget low, tight, small or limited, never mention a minimum budget, and never suggest raising the budget. Equally, never say the budget is workable, enough, good or that premium work is possible within it: if they ask, say the designer will suggest what fits best within it on the call.");
+          memoryLines.push("Treat their budget like any other answer: acknowledge it warmly in a few words and carry on with the next detail. Never call the budget low, tight, small or limited, never mention a minimum budget, and never suggest raising the budget. Equally, never say the budget is workable, enough, good or that premium work is possible within it: if they ask, say we will suggest what fits best within it on the call.");
         }
       }
       if (bhkQuestion) {
@@ -2083,14 +2108,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const roomPhotosShared = prospectBodies.some((body) => PHOTO_SEEN.test(body.trim()));
     const roomPhotosAsked = spoken.some((message) => message.author === "AI" && /\b(photos?|pictures?|pics?)\b/i.test(message.body) && /\b(rooms?|space|change|current|now)\b/i.test(message.body));
     // The client does not want Varun asking for floor plans or photos for a designer.
-    const planAsk = false && !planRefused && possession && mustHavesIn && !numberPending && (recordedPhone || !questions.some((question) => question.kind === "phone")) && !freshText.includes("?")
-      && (renovating ? !roomPhotosShared && !roomPhotosAsked : !planShared && !planAsked)
-      ? renovating
-        ? PLAN_RENOVATION_TEMPLATE
-        : /\b(ready|living|moved|staying|already|got (?:the )?(?:keys|possession)|mil gaya|mil gayi|ready hai|vandhachu)\b/i.test(possession) && !/\bnot ready\b|\bnahi\b|\billa\b/i.test(possession)
-          ? PLAN_READY_TEMPLATE
-          : PLAN_BUILDER_TEMPLATE
-      : null;
+    const planAsk = null as string | null;
     if (renovating) {
       memoryLines.push("This is a renovation of a home they already have. They are still only enquiring. Never ask about possession. Never suggest doing it room by room or while they stay there, and never talk as if the work is planned. Never ask for a floor plan. Ask what they are considering.");
     }

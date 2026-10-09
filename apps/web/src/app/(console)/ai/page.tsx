@@ -33,6 +33,7 @@ export default async function AiPage({ searchParams }: { searchParams: Promise<{
             knowledgeBase={workspace.knowledgeBase}
             maxQuestions={MAX_LEAD_QUESTIONS}
             settings={{
+              projectAliases: settings.projectAliases,
               goal: settings.goal,
               pricingAnswer: settings.pricingAnswer,
               workingHours: settings.workingHours,
