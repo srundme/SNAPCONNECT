@@ -217,3 +217,20 @@ describe("proof from completed homes", () => {
     expect(completedInProperty("Bellandur", done)).toBeNull();
   });
 });
+
+describe("ready for Zoho", () => {
+  it("sends once name, property, home, possession and phone are in, without waiting for email", async () => {
+    const { zohoReady } = await import("../src/index");
+    const questions = [
+      { id: "name", kind: "name" as const, label: "May I know your name?", required: true, zohoField: null },
+      { id: "where", kind: "text" as const, label: "Where is the home: which area, and what is the property name?", required: true, zohoField: null },
+      { id: "home", kind: "text" as const, label: "What kind of home is it: apartment, villa or independent house, and how many BHK?", required: true, zohoField: null },
+      { id: "when", kind: "text" as const, label: "When do you get possession, or is the home already ready?", required: true, zohoField: null },
+      { id: "phone", kind: "phone" as const, label: "Which number should the team call you on?", required: true, zohoField: "Phone" },
+      { id: "email", kind: "text" as const, label: "Email for the team to share the details?", required: true, zohoField: "Email" },
+    ];
+    const answers = { where: "Concorde Manhattans, Electronic City", home: "4 BHK Apartment", when: "I have the keys now" };
+    expect(zohoReady({ questions, answers, name: "Gopi N", phoneE164: null })).toBe(false);
+    expect(zohoReady({ questions, answers, name: "Gopi N", phoneE164: "+919845011111" })).toBe(true);
+  });
+});

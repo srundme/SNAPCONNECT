@@ -106,6 +106,7 @@ import {
   phoneProblem,
   dropRepeatedSentences,
   fullWords,
+  zohoReady,
   completedInProperty,
   parseCompletedProjects,
   emailProblem,
@@ -1348,7 +1349,8 @@ async function refreshLeadDetails(db: Db, runtime: Runtime, conversationId: stri
       data: { answers, phoneE164, timeframeRaw: callbackTime, revision: { increment: 1 } },
     });
   }
-  if (changed && !alreadyChanged && (lead.crm?.crmId || lead.crmState === "SYNCED")) {
+  const nowReady = questions.length > 0 && zohoReady({ questions, answers, name, phoneE164 });
+  if (changed && !alreadyChanged && (lead.crm?.crmId || lead.crmState === "SYNCED" || nowReady)) {
     await db.outboxJob.create({
       data: { workspaceId: lead.workspaceId, type: "CRM_SYNC", payload: { leadId: lead.id, contactId: conversation.contactId } },
     });
@@ -2718,7 +2720,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           ? { qualification: "QUALIFIED" as const, reasons: ["Every screening question is answered."], missing: [] as string[], contactable: Boolean(updatedLead.phoneE164) }
           : { qualification: "IN_PROGRESS" as const, reasons: [`Still needed: ${screen.missing.join(", ")}`], missing: screen.missing, contactable: false }
       : evaluateQualification(toSnapshot(updatedLead), rule.settings);
-    const sendToZoho = screen ? screen.ready : readyForZoho(qualification, rule.sendWhen);
+    // The team gets the lead as soon as name, property, home, possession and phone are in; later answers update it.
+    const sendToZoho = screen
+      ? zohoReady({ questions, answers: answerRecord(updatedLead.answers), name: updatedLead.contact.chosenName, phoneE164: updatedLead.phoneE164 })
+      : readyForZoho(qualification, rule.sendWhen);
     await db.lead.update({
       where: { id: lead.id },
       data: {
@@ -3822,8 +3827,7 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
   const rule = leadRule(lead.workspace);
   const questions = parseLeadQuestions(lead.workspace.leadQuestions);
   if (questions.length) {
-    const screen = screenLead({ questions, answers: answerRecord(lead.answers), name: lead.contact.chosenName, phoneE164: lead.phoneE164 });
-    if (!screen.ready) return "done";
+    if (!zohoReady({ questions, answers: answerRecord(lead.answers), name: lead.contact.chosenName, phoneE164: lead.phoneE164 })) return "done";
   } else {
     const qualification = evaluateQualification(toSnapshot(lead), rule.settings);
     if (!readyForZoho(qualification, rule.sendWhen)) return "done";

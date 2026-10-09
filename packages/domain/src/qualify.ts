@@ -415,6 +415,16 @@ export function screenLead(input: {
   return { ready: !cold && missing.length === 0, cold, missing, optional };
 }
 
+/**
+ * Ready for Zoho as soon as the team can act: every must-have except email (name, property, home,
+ * possession, phone). The rest keeps being collected and updates the same Zoho record.
+ */
+export function zohoReady(input: { questions: LeadQuestion[]; answers: Record<string, string>; name: string | null; phoneE164: string | null }): boolean {
+  const core = input.questions.filter((question) => question.required !== false && !/\be-?mail\b/i.test(question.label) && question.zohoField !== "Email");
+  const screen = screenLead({ ...input, questions: core });
+  return screen.ready && !screen.cold;
+}
+
 export function absorbTranscript(input: {
   questions: LeadQuestion[];
   messages: { author: string; body: string }[];
