@@ -644,7 +644,7 @@ async function runFollowUp(db: Db, payload: Record<string, unknown>, runtime: Ru
     && !conversation.contact.optedOutAt
     && Boolean(connection && !connection.automationPaused && !connection.revokedAt)
     && !conversation.workspace.automationPaused
-    && Boolean(lead && lead.qualification !== "DISQUALIFIED" && lead.crmState !== "SYNCED")
+    && Boolean(lead && lead.qualification !== "DISQUALIFIED" && !(await agendaDone(db, conversation.workspace, conversation.contactId, conversation.id)))
     && runtime.now().getTime() < conversation.lastUserMessageAt.getTime() + META_WINDOW_MS;
   if (!allowed) return "done";
   await db.outboxJob.create({
@@ -655,6 +655,21 @@ async function runFollowUp(db: Db, payload: Record<string, unknown>, runtime: Ru
     },
   });
   return "done";
+}
+
+/** The agenda is done when every must-have is answered (or declined) and a visit date and time is noted. */
+async function agendaDone(db: Db, workspace: { leadQuestions: unknown }, contactId: string, conversationId: string): Promise<boolean> {
+  const questions = parseLeadQuestions(workspace.leadQuestions);
+  const lead = await db.lead.findFirst({ where: { contactId, archivedAt: null }, include: { contact: true } });
+  if (!lead) return true;
+  const answers = answerRecord(lead.answers);
+  const missing = questions.filter((question) => question.required !== false).filter((question) => {
+    if (question.kind === "name") return !lead.contact.chosenName;
+    if (question.kind === "phone") return !lead.phoneE164 && !lead.phoneDeclined;
+    return !(answers[question.id] ?? "").trim();
+  });
+  const slot = await db.message.findFirst({ where: { conversationId, author: "SYSTEM", body: { startsWith: "Slot:" } }, select: { id: true } });
+  return missing.length === 0 && Boolean(slot);
 }
 
 /** Queues one look at new post pictures, unless one is already waiting. */
@@ -3980,6 +3995,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   let name = conversation.contact.chosenName;
   let phoneE164 = lead.phoneE164;
   let phoneAgreed = false;
+  let phoneDeclined = false;
   const placeQuestion = questions.find((question) => roleOf(question) === "place");
 
   // The property they named, looked up once (cached), with proof from our own completed homes.
@@ -4102,6 +4118,12 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
         return "done";
       }
     }
+    // A detail they did not want to share is recorded as such, so the team and Zoho see it and Varun moves on.
+    for (const role of answer.declined ?? []) {
+      const question = questions.find((item) => roleOf(item) === (role === "property" ? "place" : role === "home_type" || role === "bhk" ? "home" : role));
+      if (question && question.kind !== "name" && question.kind !== "phone" && !(read.answers[question.id] ?? "").trim()) read.answers[question.id] = "Not comfortable to share";
+      if (question?.kind === "phone" && !read.phoneE164) phoneDeclined = true;
+    }
     // Save what Claude understood, after code's checks.
     for (const problem of read.problems) if (/^Email /.test(problem)) await note(`Email check: ${problem.replace(/^Email "([^"]+)".*/, "$1")} | wrong`);
     answers = read.answers;
@@ -4125,6 +4147,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       answers,
       ...(phoneE164 && phoneE164 !== lead.phoneE164 ? { phoneE164, phonePermission: true } : {}),
       ...(phoneAgreed && phoneE164 === lead.whatsappE164 && !lead.sameNumberConfirmed ? { sameNumberConfirmed: true } : {}),
+      ...(phoneDeclined ? { phoneDeclined: true } : {}),
     },
   });
   if (phoneE164 !== lead.phoneE164 || JSON.stringify(answers) !== JSON.stringify(answerRecord(lead.answers))) {

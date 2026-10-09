@@ -23,6 +23,7 @@ import {
 export type BrainAnswer = {
   bubbles: string[];
   details: Partial<Record<"name" | "property" | "area" | "home_type" | "bhk" | "possession" | "phone" | "email" | "style" | "carpet_area" | "budget" | "timeline", string | null>>;
+  declined?: string[];
   offer_choice: "consultation" | "experience_centre" | "both" | null;
   slot: string | null;
   handoff: boolean;
@@ -39,13 +40,14 @@ export const BRAIN_TOOL_SCHEMA = {
       description: "Details the customer gave in their latest messages, in their words, cleaned up. Leave out anything not given.",
       properties: Object.fromEntries(["name", "property", "area", "home_type", "bhk", "possession", "phone", "email", "style", "carpet_area", "budget", "timeline"].map((key) => [key, { type: ["string", "null"] }])),
     },
+    declined: { type: "array", items: { type: "string", enum: ["name", "property", "home_type", "bhk", "possession", "phone", "email"] }, description: "Details they said they do not want to share." },
     offer_choice: { type: ["string", "null"], enum: ["consultation", "experience_centre", "both", null] },
     slot: { type: ["string", "null"], description: "The day and time they asked for, in their words, or null." },
     handoff: { type: "boolean" },
     flag: { type: ["string", "null"] },
     opt_out: { type: "boolean" },
   },
-  required: ["bubbles", "details", "offer_choice", "slot", "handoff", "flag", "opt_out"],
+  required: ["bubbles", "details", "declined", "offer_choice", "slot", "handoff", "flag", "opt_out"],
 } as const;
 
 export type Role = "name" | "place" | "home" | "possession" | "phone" | "email" | "style" | "carpet" | "budget" | "timeline";

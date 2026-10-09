@@ -538,8 +538,10 @@ describe("webhooks", () => {
       }],
     }, new Date("2026-10-05T00:00:00Z"));
     const messages = events.filter((event) => event.kind === "message");
-    expect(messages).toHaveLength(3);
+    // A reaction keeps the chat going: it reaches Varun as a short reply.
+    expect(messages).toHaveLength(4);
     expect(messages[0]).toMatchObject({ externalAccountId: "pnid-1", senderId: "919845012345", text: "Hi, need AI calling", senderName: "Kishore" });
+    expect(messages[3]).toMatchObject({ text: "(Reacted 👍 to your message)" });
     const replied = normalizeMetaPayload("WHATSAPP", {
       object: "whatsapp_business_account",
       entry: [{
@@ -556,7 +558,6 @@ describe("webhooks", () => {
     expect(replied[0]).toMatchObject({ kind: "message", text: "no", replyToMessageId: "wamid.out" });
     expect(messages[1]).toMatchObject({ text: "", audioMediaId: "media-9" });
     expect(messages[2]).toMatchObject({ text: "Yes" });
-    expect(events.some((event) => event.kind === "ignore" && event.reason.includes("reaction"))).toBe(true);
     const delivered = events.find((event) => event.kind === "delivery");
     expect(delivered).toMatchObject({ messageId: "wamid.out", status: "delivered", recipient: null, errorCode: null });
     expect(delivered && dedupKey("WHATSAPP", delivered)).toBe("WHATSAPP:pnid-1:delivery:wamid.out:delivered");

@@ -61,8 +61,7 @@ export function rateLead(input: { questions: LeadQuestion[]; answers: Record<str
   if (!line) return { rating: "UNRATED", reason: "No budget line set" };
   const budgetText = answerFor(input.questions, input.answers, /budget/i);
   const budget = budgetText ? budgetLakhs(budgetText) : null;
-  const scopeText = answerFor(input.questions, input.answers, /full home|selected rooms|scope/i);
-  if (selectedRoomsOnly(scopeText)) return { rating: "JUNK", reason: `Only some rooms (${scopeText.trim()}), not a full home` };
+  // Size is never a reason to turn anyone away (9 Oct 2026): a single room or a 1 BHK is not junk.
   if (budget) {
     // "within 60 lakhs" is a ceiling they will spend up to, so rate it on the 60.
     const spend = budget.low > 0 ? budget.low : budget.high ?? 0;
@@ -81,8 +80,7 @@ export function rateLead(input: { questions: LeadQuestion[]; answers: Record<str
   const estimate = `Estimated from project size (no budget ${budgetText ? "given" : "yet"})`;
   // A plain 3 BHK apartment is left UNRATED for the team to judge.
   if (full && (BIG_HOME.test(home) || bhk >= 4 || sqft >= 1500)) return { rating: "HOT", reason: `${estimate}: full home, ${home.trim() || `${sqft} sq ft`}` };
-  // 2 BHK homes are taken up too (9 Oct 2026); only a 1 BHK is junk.
-  if (bhk && bhk <= 1) return { rating: "JUNK", reason: `${estimate}: ${bhk} BHK` };
+
   // A 3 BHK full home is never junk on a typed area alone: the team judges it.
   if (full && sqft && sqft < 1500 && !bhk) return { rating: "JUNK", reason: `${estimate}: ${sqft} sq ft` };
   return { rating: "UNRATED", reason: "Not enough detail yet" };

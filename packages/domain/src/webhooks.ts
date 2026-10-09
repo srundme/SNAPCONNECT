@@ -187,7 +187,10 @@ function whatsappEntry(entry: Json, receivedAt: Date): NormalizedEvent[] {
       }
       const interactive = asObject(message.interactive);
       const media = asObject(message[type]);
-      const text = type === "text" ? asString(asObject(message.text)?.body)
+      // A reaction (👍) keeps the chat going: Varun sees it like a short reply. Removing a reaction is ignored.
+      const reactionEmoji = type === "reaction" ? asString(asObject(message.reaction)?.emoji) : null;
+      const text = type === "reaction" ? (reactionEmoji ? `(Reacted ${reactionEmoji} to your message)` : null)
+        : type === "text" ? asString(asObject(message.text)?.body)
         : type === "button" ? asString(asObject(message.button)?.text)
         : type === "interactive" ? asString(asObject(interactive?.button_reply)?.title) ?? asString(asObject(interactive?.list_reply)?.title)
         : asString(media?.caption) ?? null;
@@ -345,10 +348,24 @@ function facebookEntry(accountId: string, entry: Json, receivedAt: Date): Normal
 function readMessaging(accountId: string, value: unknown, receivedAt: Date): NormalizedEvent {
   const node = asObject(value);
   if (!node) return { kind: "ignore", externalAccountId: accountId, reason: "Malformed messaging event.", nativeId: null };
-  if (node.read || node.delivery || node.reaction) {
+  if (node.read || node.delivery) {
     return { kind: "ignore", externalAccountId: accountId, reason: "Non-message messaging event.", nativeId: null };
   }
   const sender = asObject(node.sender);
+  const reaction = asObject(node.reaction);
+  if (reaction) {
+    const senderId = asString(sender?.id);
+    const emoji = asString(reaction.emoji) ?? (asString(reaction.reaction) === "love" ? "❤️" : asString(reaction.reaction));
+    if (!senderId || senderId === accountId || asString(reaction.action) === "unreact" || !emoji) {
+      return { kind: "ignore", externalAccountId: accountId, reason: "Reaction removed or from the page.", nativeId: null };
+    }
+    const at = numberDate(Number(node.timestamp)) ?? receivedAt.toISOString();
+    return {
+      kind: "message", externalAccountId: accountId, messageId: `reaction-${asString(reaction.mid) ?? "x"}-${senderId}-${Date.parse(at)}`, senderId,
+      text: `(Reacted ${emoji} to your message)`, sentAt: at, isEcho: false, referralCommentId: null, referralPostId: null, audioUrl: null,
+      senderName: null, audioMediaId: null, mediaKind: null, imageMediaId: null, document: null, replyToMessageId: null,
+    } as NormalizedEvent;
+  }
   const edit = asObject(node.message_edit);
   if (edit) {
     const editedId = asString(edit.mid);
