@@ -50,10 +50,10 @@ export function ReplySetup({
           <p className="truncate text-sm text-[var(--color-muted)]">{accountName} · {onCount} of {posts.length} posts on</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <span className={clsx("rounded-full px-2.5 py-1 text-[12px] font-semibold", repliesOn ? "bg-[#e7f6f3] text-[#085e58]" : "bg-[#fff6e8] text-[#92400e]")}>
+          <span className={clsx("rounded-full px-2.5 py-1 text-[12px] font-semibold", repliesOn ? "bg-[#f4ead2] text-[#6e5420]" : "bg-[#fff6e8] text-[#92400e]")}>
             {repliesOn ? "On" : "Off"}
           </span>
-          <button className="border-transparent bg-[var(--color-accent)] px-4 py-2 text-white hover:bg-[#0a655f]" type="submit" name="activate" value={repliesOn ? "0" : "1"}>
+          <button className="border-transparent bg-[var(--color-accent)] px-4 py-2 text-white hover:bg-[#745722]" type="submit" name="activate" value={repliesOn ? "0" : "1"}>
             {repliesOn ? "Save" : "Turn on"}
           </button>
         </div>

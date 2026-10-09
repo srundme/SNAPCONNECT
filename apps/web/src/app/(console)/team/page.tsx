@@ -5,7 +5,7 @@ import { requireWorkspace } from "@/lib/session";
 
 export default async function TeamPage({ searchParams }: { searchParams: Promise<{ token?: string }> }) {
   const params = await searchParams;
-  const { workspace, role } = await requireWorkspace();
+  const { actor, workspace, role } = await requireWorkspace();
   if (!workspace) return <Empty title="No workspace" body="Select a workspace." />;
   if (role === "VIEWER" || role === "AGENT") return <Empty title="Permission denied" body="Team management is limited to admins." />;
   const members = await getPrisma().membership.findMany({ where: { workspaceId: workspace.id }, include: { user: true } });
@@ -17,7 +17,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
         {members.map((member) => (
           <li key={member.id} className="flex items-center justify-between py-2">
             <span>{member.user.email} · {member.role}</span>
-            <form action={removeMember}><input type="hidden" name="userId" value={member.userId} /><button type="submit">Remove</button></form>
+            {member.userId === actor.userId || (member.role === "ADMIN" && role !== "SUPER_ADMIN") ? null : <form action={removeMember}><input type="hidden" name="userId" value={member.userId} /><button type="submit">Remove</button></form>}
           </li>
         ))}
       </ul>

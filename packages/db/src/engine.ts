@@ -18,11 +18,23 @@ import {
   rateLead,
   budgetLakhs,
   selectedRoomsOnly,
+  volunteeredRoomsOnly,
+  preferLatestHome,
+  preferLatestPlace,
+  notAPlaceSentence,
+  priceShock,
+  notNow,
+  notAHome,
+  alreadyHasDesigner,
+  mentionsTwoHomes,
   homeTypeName,
   requestedTime,
   requestedTimeLine,
   requestedTimeReply,
   dayOffLine,
+  officeNowLine,
+  waitingOnCall,
+  callWaitReply,
   askSameNumber,
   asksSameNumberIn,
   type LeadQuestion,
@@ -41,6 +53,8 @@ import {
   asksForName,
   cleanName,
   mentionsOwnName,
+  ignoreAgentGreeting,
+  dropCallingThemAgent,
   nameInReply,
   assistantContext,
   collectionBrief,
@@ -91,16 +105,25 @@ import {
   nameConcern,
   phoneProblem,
   dropRepeatedSentences,
+  fullWords,
   humanBubbles,
+  withoutPrices,
   parseAgentSettings,
   applyReplySwitches,
   readingMs,
   typingMs,
   unrealisticAnswers,
+  impossibleBhk,
+  dropImpossibleBhk,
   bareBudget,
   bareBudgetRange,
   dropCannedLines,
-  oneAddress,
+  easeAddress,
+  dropEmptyPraise,
+  dropUnaskedCallback,
+  dropUnaskedPrice,
+  askingPrice,
+  readyToProceed,
   mediaNote,
   documentNote,
   renderAgentPrompt,
@@ -121,11 +144,13 @@ export type SendConnection = {
 
 export type SendInput = {
   connection: SendConnection;
-  purpose: "opening" | "text";
+  purpose: "opening" | "text" | "typing";
   commentId?: string;
   recipientId?: string;
   text: string;
   audioUrl?: string;
+  /** The customer's message id, used to show typing on WhatsApp. */
+  inboundMessageId?: string;
 };
 
 export type Runtime = {
@@ -147,13 +172,22 @@ export type Runtime = {
   replySettleMs?: number;
   /** Finds a named apartment project on a map, to learn its locality. */
   lookupPlace?: (query: string, city?: string) => Promise<
-    | { name: string; locality: string | null; city: string | null; pincode: string | null; underConstruction: boolean; kind?: "apartment" | "villa" | null; address?: string | null; source?: string }
+    | { name: string; locality: string | null; city: string | null; pincode: string | null; underConstruction: boolean; readyToMove?: boolean; possessionYear?: number | null; kind?: "apartment" | "villa" | null; address?: string | null; bhkOptions?: number[]; source?: string }
     | { missing: string; source: string }
     | null
   >;
   /** Waits like a person reading and typing. Left out in tests, so replies go straight away. */
   pause?: (ms: number) => Promise<void>;
 };
+
+/** "2, 3 and 4 BHK" from the sizes a project listing advertises. */
+function advertisedBhkLine(options: number[] | undefined): string | null {
+  const labels = [...new Set((options ?? []).filter((count) => count >= 1 && count <= 9))].sort((a, b) => a - b).map(String);
+  if (labels.length === 0) return null;
+  if (labels.length === 1) return `${labels[0]} BHK`;
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]} BHK`;
+  return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]} BHK`;
+}
 
 function sendConnection(connection: SendConnection): SendConnection {
   return {
@@ -166,6 +200,9 @@ function sendConnection(connection: SendConnection): SendConnection {
 }
 
 export function simulatedSend(input: SendInput): Promise<SendResult> {
+  if (input.purpose === "typing") {
+    return Promise.resolve({ status: "ACCEPTED", providerMessageId: null, providerRecipientId: null, simulated: true });
+  }
   const adapter = simulationAdapter(input.connection.channel);
   if (input.purpose === "opening") {
     return adapter.sendPrivateReply({ accountId: "sim", commentId: input.commentId ?? "", text: input.text, token: "sim" });
@@ -220,6 +257,11 @@ export async function ingestEvents(
   for (const event of input.events) {
     if (event.kind === "ignore") {
       rejected += 1;
+      continue;
+    }
+    if (event.kind === "delivery") {
+      await recordDelivery(db, input, event);
+      stored += 1;
       continue;
     }
     const connections = await db.channelConnection.findMany({
@@ -444,11 +486,16 @@ function followUpLine(step: unknown, total: number, lastSentAt: Date | undefined
   if (!number) return "";
   const hours = lastSentAt ? Math.max(1, Math.round((now.getTime() - lastSentAt.getTime()) / 3_600_000)) : null;
   return [
-    `They have not replied${hours ? ` for about ${hours} hour${hours === 1 ? "" : "s"}` : ""} since your last message. This is follow up ${number} of ${total}.`,
-    "Send one short, natural follow up, the way a premium sales consultant checks in: friendly, never pushy, never guilt-tripping, and never repeating your last message.",
-    "Give them an easy reason to reply, like one useful point from the knowledge base or a simple question about what they need. Do not mention that they did not reply.",
-    number >= total ? "This is the last follow up, so keep the door open warmly and do not ask for anything." : "",
+    `They have not replied${hours ? ` for about ${hours} hour${hours === 1 ? "" : "s"}` : ""} since your last message. This is follow up ${number} of ${total}. They did not just message.`,
+    "Send one short check-in. Do not say ok, do not react to their last answer, and do not ask the next detail. Do not mention that they did not reply.",
+    number >= total ? "This is the last follow up. Keep the door open and do not ask anything." : "One easy line is enough, like you are checking in.",
   ].filter(Boolean).join(" ");
+}
+
+/** The whole follow-up. The live-chat path would otherwise answer their old message. */
+function followUpReply(step: number, total: number): string {
+  if (step >= total) return "no rush. whenever u are ready, message here";
+  return "just checking in. whenever u want to continue, message here";
 }
 
 /** A follow-up never lands at night: 9 PM to 9:30 AM in India moves to 10 AM. */
@@ -837,7 +884,7 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
         ...knownPhone,
       },
     });
-  } else if (whatsapp) {
+  } else {
     const activeLead = await db.lead.findFirst({ where: { contactId, archivedAt: null } });
     if (!activeLead) {
       await db.lead.create({
@@ -853,7 +900,7 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
         },
       });
     }
-    if (senderName) {
+    if (whatsapp && senderName) {
       await db.contact.updateMany({ where: { id: contactId, displayName: null }, data: { displayName: senderName } });
     }
   }
@@ -927,6 +974,15 @@ async function handleMessage(db: Db, connectionId: string, body: Record<string, 
     extraNotes = notes.slice(1);
   }
   if (!text.trim()) return;
+  const replyToId = typeof body.replyToMessageId === "string" ? body.replyToMessageId : "";
+  if (replyToId) {
+    const quoted = await db.message.findFirst({
+      where: { connectionId, externalMessageId: replyToId },
+      select: { body: true },
+    });
+    const clip = quoted?.body.replace(/\s+/g, " ").trim().slice(0, 180);
+    if (clip) text = `(Replied to: "${clip}") ${text}`.trim();
+  }
   let savedId: string;
   try {
     const saved = await db.message.create({
@@ -1305,7 +1361,7 @@ async function sendOpening(db: Db, attemptId: string, runtime: Runtime): Promise
   }
   const job = await db.outboxJob.findFirst({ where: { type: "SEND_OPENING", payload: { path: ["outboundAttemptId"], equals: attempt.id } } });
   const text = String(asRecord(job?.payload).text ?? decision?.reason ?? "");
-  const template = withAutomationDisclosure(text || "Thanks for your comment. How can we help?", connection.workspace.brandName, connection.workspace.agentName);
+  const template = fullWords(withAutomationDisclosure(text || "Thanks for your comment. How can we help?", connection.workspace.brandName, connection.workspace.agentName));
   const result = await runtime.send({ connection: sendConnection(connection), purpose: "opening", commentId: attempt.commentExternalId, text: template });
   await db.outboundAttempt.update({
     where: { id: attempt.id },
@@ -1408,6 +1464,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       });
       return "done";
     }
+    await signalTyping(db, runtime, conversation, connection);
     if (workspace.agentPrompt?.trim() && runtime.llm.complete) {
       return await promptedReply(db, runtime, { payload, expectedRevision, conversation, workspace, connection, lead });
     }
@@ -1434,6 +1491,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const elsewhere = await otherChannelLine(db, conversation, lead.phoneE164);
     const memoryLines = [
       clockLine(runtime.now()),
+      officeNowLine(runtime.now(), agent.workingHours, agent.holidays),
       elsewhere,
       conversation.contact.memory ? `What you remember about this person from earlier chats:\n${conversation.contact.memory}` : "",
       lead.crmState === "SYNCED"
@@ -1443,7 +1501,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         : "",
       dayOffLine(runtime.now(), agent.holidays, agent.workingHours),
       conversation.channel === "WHATSAPP" && !conversation.messages.some((message) => message.author === "AI")
-        ? `They messaged ${workspace.brandName} on WhatsApp. This is your first reply: greet them, say you are ${workspace.agentName ?? "the assistant"}, an automated assistant for ${workspace.brandName}, then continue.`
+        ? elsewhere || lead.crmState === "SYNCED"
+          ? "They are continuing on WhatsApp after already sharing their details. Greet them by name in a few words and continue from where the other chat left off. Do not introduce yourself again and do not ask for anything already recorded."
+          : `They messaged ${workspace.brandName} on WhatsApp. This is your first reply: greet them, say you are ${workspace.agentName ?? "the assistant"}, an automated assistant for ${workspace.brandName}, then continue.`
         : "",
       conversation.channel === "WHATSAPP" && lead.phoneE164
         ? lead.sameNumberConfirmed || lead.phoneE164 !== lead.whatsappE164 || spoken.some((message) => message.author === "AI" && asksSameNumberIn(message.body))
@@ -1468,6 +1528,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const prospectBodies = spoken.filter((message) => message.author === "PROSPECT").map((message) => message.body);
     const sinceReply = spoken.filter((message) => message.author === "PROSPECT" && (!lastAiAt || message.createdAt > lastAiAt)).map((message) => message.body);
     const freshText = (sinceReply.length ? sinceReply : prospectBodies.slice(-1)).join("\n");
+    const chasingCall = waitingOnCall(freshText);
+    if (chasingCall) memoryLines.push("They say the team has not called. Reply only that you will check with the team. Do not mention how long ago the details were sent. Do not say they will call during working hours. Follow the office line for whether hours have passed.");
+    const agentGreeted = Boolean(workspace.agentName && ignoreAgentGreeting(workspace.agentName, prospectBodies, workspace.agentName) === null);
+    if (agentGreeted) memoryLines.push(`They said hi to you, ${workspace.agentName}. That is your name, not theirs. Do not call them ${workspace.agentName}. Do not record it as their name. Their name is still unknown.`);
     let situationHandoff: string | null = null;
     for (const situation of customerComplaint(freshText) ? [] : messageSituations(freshText, workspace.brandName)) {
       if (!(await noteOnce(`Situation: ${situation.key}`, situation.note)) && !situation.always) continue;
@@ -1526,6 +1590,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const checkedIds: string[] = [];
     let form: Awaited<ReturnType<typeof readLeadForm>> = null;
     let homeKind: string | null = null;
+    let blockedBhk: number | null = null;
     if (questions.length) {
       let absorbed = absorbTranscript({
         questions,
@@ -1536,7 +1601,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         phoneRegion,
         nameReadElsewhere: readsName,
       });
-      form = await readLeadForm(runtime, questions, conversation.messages, phoneRegion);
+      form = await readLeadForm(runtime, questions, conversation.messages, phoneRegion, workspace.agentName);
       if (form) {
         formRead = true;
         const merged: Record<string, string> = { ...recordedAnswers, ...form.answers };
@@ -1551,10 +1616,25 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           answers: merged,
         };
       } else if (readsName) {
-        absorbed.name = await latestName(runtime, conversation.messages, absorbed.name);
+        absorbed.name = await latestName(runtime, conversation.messages, absorbed.name, workspace.agentName);
       }
       for (const [id, value] of Object.entries(labelledAnswers(questions, freshText))) {
         if (!absorbed.answers[id]) absorbed.answers[id] = value;
+      }
+      // A BHK they volunteered ("my new 3 BHK house") answers the home question, so it is never asked again.
+      const homeQuestion = questions.find((question) => /\bbhk\b/i.test(question.label));
+      if (homeQuestion && !/\d\s*-?\s*(bhk|rk)\b/i.test(`${absorbed.answers[homeQuestion.id] ?? ""} ${recordedAnswers[homeQuestion.id] ?? ""}`)) {
+        const typed = prospectBodies.filter((body) => !PHOTO_SEEN.test(body) && !DOCUMENT_SEEN.test(body));
+        // Only a sentence about their own home counts: "my friend has a 2 BHK" is not their home.
+        const ownHome = (sentence: string) => /\b(my|our|mine|we have|i have|i've|i bought|we bought|new|own)\b/i.test(sentence)
+          && !/\b(friend|brother|sister|parents?|relative|neighbou?r|cousin|someone|colleague|uncle|aunt)\b/i.test(sentence);
+        const said = [...typed].reverse()
+          .map((body) => body.split(/(?<=[.!?\n])\s*|,\s*(?=\w+\s+(?:is|has)\b)/).filter(ownHome).flatMap((sentence) => [...sentence.matchAll(/(?<!\d)([1-9])\s*-?\s*bhk\b/gi)].map((match) => match[1])))
+          .find((counts) => counts.length);
+        if (said && new Set(said).size === 1) {
+          const kind = homeTypeName(typed.join("\n")) ?? (/\bhouse\b/i.test(typed.join("\n")) ? "house" : null);
+          absorbed.answers[homeQuestion.id] = `${said[0]} BHK${kind ? ` ${kind}` : ""}`;
+        }
       }
       const lastAsk = [...spoken].reverse().find((message) => message.author === "AI")?.body ?? "";
       const unsureOf = !formRead && NOT_SURE.test(freshText) && freshText.length <= 80
@@ -1567,6 +1647,15 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         && !/\d\s*-?\s*(bhk|rk)\b|\bstudio\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
         absorbed.answers[bhkQuestion.id] = recordedAnswers[bhkQuestion.id]!;
       }
+      const placeQuestionEarly = questions.find((question) => /\b(where is the home|which area|location)\b/i.test(question.label));
+      if (placeQuestionEarly) {
+        const nowPlace = (absorbed.answers[placeQuestionEarly.id] ?? "").trim();
+        const keptPlace = (recordedAnswers[placeQuestionEarly.id] ?? "").trim();
+        if (nowPlace && notAPlaceSentence(nowPlace)) {
+          if (keptPlace && !notAPlaceSentence(keptPlace)) absorbed.answers[placeQuestionEarly.id] = keptPlace;
+          else delete absorbed.answers[placeQuestionEarly.id];
+        }
+      }
       const placeText = placeAnswer(questions, absorbed.answers).slice(0, 120);
       const ownLand = ownLandHome(prospectBodies.join("\n"));
       const place = placeText && runtime.lookupPlace && !ownLand
@@ -1574,8 +1663,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         : null;
       const found = place && !("missing" in place) ? place : null;
       const mapType = found?.kind ? homeTypeName(found.kind) : null;
+      const advertised = advertisedBhkLine(found?.bhkOptions);
       const bareBhk = formRead ? undefined : freshText.trim().toLowerCase().match(/^(?:it(?:'s| is) )?(?:a )?([1-9]|one|two|three|four|five|six|seven|eight)(?: (?:bed ?rooms?|bedrooms|rooms))?(?: sir| ji| bro)?\.?$/)?.[1];
-      if (bhkQuestion && bareBhk && /\bbhk\b|\bbed ?rooms?\b/i.test(lastAsk) && !/\d\s*-?\s*(bhk|rk)\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
+      if (bhkQuestion && bareBhk && /\bbhk\b|\bbed ?rooms?\b/i.test(lastAsk) && (!/\d\s*-?\s*(bhk|rk)\b/i.test(absorbed.answers[bhkQuestion.id] ?? "") || /\bhow many BHK\b/i.test(lastAsk))) {
         const words = ["one", "two", "three", "four", "five", "six", "seven", "eight"];
         const count = /\d/.test(bareBhk) ? bareBhk : String(words.indexOf(bareBhk) + 1);
         const kind = homeTypeName(prospectBodies.join("\n")) ?? mapType;
@@ -1602,6 +1692,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         const kind = homeTypeName(prospectBodies.filter((body) => !PHOTO_SEEN.test(body)).join("\n")) ?? homeTypeName(plansSeen[0] ?? "");
         absorbed.answers[bhkQuestion.id] = `${planBhk} BHK${kind ? ` ${kind}` : ""} (from the floor plan)`;
       }
+      if (bhkQuestion) {
+        const listed = [...(absorbed.answers[bhkQuestion.id] ?? "").matchAll(/\b([1-9])\s*-?\s*bhk\b/gi)].map((match) => match[1]);
+        if (new Set(listed).size > 1) delete absorbed.answers[bhkQuestion.id];
+      }
       if (bhkQuestion && !/\d\s*-?\s*(bhk|rk)\b|\bstudio\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
         homeKind = prospectBodies.join("\n").match(/\b(apartment|appartment|flat|villa|bungalow|independent house|individual house|row house|duplex|penthouse)\b/i)?.[1]?.toLowerCase() ?? null;
         const saidKind = Boolean(homeKind);
@@ -1611,7 +1705,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           const type = homeTypeName(homeKind);
           memoryLines.push(saidKind || !found?.kind
             ? `They already said it is ${/^[aeiou]/.test(homeKind) ? "an" : "a"} ${homeKind}${type && type.toLowerCase() !== homeKind ? ` (${type.toLowerCase()})` : ""}. Never ask the home type again; when the BHK is your next detail, ask only how many BHK.`
-            : `Google Maps lists ${found.name} as ${found.kind === "apartment" ? "an apartment" : "a villa"} project, so take it as ${found.kind === "apartment" ? "an apartment" : "a villa"}. Never ask apartment, villa or independent house; when the BHK is your next detail, ask only how many BHK in words that let them correct you, like "how many BHK is ur ${found.kind === "apartment" ? "flat" : "villa"} in ${found.name}?".`);
+            : `A lookup lists ${found.name} as ${found.kind === "apartment" ? "an apartment" : "a villa"} project, so take it as ${found.kind === "apartment" ? "an apartment" : "a villa"}. Never ask apartment, villa or independent house; when the BHK is your next detail, ask only how many BHK in words that let them correct you, like "${advertised ? `those are mostly ${advertised}, how many BHK is urs?` : `how many BHK is ur ${found.kind === "apartment" ? "flat" : "villa"} in ${found.name}?`}".${advertised ? ` Never record ${advertised} as their answer.` : ""} Never name Google, Maps, Brave or any website.`);
         }
       } else if (bhkQuestion) {
         const value = absorbed.answers[bhkQuestion.id]!;
@@ -1707,6 +1801,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         if (range) absorbed.answers[question.id] = `${range.low} to ${range.high} lakh`;
         else if (single !== null) absorbed.answers[question.id] = `${single} lakh`;
       }
+      if (bhkQuestion) {
+        const joked = impossibleBhk(freshText);
+        if (joked) absorbed.answers[bhkQuestion.id] = `${joked} BHK`;
+      }
       for (const doubt of unrealisticAnswers(questions, absorbed.answers)) {
         const marker = `Number check: ${doubt.label} ${doubt.value}`;
         const asked = await db.message.findFirst({
@@ -1716,8 +1814,16 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         const latest = [...conversation.messages].reverse().find((message) => message.author === "PROSPECT");
         const reconfirmed = Boolean(asked && latest && latest.createdAt > asked.createdAt
           && (/\b(yes|yeah|ya|haan|aama|really|seriously|true|confirm\w*|sure)\b/i.test(latest.body) || latest.body.replace(/\D/g, "").includes(String(doubt.value))));
-        if (reconfirmed) continue;
-        if (recordedAnswers[doubt.id] && recordedAnswers[doubt.id] !== absorbed.answers[doubt.id]) absorbed.answers[doubt.id] = recordedAnswers[doubt.id]!;
+        const homeJoke = /\bbhk\b/i.test(doubt.label);
+        if (reconfirmed && !homeJoke) continue;
+        if (homeJoke) {
+          const previous = recordedAnswers[doubt.id] ?? "";
+          if (/\b[1-9]\s*-?\s*(?:bhk|rk)\b/i.test(previous) && !impossibleBhk(previous)) absorbed.answers[doubt.id] = previous;
+          else delete absorbed.answers[doubt.id];
+          // An earlier joke stays in the transcript. Only the message that says it gets the fixed line.
+          if (!impossibleBhk(freshText)) continue;
+          blockedBhk = doubt.value;
+        } else if (recordedAnswers[doubt.id] && recordedAnswers[doubt.id] !== absorbed.answers[doubt.id]) absorbed.answers[doubt.id] = recordedAnswers[doubt.id]!;
         else delete absorbed.answers[doubt.id];
         if (asked) continue;
         await db.message.create({
@@ -1730,7 +1836,12 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
             createdAt: runtime.now(),
           },
         });
-        memoryLines.push(/budget|price|spend|cost/i.test(doubt.label)
+        const keptHome = homeJoke ? absorbed.answers[doubt.id] : undefined;
+        memoryLines.push(homeJoke
+          ? keptHome
+            ? `They said ${doubt.value} BHK. That is not a real home, so it is not saved. Their home stays ${keptHome}. Do not change it.`
+            : `They said ${doubt.value} BHK. No real home has that many bedrooms, so it is not saved. Do not laugh, do not say haha, do not say noted, and do not suggest another count such as 10 BHK. Ask only: that is not a real home. how many BHK is it?`
+          : /budget|price|spend|cost/i.test(doubt.label)
           ? `They said their ${doubt.label.toLowerCase()} is ${doubt.value.toLocaleString("en-IN")}, which does not look like a real interior budget. It may be a typo or a missing unit. Do not record it and never laugh at a budget: politely check what they meant in a few words.`
           : `They said their ${doubt.label.toLowerCase()} is ${doubt.value.toLocaleString("en-IN")}, which is not realistic for this enquiry. It is almost surely a joke or a slip. Do not record it, never say noted and never repeat it back as fact. React like a person who got the joke: ${agent.laughter ? "start your reply with a short haha, then" : "with a light touch,"} ask for the real number.`);
       }
@@ -1743,19 +1854,50 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         const livesThere = Object.values(absorbed.answers).some((value) => /^ready\b|\b(living|staying|already (ready|with me|have))\b/i.test(value));
         const kindNote = found.kind ? ` (${found.kind} project)` : "";
         const where = [found.locality, found.city, found.pincode].filter(Boolean).join(", ");
-        const seen = `${found.name}${kindNote} is in ${where} (${found.source ?? "a lookup"}).${found.underConstruction && !livesThere ? " It is marked as under construction." : ""}`;
-        await noteOnce(`Project check: ${placeText.toLowerCase()}`, `Found on ${found.source ?? "a lookup"}: ${found.name}${kindNote}, ${found.address ?? where}`);
-        memoryLines.push(`A lookup of their project found: ${seen} If they have not said the locality, you may confirm it naturally once, like "that is in <locality> side, right?", and use the area to make your reply relevant. This is all you know about the project: never invent the builder, flat sizes, possession dates, amenities or prices.`);
+        const hasOwnBhk = Boolean(bhkQuestion && /\b[1-9]\s*-?\s*bhk\b/i.test(absorbed.answers[bhkQuestion.id] ?? ""));
+        const menuNote = advertised
+          ? hasOwnBhk
+            ? ` It is advertised as ${advertised}. They already gave their own BHK, so do not mention that list.`
+            : ` It is advertised as ${advertised}. That list is not their home. Never record it as their BHK. When the BHK is your next detail, mention the range once and let them correct you, like "those are mostly ${advertised}, how many BHK is urs?".`
+          : "";
+        const possessionSaid = questions.some((question) => /possession|already ready/i.test(question.label) && (absorbed.answers[question.id] ?? "").trim());
+        const stageNote = possessionSaid
+          ? ""
+          : found.readyToMove
+            ? " Listings say it is ready to move. That is not their word. Confirm once, like \"that one is ready to move, right?\", and do not ask possession as if nothing is known. Never invent a month or a date."
+            : found.possessionYear
+              ? ` A listing mentions ${found.possessionYear}. That is not their date. Confirm once, like "is possession around ${found.possessionYear}?", and never invent a month.`
+              : "";
+        const seen = `${found.name}${kindNote} is in ${where}.${found.underConstruction && !livesThere ? " It is marked as under construction." : ""}`;
+        await noteOnce(`Project check: ${placeText.toLowerCase()}`, `Found on Brave Search: ${found.name}${kindNote}, ${found.address ?? where}${advertised ? `. Advertised as ${advertised}` : ""}${found.readyToMove ? ". Ready to move" : ""}${found.possessionYear ? `. Possession year mentioned: ${found.possessionYear}` : ""}`);
+        memoryLines.push(`A lookup of their project found: ${seen}${menuNote}${stageNote} If they have not said the locality, you may confirm it naturally once, like "that is in <locality> side, right?", and use the area to make your reply relevant. This is all you know about the project: never invent the builder, flat sizes, possession dates, amenities or prices. Never name Google, Maps, Brave or any website.`);
       } else if (place && "missing" in place) {
         await noteOnce(`Project check: ${placeText.toLowerCase()}`, `"${place.missing}" was not found on ${place.source}. Confirm the project name on the call.`);
+        memoryLines.push("Their project name was not confirmed. Do not tell them a search failed and do not guess a different project. Keep the name they gave. If the home type or BHK is still unknown, ask whether it is an apartment or a villa, and how many BHK.");
       }
       if (agent.hotBudgetLakhs) {
         const budgetValue = questions.filter((question) => /budget/i.test(question.label)).map((question) => absorbed.answers[question.id] ?? "").find(Boolean) ?? "";
         const scopeValue = questions.filter((question) => /full home|selected rooms|scope/i.test(question.label)).map((question) => absorbed.answers[question.id] ?? "").find(Boolean) ?? "";
         const budget = budgetValue ? budgetLakhs(budgetValue) : null;
-        if ((budget && budget.low < agent.hotBudgetLakhs) || selectedRoomsOnly(scopeValue)) {
-          memoryLines.push("Treat their budget and scope like any other answer: acknowledge it warmly in a few words and carry on with the next detail. Never call the budget low, tight, small or limited, never say the scope is small, never mention a minimum budget or that the team prefers full homes, and never suggest raising the budget. Equally, never say the budget is workable, enough, good or that premium work is possible within it: if they ask, say the designer will suggest what fits best within it on the call.");
+        if (budget && budget.low < agent.hotBudgetLakhs) {
+          memoryLines.push("Treat their budget like any other answer: acknowledge it warmly in a few words and carry on with the next detail. Never call the budget low, tight, small or limited, never mention a minimum budget, and never suggest raising the budget. Equally, never say the budget is workable, enough, good or that premium work is possible within it: if they ask, say the designer will suggest what fits best within it on the call.");
         }
+      }
+      if (bhkQuestion) {
+        const latestHome = preferLatestHome(absorbed.answers[bhkQuestion.id] ?? "", prospectBodies);
+        if (latestHome) absorbed.answers[bhkQuestion.id] = latestHome;
+      }
+      const placeQuestion = questions.find((question) => /\b(where is the home|which area|location)\b/i.test(question.label));
+      if (placeQuestion && absorbed.answers[placeQuestion.id]) {
+        absorbed.answers[placeQuestion.id] = preferLatestPlace(absorbed.answers[placeQuestion.id]!, prospectBodies);
+      }
+      for (const question of questions) {
+        if (/budget/i.test(question.label) && priceShock(absorbed.answers[question.id] ?? "")) delete absorbed.answers[question.id];
+      }
+      absorbed.name = ignoreAgentGreeting(absorbed.name, prospectBodies, workspace.agentName);
+      if (conversation.contact.chosenName && ignoreAgentGreeting(conversation.contact.chosenName, prospectBodies, workspace.agentName) === null) {
+        absorbed.name = null;
+        await db.contact.update({ where: { id: conversation.contactId }, data: { chosenName: null } });
       }
       recordedName = absorbed.name;
       recordedPhone = absorbed.phoneE164;
@@ -1786,7 +1928,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         numberPending = false;
       }
     }
-    const concern = nameConcern(recordedName, [conversation.contact.displayName, conversation.contact.username]);
+    const concern = nameConcern(recordedName, conversation.channel === "WHATSAPP" ? [] : [conversation.contact.displayName, conversation.contact.username]);
     if (concern) {
       const marker = `Name check: "${concern.name}"`;
       const flagged = await db.message.findFirst({
@@ -1849,12 +1991,15 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const possessionQuestion = questions.find((question) => /\bpossession\b/i.test(question.label));
     const possession = possessionQuestion ? recordedAnswers[possessionQuestion.id] ?? "" : "";
     const planShared = prospectBodies.some((body) => FLOOR_PLAN.test(seenIn(body)?.seen ?? "") || /\(Sent a document/.test(body));
-    const planAsked = spoken.some((message) => message.author === "AI" && /\b(floor ?plan|layout plan|unit plan)\b/i.test(message.body));
+    const planAsked = spoken.some((message) => message.author === "AI" && PLAN_MENTION.test(message.body));
+    const planRefused = spoken.some((message, index) => message.author === "PROSPECT"
+      && refusedPlan(message.body, spoken.slice(0, index).filter((earlier) => earlier.author === "AI")));
     const mustHavesIn = questions.filter((question) => question.required && question.kind === "text").every((question) => recordedAnswers[question.id]);
     const renovating = lead.workType === "renovation" || /\brenovat/i.test(possession) || prospectBodies.some((body) => RENOVATING.test(body));
     const roomPhotosShared = prospectBodies.some((body) => PHOTO_SEEN.test(body.trim()));
     const roomPhotosAsked = spoken.some((message) => message.author === "AI" && /\b(photos?|pictures?|pics?)\b/i.test(message.body) && /\b(rooms?|space|change|current|now)\b/i.test(message.body));
-    const planAsk = possession && mustHavesIn && !numberPending && (recordedPhone || !questions.some((question) => question.kind === "phone")) && !freshText.includes("?")
+    // The client does not want Varun asking for floor plans or photos for a designer.
+    const planAsk = false && !planRefused && possession && mustHavesIn && !numberPending && (recordedPhone || !questions.some((question) => question.kind === "phone")) && !freshText.includes("?")
       && (renovating ? !roomPhotosShared && !roomPhotosAsked : !planShared && !planAsked)
       ? renovating
         ? PLAN_RENOVATION_TEMPLATE
@@ -1863,11 +2008,39 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           : PLAN_BUILDER_TEMPLATE
       : null;
     if (renovating) {
-      memoryLines.push("This is a renovation of a home they already have. Never ask for a floor plan or a layout plan: the team sees the home at the site visit. Never remark that the home is ready or that work can start sooner because of it; talk about what they want to change, the old work coming out, or doing it room by room.");
+      memoryLines.push("This is a renovation of a home they already have. They are still only enquiring. Never ask about possession. Never suggest doing it room by room or while they stay there, and never talk as if the work is planned. Never ask for a floor plan. Ask what they are considering.");
+    }
+    memoryLines.push("They are exploring. Do not assume they have chosen the company. Answer what they asked before any question. One question at a time, about what they are considering. Do not give execution advice.");
+    const onlyHello = freshText.trim().length < 80
+      && /^(?:hi+|hello+|hey|vanakkam|namaste|good (?:morning|evening|afternoon))\b/i.test(freshText.trim())
+      && !/\b(bhk|villa|apartment|flat|house|home|interior|price|cost|budget|quote)\b/i.test(freshText);
+    const introduced = conversation.messages.some((message) => message.author === "AI" && /\bAI assistant\b/i.test(message.body));
+    if (onlyHello && introduced) {
+      memoryLines.push("They said hello again. You already introduced yourself, so do not do it again. Never say take ur time, no rush, im here whenever ur ready, or i can see ur message. Say hi back in a few words and ask one simple question: what kind of home they need interiors for, an apartment, villa or independent house.");
+    } else if (onlyHello) {
+      memoryLines.push(`They are only saying hello or checking this is ${workspace.brandName}. Welcome them. Say you are ${workspace.agentName ?? "the assistant"}, the AI assistant for ${workspace.brandName}, and ask how you can help with their home. Do not mention a price. Do not ask for their name, number, or home details yet.`);
+    } else if (askingPrice(freshText) && !readyToProceed(freshText)) {
+      memoryLines.push(`They asked the price or budget. Never give any price, lakh figure, starting price, range or estimate. ${spoken.some((message) => message.author === "AI" && /quoted by our team/i.test(message.body)) ? "You already said the team quotes it. In fresh words, say what shapes the cost for their home (size, scope, the materials and finishes they pick), and that the free consultation or an experience centre visit is where they get their exact quote." : `Say: "${QUOTE_LINE}"`} Then carry on with the chat.`);
+    } else {
+      memoryLines.push("They did not ask the price. Never mention a price, a lakh figure, a starting price, a quote or hidden costs. Welcome what they just said in a few warm words, then ask only the next detail.");
+    }
+    if (readyToProceed(freshText)) {
+      memoryLines.push(requestedTime(freshText, runtime.now(), agent.workingHours)
+        ? "They asked for a consultation and named a time. Note it for the team to confirm. Do not say the slot is booked."
+        : "They asked for a call or a consultation. Ask which time inside working hours suits them. Do not invent a time. Do not say the slot is booked.");
+    }
+    const repliedTo = latestProspectBody(spoken).match(REPLIED_TO)?.[1];
+    if (repliedTo) {
+      memoryLines.push(`Their latest message is a reply to this exact earlier message: "${repliedTo}". Treat what they just wrote as the answer to that message only. A short yes or no applies to that message, not to the whole chat.`);
+    }
+    if (planAsked || planRefused) {
+      memoryLines.push(planRefused
+        ? "They already said they do not have a floor plan, photo or PDF. Never ask for one again and never suggest they send one."
+        : "You already asked once for a floor plan, photo or PDF. Never ask for it again and never suggest they send one.");
     }
     if (planAsk) {
       memoryLines.push(planAsk === PLAN_RENOVATION_TEMPLATE
-        ? "In this reply, instead of any optional question, ask once for a few photos of the rooms they want to change (phone pictures are fine), so the designer can see what is there now, and what they most want to change in them. Never ask again."
+        ? "In this reply, instead of any optional question, ask once for a few photos of the home (phone pictures are fine), so the designer can see what is there now. Never ask which rooms, and never ask again."
         : planAsk === PLAN_READY_TEMPLATE
         ? "Their home is ready. In this reply, instead of any optional question, ask once whether they can share the floor plan or a few photos of the space, so the designer can start planning. Never ask again."
         : "Their home is not ready yet (under construction or possession later). In this reply, instead of any optional question, ask once whether they have the floor plan from the builder (a photo or PDF is fine), so the designer can start planning the layout before possession. Never ask again.");
@@ -1919,11 +2092,80 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const modelNext = form?.next ? questions.find((question) => question.id === form?.next) : undefined;
     const homeTypeMissing = missingNow.find((question) => /\bbhk\b/i.test(question.label) && !ignored(question) && !justAsked(question));
     const skipsHomeType = Boolean(modelNext && homeTypeMissing && modelNext !== homeTypeMissing && questions.indexOf(modelNext) > questions.indexOf(homeTypeMissing));
-    const modelPick = modelNext && !skipsHomeType && !ignored(modelNext) && !justAsked(modelNext)
+    const hasDesigner = prospectBodies.some((body) => alreadyHasDesigner(body));
+    const commercial = prospectBodies.some((body) => notAHome(body)) && !prospectBodies.some((body) => /\b(\d\s*-?\s*bhk|apartment|flat|villa|independent house|bungalow)\b/i.test(body));
+    const pausing = notNow(freshText);
+    const askWhichHome = mentionsTwoHomes(freshText) && !spoken.some((message) => message.author === "AI" && /\bwhich home\b/i.test(message.body));
+    const scopeAsk = (question: LeadQuestion) => /\b(full home|selected rooms|scope)\b/i.test(question.label);
+    const skipDetail = (question: LeadQuestion) => scopeAsk(question) || (hasDesigner && /\b(style|must-have|reference|pooja)\b/i.test(question.label));
+    const nameFirst = missingNow.find((question) => question.kind === "name" && !ignored(question) && !justAsked(question));
+    const modelPick = !nameFirst && modelNext && !skipDetail(modelNext) && !skipsHomeType && !ignored(modelNext) && !justAsked(modelNext)
       && (missingNow.includes(modelNext) || (!missingNow.length && Boolean(optionalNext) && complete?.optional.includes(modelNext.label)))
       ? modelNext
       : undefined;
-    const nextDetail = modelPick ?? missingNow.find((question) => !ignored(question) && !justAsked(question)) ?? optionalNext ?? missingNow.find((question) => !justAsked(question));
+    const scopeNow = questions.filter(scopeAsk).map((question) => recordedAnswers[question.id] ?? "").find(Boolean) ?? "";
+    const latestFullHome = /\b(full|whole|entire|complete)\b/i.test(freshText) && /\b(home|house|flat|villa|ghar)\b/i.test(freshText);
+    const roomsOnly = !latestFullHome && (selectedRoomsOnly(scopeNow) || prospectBodies.some((body) => volunteeredRoomsOnly(body)));
+    const proceeding = prospectBodies.some((body) => readyToProceed(body));
+    memoryLines.push("The company does full-home interiors only. Never ask whether it is the full home, selected rooms, or room by room, and never suggest doing one room at a time.");
+    if (roomsOnly) {
+      memoryLines.push("They want only part of the home, not the full home. Say that kindly in this reply and stop. Do not ask for the phone, photos, timeline, email or anything else. If they then say they want the whole home, continue.");
+    }
+    // The KariGhars takes up full homes of 3 BHK and above only.
+    const homeAnswer = questions.filter((question) => /\bbhk\b/i.test(question.label)).map((question) => recordedAnswers[question.id] ?? "").join(" ");
+    const smallMatch = homeAnswer.match(/(?<!\d)([12])\s*-?\s*bhk\b|\b1\s*-?\s*rk\b|\bstudio\b/i);
+    const smallHome = smallMatch ? 1 : 0;
+    const smallLabel = smallMatch ? (smallMatch[1] ? `${smallMatch[1]} BHK` : /studio/i.test(smallMatch[0]) ? "studio" : "1 RK") : "";
+    // Never turn someone away on one message: confirm the size once, decline only after that.
+    const smallAsked = spoken.some((message) => message.author === "AI" && /\bjust to confirm\b/i.test(message.body) && /\b(?:[12]\s*BHK|1\s*RK|studio)\b/i.test(message.body));
+    // "no" to the confirm: it is not that small, so ask the BHK instead of declining.
+    const smallDenied = smallAsked && /^\s*(?:no|nope|nah|illa|nahi|not)\b/i.test(freshText) && !/\d/.test(freshText);
+    if (smallDenied) memoryLines.push("They said the home is not that size. Ask only how many BHK it is, in a few words.");
+    if (smallHome && !smallDenied) {
+      memoryLines.push(smallAsked
+        ? "The KariGhars takes up full-home interiors only for 3 BHK homes and above. They confirmed a smaller home, so tell them that kindly in one short line, thank them for reaching out, and do not ask any more questions. Never mention a price."
+        : `Their home looks like a ${smallLabel}. Ask only, kindly: just to confirm, is it a ${smallLabel} home? Nothing else.`);
+    }
+    const holdScript = roomsOnly || commercial || pausing || askWhichHome || Boolean(smallHome && !smallDenied);
+    const lastAiBody = [...spoken].reverse().find((message) => message.author === "AI")?.body ?? "";
+    const offerJustMade = sinceReply.length > 0 && /\b(consultation|experience cent(?:re|er))\b/i.test(lastAiBody);
+    const plainYes = /^(?:yes|yeah|ya|yep|sure|ok(?:ay)?|haan|ha|please)(?:\s+(?:sir|mam|ji))?\.?$/i.test(freshText.trim());
+    const freshOfferAnswer = offerJustMade && !plainYes ? await readOfferAnswer(runtime, lastAiBody, freshText) : null;
+    if (freshOfferAnswer && freshOfferAnswer !== "unclear") {
+      await db.message.create({
+        data: { workspaceId: workspace.id, connectionId: conversation.connectionId, conversationId, author: "SYSTEM", body: `Offer answer: ${freshOfferAnswer} | ${freshText.slice(0, 200)}`, createdAt: runtime.now() },
+      });
+    }
+    const offerAnswers = [...conversation.messages.filter((message) => message.author === "SYSTEM" && message.body.startsWith("Offer answer:")).map((message) => message.body), ...(freshOfferAnswer ? [`Offer answer: ${freshOfferAnswer}`] : [])];
+    const choseVisit = offerAnswers.some((body) => body.startsWith("Offer answer: experience"));
+    const consultationAsked = spoken.some((message) => message.author === "AI" && /\b(consultation|experience cent(?:re|er))\b/i.test(message.body));
+    const aboutConsultation = (index: number) => /\b(consultation|experience cent(?:re|er))\b/i.test([...spoken.slice(0, index)].reverse().find((message) => message.author === "AI")?.body ?? "");
+    // A plain "yes" after the offer, or the model reading their answer as one of the two options.
+    const agreedConsultation = spoken.some((message, index) => message.author === "PROSPECT" && aboutConsultation(index)
+      && /^(?:yes|yeah|ya|yep|sure|ok(?:ay)?|haan|ha|please)(?:\s+(?:sir|mam|ji))?\.?$/i.test(message.body.trim()))
+      || offerAnswers.some((body) => /^Offer answer: (?:consultation|experience)\b/.test(body));
+    const consultationDeclined = spoken.some((message, index) => message.author === "PROSPECT" && aboutConsultation(index) && /^(?:no+|nope|nah|not now|no thanks|later)(?:\s+(?:sir|mam|ji))?\.?$/i.test(message.body.trim()))
+      || offerAnswers.some((body) => body.startsWith("Offer answer: not_now"));
+    const offerConsultation = Boolean(complete?.ready && !complete.cold && !holdScript && !proceeding && !agreedConsultation && !consultationAsked && !consultationDeclined);
+    const needsTime = Boolean(complete?.ready && !complete.cold && !holdScript && (proceeding || agreedConsultation) && !consultationDeclined && !prospectBodies.some((body) => requestedTime(body, runtime.now(), agent.workingHours)));
+    const askedForTime = spoken.some((message) => message.author === "AI" && /\b(?:what|which) time\b/i.test(message.body));
+    if (consultationAsked && !offerConsultation && !needsTime && !/\bconsultation\b/i.test(freshText)) {
+      memoryLines.push("You already offered the free consultation. Do not offer it, mention it or ask about booking it again unless they bring it up.");
+    }
+    if (offerConsultation) {
+      memoryLines.push(`The must-have details are in. They have not asked for a call. Ask once, in these words or very close: "${VISIT_OFFER}" Never mention designers, 3D designs, layouts or site visits. Do not name a time. Do not say the team will call. No other question.`);
+    } else if (needsTime && askedForTime) {
+      memoryLines.push("You already asked which time suits them. Do not ask it again and do not repeat a line you already sent. A bare okay, ok or sure is not a time. Wait until they name a day or a clock time.");
+    } else if (needsTime && choseVisit) {
+      memoryLines.push("They want to visit the experience centre and have not named a time. Ask which day and time suits them inside working hours. Do not invent a time. Say the team will confirm it. Do not say the visit is booked.");
+    } else if (needsTime && (agreedConsultation || readyToProceed(freshText))) {
+      memoryLines.push("They want the free consultation and have not named a time. Ask which time inside working hours suits them. Do not invent a time. Say the team will confirm it. Do not say the slot is booked.");
+    }
+    const homeOpen = blockedBhk !== null && !questions.some((question) => /\bbhk\b/i.test(question.label) && /\b[1-9]\s*-?\s*(?:bhk|rk)\b/i.test(recordedAnswers[question.id] ?? "") && !impossibleBhk(recordedAnswers[question.id] ?? ""));
+    const bhkAgain = homeOpen ? questions.find((question) => /\bbhk\b/i.test(question.label)) : undefined;
+    const nextDetail = holdScript || offerConsultation || needsTime || chasingCall || onlyHello
+      ? undefined
+      : bhkAgain ?? modelPick ?? missingNow.find((question) => !skipDetail(question) && !ignored(question) && !justAsked(question)) ?? (optionalNext && !skipDetail(optionalNext) ? optionalNext : undefined) ?? missingNow.find((question) => !skipDetail(question) && !justAsked(question));
     const phoneQuestion = questions.find((question) => question.kind === "phone");
     const wrongNumber = phoneQuestion && !complete?.cold
       ? wrongInEdit ?? wrongPhoneIn(latestProspect, phoneRegion, nextDetail?.kind === "phone" ? 6 : 8)
@@ -1934,8 +2176,17 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const safety = questions.length
       ? [
           ...(wrongNumberLine ? [wrongNumberLine] : []),
-          ...(complete?.ready
-            ? ["Every must-have detail is collected. If they ask what happens next, say the team will call them on the number they shared. Do not give a date or time, and do not push more questions."]
+          ...(askWhichHome ? ["They named more than one home. Ask only which home this chat is about, in one short question. Do not ask anything else."] : []),
+          ...(offerConsultation
+            ? [`The must-have details are collected. They have not asked for a call. Ask once: "${VISIT_OFFER}" Never mention designers, 3D designs, layouts or site visits. Do not name a time. Do not say the team will call. If they just asked something, answer it first, then ask this. No other question.`]
+            : needsTime
+            ? ["They want the free consultation or an experience centre visit and have not named a time. Ask which time inside working hours suits them. Do not invent a time. Say the team will confirm it. Do not say the slot is booked. If they just asked something, answer it first."]
+            : complete?.ready
+            ? [nextDetail
+              ? "Every must-have detail is collected. More useful details are still open, so do not wrap up or say the team will call yet."
+              : proceeding
+                ? "They asked to proceed. Close in this reply: thank them in a few words and say the team will call them on the number they shared. Do not ask another question. Do not give a date or time unless they named one. If they said they will share pictures later, say the team can look at those."
+                : "Every detail is in. If the free consultation was already declined, thank them and leave the door open. Do not say the team will call. Do not ask another question."]
             : ["Some must-have details are still missing. Do not say their details are shared, passed on, with the team, or that the team will call, unless they ask what happens next."]),
           ...(nextDetail
             ? [
@@ -1943,7 +2194,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
                   ? "This reply has a quick check to make above. Make that check your one question in this reply, and leave the next detail for your next message."
                   : "",
                 `Next detail to collect${checkedIds.length ? " after that check" : ""}: ${nextDetail.label}${nextDetail.kind === "phone" ? numberPending && waNumber ? ` (ask once whether the team can call them on this same WhatsApp number, ${waNumber}; never ask them to type a number)` : " (ask them to type their mobile number; never ask for permission instead)" : ""}. ${checkedIds.length ? "Do not ask it in this reply." : "End your reply with one natural question that asks for exactly this, in your own words fitted to what you know about them (their home, BHK, stage or what they just said). That label is only the topic: never copy its wording, and never reuse the wording of a question from another chat or an earlier message."} Do not ask for anything already recorded or anything else.`,
-                `Talk like a premium interior sales consultant, not a form. In one short sentence, react to what they just said and add one useful, specific point from the knowledge base that fits their situation, such as the process, the timeline, the experience centre, materials, warranty or why ${workspace.brandName}. Use only facts from the knowledge base, and do not repeat a point you already made in this chat. Then ask the question.`,
+                `Talk like a premium interior sales consultant, not a form. Welcome what they just said in a few warm words. Add one useful point from the knowledge base only when it answers something they raised, such as the process, the timeline, the experience centre, materials or warranty. Never use a price as that point unless they just asked the price. Then ask the question.`,
                 "If they sent several messages, answer all of them together. If a later message corrects an earlier one, the latest message is what they mean.",
                 "If they asked something, answer it first in one sentence, then ask the question.",
               ]
@@ -1967,9 +2218,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         })
       : null;
     const nameForAddress = [recordedName, conversation.contact.displayName, conversation.contact.username].filter(Boolean).join(" / ");
-    const address = agent.addressSirMam && questions.length && nameForAddress && runtime.llm.addressFor
+    const guessedAddress = agent.addressSirMam && questions.length && nameForAddress && runtime.llm.addressFor
       ? await runtime.llm.addressFor(nameForAddress).catch(() => null)
       : null;
+    // "bro" means no personal name was found; a luxury brand never calls a customer bro.
+    const address = guessedAddress === "bro" ? null : guessedAddress;
     const briefing = questions.length
       ? salesBriefing({
           address,
@@ -2160,6 +2413,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
             purpose: "text",
             recipientId: participant.externalId,
             text: notice,
+            inboundMessageId: customerMessageId(conversation.messages),
           });
           if (result.status === "ACCEPTED") {
             await db.message.create({
@@ -2231,13 +2485,15 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? screenLead({ questions, answers: answerRecord(updatedLead.answers), name: updatedLead.contact.chosenName, phoneE164: null })
       : screen;
     const stillMissing = replyScreen && !replyScreen.ready && !replyScreen.cold ? questions.filter((question) => replyScreen.missing.includes(question.label)) : [];
-    const pending = (modelPick && stillMissing.includes(modelPick) ? modelPick : undefined)
-      ?? stillMissing.find((question) => !ignored(question) && !justAsked(question));
+    const pending = holdScript || offerConsultation || needsTime || chasingCall
+      ? undefined
+      : (modelPick && !skipDetail(modelPick) && stillMissing.includes(modelPick) ? modelPick : undefined)
+        ?? stillMissing.find((question) => !skipDetail(question) && !ignored(question) && !justAsked(question));
     const askedByThem = Boolean(pastTime) || /\?/.test(latestUser)
       || /^\s*(how|what|when|where|why|which|who|can|could|will|would|do|does|is|are|should|pls|please|send|share|show|tell|book)\b/i.test(latestUser)
       || /\b(send|share|show|tell) me\b|\bmay i know\b|\bbook me\b/i.test(latestUser);
-    const extra = !pending && screen && !screen.cold && !askedByThem && !situationHandoff
-      ? questions.find((question) => screen.optional.includes(question.label) && !spoken.some((message) => message.author === "AI" && questionAsked(question, message.body)))
+    const extra = !pending && !offerConsultation && !needsTime && !chasingCall && screen && !screen.cold && !askedByThem && !situationHandoff
+      ? questions.find((question) => !holdScript && !skipDetail(question) && screen.optional.includes(question.label) && !spoken.some((message) => message.author === "AI" && questionAsked(question, message.body)))
       : undefined;
     const target = pending ?? extra;
     const statement = validated.reply
@@ -2278,7 +2534,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       .filter(Boolean).join("\n");
     const planText = planAsk ? local?.get(planAsk) ?? planAsk : null;
     const addsPlan = Boolean(planText && composed && !pending && !asksSomething(composed) && !checkedIds.length && !situationHandoff && !askedByThem && !passedReply && !hoursReply
-      && !/\b(floor ?plan|layout plan|unit plan|photos? of (?:the|ur|your) (?:space|home|flat|house|rooms?))\b/i.test(composed));
+      && !PLAN_MENTION.test(composed));
     const focused = asksOptionalInstead && composed
       ? [withoutOptional(composed), askQuestion(pending!)].filter(Boolean).join("\n")
       : addsPlan && composed
@@ -2318,7 +2574,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const greetedOnce = inLanguage && earlierReplies.length ? dropRepeatGreeting(inLanguage) : inLanguage;
     const newName = recordedName && recordedName !== conversation.contact.chosenName ? recordedName : null;
     const greeted = greetedOnce && !languageSample && !situationHandoff ? naturalAcknowledgement(greetedOnce, earlierReplies, newName) : greetedOnce;
-    const humanized = greeted ? applyReplySwitches(oneAddress(dropCannedLines(humanizeReply(greeted))), agent) || null : greeted;
+    // Never laugh in a chat where they joked about the BHK, even after they give the real count.
+    const bhkJoked = blockedBhk !== null || conversation.messages.some((message) => message.author === "SYSTEM" && /^Number check: .*\bBHK\b/i.test(message.body));
+    const humanized = greeted ? applyReplySwitches(easeAddress(dropEmptyPraise(dropCannedLines(humanizeReply(greeted))), earlierReplies), bhkJoked ? { ...agent, laughter: false } : agent) || null : greeted;
     const asksIfBot = /\b(bot|robot|chat ?bot|ai|automated|real (person|human)|human)\b/i.test(latestUser) && /\?|\bare (you|u)\b/i.test(latestUser);
     const homeType = questions.filter((question) => /bhk/i.test(question.label)).map((question) => recordedAnswers[question.id] ?? "").join(" ");
     const linked = humanized ? fitBhkLinks(humanized, homeType, workspace.knowledgeBase ?? "") : humanized;
@@ -2336,11 +2594,107 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const keep = asksIfBot
       ? /\b(ai|bot|automated|assistant)\b/i
       : reask.length >= 3 ? new RegExp(reask.join("\\W+"), "i") : undefined;
-    const bubbles = written
-      ? humanBubbles(written, earlierReplies, keepCase, { casual: agent.casualTexting, split: agent.splitMessages, ...(keep ? { keep } : {}) })
-      : [];
+    const withoutAnotherPlan = (planAsked || planRefused) && written ? dropPlanMentions(written) : written;
+    const settled = withoutAnotherPlan?.trim()
+      ? withoutAnotherPlan
+      : planRefused
+        ? "No problem, the team will take care of that."
+        : written;
+    const closed = withTeamClose(settled, {
+      due: Boolean(proceeding && !holdScript && !chasingCall && complete?.ready && !nextDetail && !complete?.cold && recordedPhone
+        && !spoken.some((message) => message.author === "AI" && /\bteam will call\b/i.test(message.body))),
+      phone: recordedPhone,
+      photosLater: prospectBodies.some((body) => /\b(i'?ll|i will|will)\s+share\b|\bnothing handy\b/i.test(body)),
+      room: prospectBodies.some((body) => /\b(just|only)\b/i.test(body) && /\bkitchen\b/i.test(body))
+        || questions.some((question) => /\bkitchen\b/i.test(recordedAnswers[question.id] ?? ""))
+        ? "kitchen"
+        : null,
+    });
+    const withoutShock = priceShock(freshText) && closed
+      ? closed.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !/\b(?:within (?:that|this|your|ur) range|fits (?:the |your |ur )?budget|your budget)\b/i.test(part)).join(" ").trim()).filter(Boolean).join("\n")
+        || QUOTE_LINE
+      : closed;
+    const waited = chasingCall
+      ? callWaitReply(runtime.now(), agent.workingHours, agent.holidays, spoken.some((message) => message.author === "AI" && /\b(?:check with (?:my|the) team|asked the team to check)\b/i.test(message.body)))
+      : null;
+    const steered = waited
+      ? waited
+      : smallHome && !smallAsked
+      ? `just to confirm, is it a ${smallLabel} home?`
+      : smallHome && smallDenied
+      ? "ok. how many BHK is it?"
+      : smallHome
+      ? spoken.some((message) => message.author === "AI" && /\b3 BHK homes and above\b/i.test(message.body))
+        ? "thank you. if you have a bigger home to do, just message here"
+        : "thank you for reaching out. The KariGhars takes up full-home interiors only for 3 BHK homes and above, so we won't be able to take up this one"
+      : commercial
+      ? spoken.some((message) => message.author === "AI" && /\bhome interiors only\b/i.test(message.body))
+        ? "if there is a home to do, just message here sir"
+        : "we do home interiors only sir, not an office, shop or clinic. if there is a home to do, just say so"
+      : roomsOnly
+        ? spoken.some((message) => message.author === "AI" && /\bfull home\b/i.test(message.body) && /\b(single room|room by room|one project)\b/i.test(message.body))
+          ? (withoutShock?.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n")
+            || "whenever u want the whole home done, message here sir")
+          : "we take up only full-home interiors, for 3 BHK homes and above, not a single room. if you want the whole home done, just let me know"
+        : pausing
+          ? spoken.some((message) => message.author === "AI" && /\bwhenever u are ready\b/i.test(message.body))
+            ? "whenever u are ready, message here sir"
+            : "no problem sir. whenever u are ready, just message here"
+          : withoutShock;
+    const offered = steered && !proceeding ? dropUnaskedCallback(steered, false) : steered;
+    // Never a price figure in any reply. A price question gets the quote line instead.
+    const unpriced = offered ? dropUnaskedPrice(offered) : offered;
+    const quotedBefore = spoken.some((message) => message.author === "AI" && /quoted by our team/i.test(message.body));
+    const heldBase = askingPrice(freshText) && !quotedBefore && !/\bquoted by our team\b/i.test(unpriced ?? "")
+      ? [unpriced, QUOTE_LINE].filter(Boolean).join("\n")
+      : unpriced;
+    // 8. They said only "house": ask the type once. The BHK is never asked again.
+    const homeSaved = questions.filter((question) => /\bbhk\b/i.test(question.label)).map((question) => recordedAnswers[question.id] ?? "").join(" ");
+    const needsType = /\d\s*-?\s*bhk\b/i.test(homeSaved) && /\bhouse\b/i.test(homeSaved) && !homeTypeName(homeSaved)
+      && !spoken.some((message) => message.author === "AI" && /\bindependent house\b/i.test(message.body));
+    const held = needsType && heldBase && Number(payload.followUp ?? 0) === 0 && !holdScript && !offerConsultation && !needsTime && !chasingCall
+      ? [heldBase.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n"), TYPE_ASK].filter(Boolean).join("\n")
+      : heldBase;
+    const savedHome = questions
+      .filter((question) => /\bbhk\b/i.test(question.label))
+      .map((question) => recordedAnswers[question.id] ?? "")
+      .find((value) => /\b[1-9]\s*-?\s*(?:bhk|rk)\b/i.test(value) && !impossibleBhk(value));
+    const believable = blockedBhk
+      ? savedHome
+        ? `that is not a real home. urs stays ${savedHome}.`
+        : "that is not a real home. how many BHK is it?"
+      : held;
+    const welcomed = believable?.trim()
+      ? believable
+      : homeOpen
+        ? "that is not a real home. how many BHK is it?"
+        : nextDetail
+        ? askQuestion(nextDetail)
+        : believable;
+    const consultAsk = VISIT_OFFER;
+    const timeAsk = `which time suits u? the team is available ${agent.workingHours || "Tuesday to Sunday, 10 AM to 7 PM"}, and they will confirm it.`;
+    const withConsult = waited
+      ? waited
+      : offerConsultation
+      ? welcomed && /\bconsultation\b/i.test(welcomed)
+        ? welcomed
+        : [welcomed?.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n"), consultAsk].filter(Boolean).join("\n")
+      : needsTime && !askedForTime && welcomed && !/\b(what|which) time\b/i.test(welcomed)
+        ? [welcomed.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n"), timeAsk].filter(Boolean).join("\n")
+        : consultationAsked && !/\bconsultation\b/i.test(freshText) && welcomed
+          // The consultation was offered once already. Never push it again unless they bring it up.
+          ? welcomed.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !(isQuestionSentence(part) && /\b(consultation|book(?:ing)? (?:that|it|one)|go ahead)\b/i.test(part))).join(" ").trim()).filter(Boolean).join("\n") || welcomed
+          : welcomed;
+    const nudge = Number(payload.followUp ?? 0);
+    const addressed = nudge > 0
+      ? followUpReply(nudge, agent.followUpHours.length)
+      : withConsult && agentGreeted ? dropCallingThemAgent(withConsult, workspace.agentName) : withConsult;
+    const bubbleOptions = { casual: agent.casualTexting, split: agent.splitMessages, ...(keep ? { keep } : {}) };
+    const freshBubbles = addressed ? humanBubbles(addressed, earlierReplies, keepCase, bubbleOptions) : [];
+    // When every sentence repeats an earlier reply, a repeat still beats leaving the customer unanswered. Follow-ups can stay quiet.
+    const bubbles = addressed && !freshBubbles.length && nudge === 0 ? humanBubbles(addressed, [], keepCase, bubbleOptions) : freshBubbles;
     const reply = bubbles.length ? bubbles.join("\n") : null;
-    const spokenReply = written ? dropRepeatedSentences(written.replace(/\s*\n+\s*/g, " "), earlierReplies) : null;
+    const spokenReply = addressed ? dropRepeatedSentences(addressed.replace(/\s*\n+\s*/g, " "), earlierReplies) : null;
     const window = replyEligibility({
       now: runtime.now(),
       lastUserMessageAt: fresh.lastUserMessageAt,
@@ -2406,6 +2760,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           recipientId: participant?.externalId,
           text: spokenReply,
           audioUrl: clip.url,
+          inboundMessageId: nudge > 0 ? undefined : customerMessageId(conversation.messages),
         });
         if (result.status === "ACCEPTED" || result.status === "UNKNOWN") {
           voiceSent = true;
@@ -2419,15 +2774,30 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           if (agent.typingDelay) await runtime.pause?.(index === 0 ? Math.max(0, typingMs(bubble) - generated.latencyMs) : typingMs(bubble));
           await takeArrivedMessages(db, runtime);
           const current = await db.conversation.findUnique({ where: { id: conversation.id }, select: { revision: true, owner: true } });
-          if (!current || current.revision !== expectedRevision || current.owner !== "AI") break;
+          if (!current || current.owner !== "AI") break;
+          // A new message before the first bubble: drop this reply, the next one answers everything.
+          // Once a reply has started, finish it so the customer never gets half a thought.
+          if (current.revision !== expectedRevision && index === 0) break;
           const result = await runtime.send({
             connection: sendConnection(connection),
             purpose: "text",
             recipientId: participant?.externalId,
             text: bubble,
+            ...(index === 0 && nudge === 0 ? { inboundMessageId: customerMessageId(conversation.messages) } : {}),
           });
           await record(bubble, result);
-          if (result.status !== "ACCEPTED") break;
+          if (result.status !== "ACCEPTED") {
+            await db.auditEvent.create({
+              data: {
+                workspaceId: workspace.id,
+                action: "outbound.failed",
+                entityType: "Conversation",
+                entityId: conversation.id,
+                summary: `${conversation.channel} reply was not accepted: ${result.status} ${result.error}`.slice(0, 300),
+              },
+            });
+            break;
+          }
         }
       }
     }
@@ -2518,6 +2888,31 @@ async function commentIsLead(
  * comment. The code fixes what it does: greet, answer the comment if it asks something, ask the first
  * lead question. Null when the model cannot write it, so the account's default message goes instead.
  */
+/** Reads their answer to the consultation / experience centre offer. Keywords get "I'll come back to you" wrong. */
+async function readOfferAnswer(runtime: Runtime, offer: string, reply: string): Promise<"consultation" | "experience" | "not_now" | "unclear"> {
+  if (!runtime.llm.complete) return "unclear";
+  try {
+    const raw = await runtime.llm.complete({
+      system: "You read one customer reply to an interiors company. Answer with exactly one word: consultation, experience, not_now or unclear.",
+      messages: [{
+        role: "user",
+        content: [
+          `We asked: "${offer.slice(0, 300)}"`,
+          `They replied: "${reply.slice(0, 300)}"`,
+          "consultation = they want the free consultation. experience = they want to visit the experience centre. not_now = no, later, they will get back, or they are not interested. unclear = a question or anything else.",
+        ].join("\n"),
+      }],
+      temperature: 0,
+      maxTokens: 10,
+      timeoutMs: 8_000,
+    });
+    const word = raw.toLowerCase().match(/\b(consultation|experience|not_now|unclear)\b/)?.[1];
+    return (word as "consultation" | "experience" | "not_now" | "unclear" | undefined) ?? "unclear";
+  } catch {
+    return "unclear";
+  }
+}
+
 async function writeOpening(
   runtime: Runtime,
   workspace: { brandName: string; agentName: string | null; agentPersona: string | null; services: string; knowledgeBase: string | null; agentSettings: unknown; leadQuestions: unknown },
@@ -2528,15 +2923,16 @@ async function writeOpening(
   const questions = parseLeadQuestions(workspace.leadQuestions);
   const first = questions.find((question) => question.required !== false && question.kind !== "phone") ?? questions[0];
   const sample = chatLanguageSample([input.comment]);
-  const address = agent.addressSirMam && input.name && runtime.llm.addressFor ? await runtime.llm.addressFor(input.name).catch(() => null) : null;
+  const guessedAddress = agent.addressSirMam && input.name && runtime.llm.addressFor ? await runtime.llm.addressFor(input.name).catch(() => null) : null;
+  const address = guessedAddress === "bro" ? null : guessedAddress;
   try {
     const raw = await runtime.llm.complete({
       system: [
         `You are ${workspace.agentName ?? "the assistant"}, the AI assistant for ${workspace.brandName}. ${workspace.agentPersona ?? ""}`.trim(),
         `What ${workspace.brandName} does: ${workspace.services}`,
-        workspace.knowledgeBase ? `Knowledge base (the only facts you may use):\n${workspace.knowledgeBase.slice(0, 12000)}` : "",
+        workspace.knowledgeBase ? `Knowledge base (the only facts you may use):\n${withoutPrices(workspace.knowledgeBase).slice(0, 12000)}` : "",
         agent.rules ? `Team rules:\n${agent.rules}` : "",
-        `Pricing: ${agent.pricingAnswer}`,
+        "Pricing: never give any price, lakh figure or starting price. If they ask, say the budget will be quoted by our team after understanding the requirement, the scope and the materials.",
         sample
           ? `They commented in ${languageName(sample)}, like "${sample}". Write the whole message, the question too, in exactly that language and style.`
           : "Write the whole message, the question too, in the language and style of their comment: plain English for an English comment; Tamil, Hindi or another Indian language typed in English letters (Tanglish, Hinglish) when they wrote that way.",
@@ -2553,7 +2949,8 @@ async function writeOpening(
           "",
           "Write the first message:",
           `1. Say hi and that you are ${workspace.agentName ?? "the"} AI assistant for ${workspace.brandName}, in a few words.`,
-          "2. If the comment asks something (in any language), answer exactly that in one short sentence using only the knowledge base, never quoting a price (follow the pricing rule). If it only praises the post or says they are interested, thank them in a few words tied to what the post shows. This sentence asks nothing.",
+          "2. If the comment asks something (in any language), answer exactly that in one short sentence using only the knowledge base, never quoting a price (follow the pricing rule). If it only says hi, praises the post or says they are interested, thank them for reaching out in a few plain words. This sentence asks nothing.",
+          `Only say what their comment actually says. Never claim they praised, appreciated or asked about something they did not write. If they name something ${workspace.brandName} does not offer (like an integration, an app or a product), do not repeat it back as if it were our work; just thank them and talk about home interiors.`,
           first
             ? `3. End with one natural question, in the same language as the rest, asking for: ${first.label} That is only the topic: do not copy its words.`
             : "3. End by asking how you can help, in the same language as the rest.",
@@ -2562,7 +2959,7 @@ async function writeOpening(
           "Return only the message.",
         ].join("\n"),
       }],
-      temperature: 0.7,
+      temperature: 0.4,
       maxTokens: 400,
       timeoutMs: 45_000,
     });
@@ -2709,7 +3106,7 @@ async function promptedReply(db: Db, runtime: Runtime, input: PromptedInput): Pr
         const value = raw[question.id];
         const text = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
         if (EMPTY_VALUE.test(text)) continue;
-        if (question.kind === "name") name = text.slice(0, 60);
+        if (question.kind === "name") name = cleanName(text, spoken.filter((message) => message.author === "PROSPECT").map((message) => message.body).join("\n"), workspace.agentName);
         else if (question.kind === "phone") {
           const phone = parsePhone(text, runtime.phoneRegion);
           if (/^same$/i.test(text) && lead.whatsappE164) {
@@ -2725,8 +3122,12 @@ async function promptedReply(db: Db, runtime: Runtime, input: PromptedInput): Pr
       const time = raw[CALLBACK_TIME_KEY];
       if (typeof time === "string" && !EMPTY_VALUE.test(time.trim())) callbackTime = time.trim().slice(0, 80);
     }
+    const said = spoken.filter((message) => message.author === "PROSPECT").map((message) => message.body);
+    name = ignoreAgentGreeting(name, said, workspace.agentName);
     if (name && name !== conversation.contact.chosenName) {
       await db.contact.update({ where: { id: conversation.contactId }, data: { chosenName: name } });
+    } else if (!name && conversation.contact.chosenName && ignoreAgentGreeting(conversation.contact.chosenName, said, workspace.agentName) === null) {
+      await db.contact.update({ where: { id: conversation.contactId }, data: { chosenName: null } });
     }
     await db.lead.update({
       where: { id: lead.id },
@@ -2762,13 +3163,6 @@ async function promptedReply(db: Db, runtime: Runtime, input: PromptedInput): Pr
   const valueOf = (question: LeadQuestion) => question.kind === "name" ? name : question.kind === "phone" ? callNumber : answers[question.id];
   const answered = questions.filter((question) => valueOf(question)?.trim());
   const open = questions.filter((question) => !valueOf(question)?.trim());
-  const firstSync = lead.crmState === "SYNCED"
-    ? await db.outboxJob.findFirst({
-        where: { type: "CRM_SYNC", status: "COMPLETED", payload: { path: ["leadId"], equals: lead.id } },
-        orderBy: { createdAt: "asc" },
-        select: { updatedAt: true },
-      })
-    : null;
   const prospectTimes = spoken.filter((message) => message.author === "PROSPECT").map((message) => message.createdAt.getTime());
   const gapMs = prospectTimes.length >= 2 ? prospectTimes[prospectTimes.length - 1]! - prospectTimes[prospectTimes.length - 2]! : 0;
   const posts = await db.media.findMany({ where: { workspaceId: workspace.id }, orderBy: { publishedAt: "desc" }, take: 30 });
@@ -2789,7 +3183,7 @@ async function promptedReply(db: Db, runtime: Runtime, input: PromptedInput): Pr
   const language = languageSample ? `${languageName(languageSample)}, like "${languageSample}"` : "English";
   const lastAiAt = [...spoken].reverse().find((message) => message.author === "AI")?.createdAt;
   const system = renderAgentPrompt(workspace.agentPrompt!, {
-    now: indiaTime(runtime.now()),
+    now: [indiaTime(runtime.now()), officeNowLine(runtime.now(), agent.workingHours, agent.holidays)].filter(Boolean).join(". "),
     channel: CHANNEL_NAME[conversation.channel],
     customer: [
       `Name: ${name ?? "not given yet"}`,
@@ -2804,7 +3198,7 @@ async function promptedReply(db: Db, runtime: Runtime, input: PromptedInput): Pr
       editNote,
     ].filter(Boolean).join("\n"),
     lead_status: lead.crmState === "SYNCED"
-      ? `Already sent to the team${firstSync ? ` ${since(runtime.now().getTime() - firstSync.updatedAt.getTime())} ago` : ""}.`
+      ? "Already sent to the team. Never tell the customer how long ago."
       : screen?.ready ? "Every must-have is answered; it goes to the team now." : "Not sent to the team yet. It goes once every must-have is answered.",
     lead_questions: questions.map((question) => `- ${question.label} (${question.required === false ? "nice to have" : "must-have"})`).join("\n"),
     recorded: answered.length ? answered.map((question) => `- ${question.label}: ${valueOf(question)}`).join("\n") : "Nothing yet.",
@@ -2866,7 +3260,14 @@ async function promptedReply(db: Db, runtime: Runtime, input: PromptedInput): Pr
     console.warn(`Draft check failed, sending the draft: ${error instanceof Error ? error.message : String(error)}`);
   }
   const checked = typeof review?.reply === "string" ? review.reply.replace(/^["'“]+|["'”]+$/g, "").trim() : "";
-  const replyText = checked || draft;
+  const latestUser = [...spoken].reverse().find((message) => message.author === "PROSPECT")?.body ?? "";
+  const waited = waitingOnCall(latestUser)
+    ? callWaitReply(runtime.now(), agent.workingHours, agent.holidays, spoken.some((message) => message.author === "AI" && /\b(?:check with (?:my|the) team|asked the team to check)\b/i.test(message.body)))
+    : null;
+  const prospectSaid = spoken.filter((message) => message.author === "PROSPECT").map((message) => message.body);
+  const replyText = followUp
+    ? followUpReply(Number(payload.followUp), agent.followUpHours.length)
+    : dropCallingThemAgent(waited || checked || draft, ignoreAgentGreeting(workspace.agentName, prospectSaid, workspace.agentName) === null ? workspace.agentName : null);
   const problems = Array.isArray(review?.problems) ? review.problems.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [];
   const rating = typeof review?.rating === "string" && ["HOT", "JUNK", "UNRATED"].includes(review.rating.toUpperCase()) ? review.rating.toUpperCase() : null;
   const handoffWanted = review?.handoff === true || requestsTeamSwitch(spoken.filter((message) => message.author === "PROSPECT").slice(-1)[0]?.body ?? "");
@@ -2951,18 +3352,24 @@ async function promptedReply(db: Db, runtime: Runtime, input: PromptedInput): Pr
     let voiceSent = false;
     if (clip) {
       if (agent.typingDelay) await runtime.pause?.(typingMs(spokenText));
-      const result = await runtime.send({ connection: sendConnection(connection), purpose: "text", recipientId: participant?.externalId, text: spokenText, audioUrl: clip.url });
+      const result = await runtime.send({ connection: sendConnection(connection), purpose: "text", recipientId: participant?.externalId, text: spokenText, audioUrl: clip.url, inboundMessageId: followUp ? undefined : customerMessageId(conversation.messages) });
       if (result.status === "ACCEPTED" || result.status === "UNKNOWN") {
         voiceSent = true;
         await record(spokenText, result, clip);
       }
     }
     if (!voiceSent) {
-      for (const bubble of bubbles) {
+      for (const [index, bubble] of bubbles.entries()) {
         if (agent.typingDelay) await runtime.pause?.(typingMs(bubble));
         const now = await db.conversation.findUnique({ where: { id: conversation.id }, select: { revision: true, owner: true } });
         if (!now || now.revision !== expectedRevision || now.owner !== "AI") break;
-        const result = await runtime.send({ connection: sendConnection(connection), purpose: "text", recipientId: participant?.externalId, text: bubble });
+        const result = await runtime.send({
+          connection: sendConnection(connection),
+          purpose: "text",
+          recipientId: participant?.externalId,
+          text: bubble,
+          ...(index === 0 && !followUp ? { inboundMessageId: customerMessageId(conversation.messages) } : {}),
+        });
         await record(bubble, result);
         if (result.status !== "ACCEPTED") break;
       }
@@ -3087,12 +3494,14 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
     const leadAgent = parseAgentSettings(lead.workspace.agentSettings);
     if (!record.Company && leadAgent.zohoCompanyFallback) record.Company = leadAgent.zohoCompanyFallback;
     if (lead.rating && lead.rating !== "UNRATED" && leadAgent.zohoRatingField) record[leadAgent.zohoRatingField] = lead.rating;
-    const concern = nameConcern(lead.contact.chosenName, [lead.contact.displayName, lead.contact.username]);
-    const projectCheck = await db.message.findFirst({
+    const concern = nameConcern(lead.contact.chosenName, lead.channel === "WHATSAPP" ? [] : [lead.contact.displayName, lead.contact.username]);
+    const projectChecks = await db.message.findMany({
       where: { author: "SYSTEM", body: { startsWith: "Project check: " }, createdAt: { gte: lead.createdAt }, conversation: { contactId: lead.contactId, channel: lead.channel } },
       orderBy: { createdAt: "desc" },
       select: { body: true },
+      take: 8,
     });
+    const projectCheck = projectChecks.find((item) => item.body.includes("Found on ")) ?? projectChecks[0];
     const lines = [
       ...(lead.rating ? [`Lead rating: ${lead.rating}${lead.ratingReason ? ` (${lead.ratingReason})` : ""}`] : []),
       ...placed.lines,
@@ -3260,10 +3669,15 @@ async function suppressContact(db: Db, contactId: string, workspaceId: string, s
 }
 
 async function cancelAutomation(db: Db, workspaceId: string, contactId: string, conversationId?: string) {
+  // Only this contact's own work: jobs with no conversationId (inbound events, openings, CRM syncs) must never match by accident.
+  const conversationIds = new Set(conversationId
+    ? [conversationId]
+    : (await db.conversation.findMany({ where: { contactId, workspaceId }, select: { id: true } })).map((item) => item.id));
   const jobs = await db.outboxJob.findMany({ where: { workspaceId, status: { in: ["PENDING", "DISPATCHED", "PROCESSING"] } } });
   for (const job of jobs) {
     const payload = asRecord(job.payload);
-    if (payload.contactId === contactId || payload.conversationId === conversationId) {
+    const forConversation = typeof payload.conversationId === "string" && conversationIds.has(payload.conversationId);
+    if (payload.contactId === contactId || forConversation) {
       await db.outboxJob.update({ where: { id: job.id }, data: { status: "CANCELLED" } });
     }
   }
@@ -3288,6 +3702,7 @@ async function readLeadForm(
   questions: ReturnType<typeof parseLeadQuestions>,
   messages: { author: string; body: string }[],
   phoneRegion = runtime.phoneRegion,
+  agentName?: string | null,
 ): Promise<ReturnType<typeof acceptExtractedAnswers> | null> {
   if (!runtime.llm.extractAnswers) return null;
   const transcript = messages.map((message) => ({ author: message.author, body: message.body }));
@@ -3298,7 +3713,7 @@ async function readLeadForm(
       questions: questions.map((question) => ({ id: question.id, label: question.label, kind: question.kind, numeric: numericQuestion(question) })),
       transcript,
     });
-    return acceptExtractedAnswers({ questions, raw, prospectText, phoneRegion });
+    return acceptExtractedAnswers({ questions, raw, prospectText, phoneRegion, agentName });
   } catch (error) {
     console.warn("Lead form reading failed, using the text rules.", error instanceof Error ? error.message : error);
     return null;
@@ -3324,9 +3739,67 @@ export function clockLine(now: Date): string {
 
 const SAME_NUMBER_TEMPLATE = "Shall the team call you on this same WhatsApp number?";
 const BHK_ONLY_TEMPLATE = "How many BHK is it?";
+const PLAN_MENTION = /\b(floor ?plans?|layout plans?|unit plans?)\b|\bplan(?:ning)? the layout\b|\b(?:snapshot|picture|photo)s?\b.{0,40}\bpdfs?\b|\bpdfs?\b.{0,40}\b(?:snapshot|picture|photo|plan)s?\b|\bphotos? or (?:a )?pdfs?\b|\bpdfs? or (?:a )?photos?\b|\b(?:share|send|upload).{0,50}\b(?:photos?|pdfs?|plans?)\b/i;
+const NO_PLAN = /\b(?:do not|don't|dont|dnt|dn'?t)\s+have(?:\s+any|\s+(?:one|it)\b)|\b(?:do not|don't|dont|dnt|dn'?t)\s+have\s+(?:a |the )?(?:floor ?)?(?:plans?|pdfs?|photos?|layouts?|pictures?)\b|\bno (?:floor ?)?plan\b/i;
+const SHORT_NO = /^(?:no+|nope|nah|nothing|not now|no thanks|no thank you)(?: sir| ji)?\.?$/i;
+const REPLIED_TO = /^\(Replied to: "([\s\S]*?)"\)\s*/;
+
+function customerMessageId(messages: { author: string; externalMessageId: string | null }[]): string | undefined {
+  const id = [...messages].reverse().find((message) => message.author === "PROSPECT" && message.externalMessageId && !message.externalMessageId.includes("#"))?.externalMessageId;
+  return id ?? undefined;
+}
+
+function latestProspectBody(spoken: { author: string; body: string }[]): string {
+  return [...spoken].reverse().find((message) => message.author === "PROSPECT")?.body ?? "";
+}
+
+function refusedPlan(body: string, earlierAi: { body: string }[]): boolean {
+  const quoted = body.match(REPLIED_TO)?.[1] ?? "";
+  const said = body.replace(REPLIED_TO, "").trim();
+  if (NO_PLAN.test(said)) return Boolean(quoted ? PLAN_MENTION.test(quoted) : earlierAi.some((message) => PLAN_MENTION.test(message.body)));
+  if (!SHORT_NO.test(said)) return false;
+  return PLAN_MENTION.test(quoted) || earlierAi.some((message) => PLAN_MENTION.test(message.body));
+}
+
+async function signalTyping(db: Db, runtime: Runtime, conversation: { id: string; contactId: string; channel: "INSTAGRAM" | "FACEBOOK" | "WHATSAPP"; messages: { author: string; externalMessageId: string | null }[] }, connection: SendConnection & { mode: string }): Promise<void> {
+  if (connection.mode === "SIMULATION") return;
+  const inbound = [...conversation.messages].reverse().find((message) => message.author === "PROSPECT" && message.externalMessageId);
+  const participant = await db.contactIdentity.findFirst({
+    where: { contactId: conversation.contactId, identityType: "MESSAGING_PARTICIPANT", channel: conversation.channel },
+    select: { externalId: true },
+  });
+  if (!participant?.externalId) return;
+  await runtime.send({
+    connection: sendConnection(connection),
+    purpose: "typing",
+    recipientId: participant.externalId,
+    text: "",
+    inboundMessageId: customerMessageId(conversation.messages),
+  }).catch(() => undefined);
+}
+
+function withTeamClose(text: string | null, input: { due: boolean; phone: string | null; photosLater: boolean; room: string | null }): string | null {
+  if (!input.due || !input.phone || (text && /\bteam will call\b/i.test(text))) return text;
+  const call = `the team will call u on ${input.phone}`;
+  const pictures = input.photosLater
+    ? ` the team will take ${input.room ? `the ${input.room}` : "it"} up when the pictures come`
+    : "";
+  const line = `${call}.${pictures}`;
+  return text?.trim() ? `${text.replace(/[.!\s]*$/, "")}. ${line}` : line;
+}
+
+function dropPlanMentions(text: string): string {
+  return text.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !PLAN_MENTION.test(part)).join(" ").trim()).filter(Boolean).join("\n");
+}
+
+// The client's close: no designers, layouts or 3D talk, just the two next steps.
+const VISIT_OFFER = "Shall I book a free consultation for you, or would you like to visit our experience centre?";
+const TYPE_ASK = "Is it an apartment, villa or independent house?";
+// Prices are never revealed: the team quotes after seeing the home.
+const QUOTE_LINE = "The budget will be quoted by our team after understanding your requirement, the scope and the materials you choose.";
 const PLAN_BUILDER_TEMPLATE = "Do you have the floor plan from the builder? A photo or PDF is fine, the designer can start planning the layout before possession.";
 const PLAN_READY_TEMPLATE = "Can you share the floor plan of your home? Even a phone picture of it works, the designer can start planning from it.";
-const PLAN_RENOVATION_TEMPLATE = "Could you share a few photos of the rooms you want to change? Phone pictures are fine, the designer can see what is there now.";
+const PLAN_RENOVATION_TEMPLATE = "Could you share a few photos of the home? Phone pictures are fine, the designer can see what is there now.";
 const localQuestionCache = new Map<string, string>();
 
 /** The lead questions in the chat's language, so a question added in code never switches the chat to English. */
@@ -3422,7 +3895,7 @@ function photoLine(messages: { author: string; body: string }[]): string {
   return "";
 }
 
-async function latestName(runtime: Runtime, messages: { author: string; body: string }[], current: string | null): Promise<string | null> {
+async function latestName(runtime: Runtime, messages: { author: string; body: string }[], current: string | null, agentName?: string | null): Promise<string | null> {
   const turns: { question: string; reply: string }[] = [];
   for (const message of messages) {
     const body = withoutPhotoText(message.body).trim();
@@ -3442,7 +3915,7 @@ async function latestName(runtime: Runtime, messages: { author: string; body: st
   const { question, reply } = pick;
   const asked = asksForName(question);
   try {
-    return cleanName(await runtime.llm.readName!(question, reply), reply) ?? current;
+    return cleanName(await runtime.llm.readName!(question, reply), reply, agentName) ?? current;
   } catch (error) {
     console.warn("Name reading failed, using the text rules.", error instanceof Error ? error.message : error);
     return current ?? nameInReply(reply, asked);
@@ -3688,6 +4161,7 @@ function sanitize(event: NormalizedEvent): Record<string, StoredValue> {
       imageUrls: event.imageUrls ?? [],
       imageMediaId: event.imageMediaId ?? null,
       document: event.document ?? null,
+      replyToMessageId: event.replyToMessageId ?? null,
     };
   }
   if (event.kind === "message_edit") {
@@ -3700,7 +4174,63 @@ function sanitize(event: NormalizedEvent): Record<string, StoredValue> {
       editedAt: event.editedAt,
     };
   }
+  if (event.kind === "delivery") {
+    return {
+      kind: event.kind,
+      messageId: event.messageId,
+      status: event.status,
+      recipient: event.recipient,
+      errorCode: event.errorCode === null ? null : String(event.errorCode),
+      errorTitle: event.errorTitle,
+      errorDetail: event.errorDetail,
+    };
+  }
   return { kind: "ignore", reason: event.reason };
+}
+
+async function recordDelivery(
+  db: Db,
+  input: { channel: Channel; mode: ConnectionMode; receivedAt: Date },
+  event: Extract<NormalizedEvent, { kind: "delivery" }>,
+): Promise<void> {
+  const connections = await db.channelConnection.findMany({
+    where: { channel: input.channel, mode: input.mode, externalAccountId: event.externalAccountId, revokedAt: null },
+    select: { id: true, workspaceId: true },
+  });
+  const route = routingDecision(connections.map((item) => item.id));
+  const connection = "reject" in route ? null : connections.find((item) => item.id === route.connectionId) ?? null;
+  const key = `${connection?.id ?? input.mode}:${dedupKey(input.channel, event)}`;
+  try {
+    await db.webhookEvent.create({
+      data: {
+        channel: input.channel,
+        mode: input.mode,
+        connectionId: connection?.id,
+        workspaceId: connection?.workspaceId,
+        dedupKey: key,
+        eventType: `message.${event.status}`,
+        externalAccountId: event.externalAccountId,
+        payload: sanitize(event),
+        status: event.status === "failed" ? "FAILED" : "DONE",
+        reason: event.errorCode ? `${event.errorCode} ${event.errorTitle ?? ""}`.trim() : null,
+        receivedAt: input.receivedAt,
+      },
+    });
+  } catch (error) {
+    if (isUnique(error)) return;
+    throw error;
+  }
+  if (event.status !== "failed" || !connection) return;
+  const detail = [event.errorCode, event.errorTitle, event.errorDetail].filter((part) => part !== null && part !== "").join(" ");
+  await db.auditEvent.create({
+    data: {
+      workspaceId: connection.workspaceId,
+      action: "outbound.undelivered",
+      entityType: "Message",
+      entityId: event.messageId,
+      summary: `WhatsApp did not deliver a reply. ${detail}`.slice(0, 500),
+    },
+  });
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

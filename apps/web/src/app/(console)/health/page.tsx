@@ -3,7 +3,7 @@ import { PageTitle, StatusLabel } from "@/components/ui";
 import { requireWorkspace } from "@/lib/session";
 
 export default async function HealthPage() {
-  const { role } = await requireWorkspace();
+  const { workspace, role } = await requireWorkspace();
   if (role === "VIEWER" || role === "AGENT") return <p>Permission denied.</p>;
   let database = "Unavailable";
   try {
@@ -13,8 +13,9 @@ export default async function HealthPage() {
     database = "Unavailable";
   }
   const heartbeat = await getPrisma().workerHeartbeat.findUnique({ where: { id: "worker" } }).catch(() => null);
-  const oldest = await getPrisma().outboxJob.findFirst({ where: { status: { in: ["PENDING", "DISPATCHED"] } }, orderBy: { createdAt: "asc" } });
-  const unknown = await getPrisma().outboundAttempt.count({ where: { status: "UNKNOWN" } });
+  const scope = role === "SUPER_ADMIN" ? {} : { workspaceId: workspace?.id ?? "" };
+  const oldest = await getPrisma().outboxJob.findFirst({ where: { ...scope, status: { in: ["PENDING", "DISPATCHED"] } }, orderBy: { createdAt: "asc" } });
+  const unknown = await getPrisma().outboundAttempt.count({ where: { ...scope, status: "UNKNOWN" } });
   return (
     <section>
       <PageTitle title="System health" detail="Inference stays private. A missing model routes chats to staff." />

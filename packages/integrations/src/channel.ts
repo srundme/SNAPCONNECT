@@ -15,8 +15,10 @@ export type ChannelAdapter = {
   channel: "INSTAGRAM" | "FACEBOOK" | "WHATSAPP";
   mode: "SIMULATION" | "INTEGRATION";
   sendPrivateReply(input: { commentId: string; text: string; token: string; accountId: string }): Promise<SendResult>;
-  sendText(input: { recipientId: string; text: string; token: string; accountId: string }): Promise<SendResult>;
-  sendAudio(input: { recipientId: string; audioUrl: string; token: string; accountId: string }): Promise<SendResult>;
+  sendText(input: { recipientId: string; text: string; token: string; accountId: string; replyToMessageId?: string | null }): Promise<SendResult>;
+  sendAudio(input: { recipientId: string; audioUrl: string; token: string; accountId: string; replyToMessageId?: string | null }): Promise<SendResult>;
+  /** Shows the platform typing label in the customer's chat while a reply is being written. */
+  showTyping(input: { recipientId: string; messageId: string | null; token: string; accountId: string }): Promise<SendResult>;
   diagnose(input: { token: string | null; scopes: string[]; subscribed: boolean }): Promise<DiagnosticCheck[]>;
 };
 
@@ -29,7 +31,7 @@ export async function classifyFetch(work: () => Promise<Response>, simulated = f
     if (response.status === 429 || response.status >= 500) {
       return { status: "RETRYABLE_FAILURE", error: `HTTP ${response.status}`, simulated };
     }
-    if (!response.ok) return { status: "PERMANENT_FAILURE", error: `HTTP ${response.status}`, simulated };
+    if (!response.ok) return { status: "PERMANENT_FAILURE", error: `HTTP ${response.status}: ${text.slice(0, 180)}`, simulated };
     let body: {
       message_id?: string;
       recipient_id?: string;

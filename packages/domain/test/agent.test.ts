@@ -5,6 +5,8 @@ import {
   applyReplySwitches,
   askSameNumber,
   contextChecks,
+  preferLatestHome,
+  preferLatestPlace,
   customerComplaint,
   dropAnsweredQuestions,
   dropIndicSentences,
@@ -21,6 +23,9 @@ import {
   screenLead,
   unrealisticAnswers,
   messageSituations,
+  askingPrice,
+  readyToProceed,
+  proposeConsultation,
   pastTimeToday,
   pastTimeReply,
   budgetLakhs,
@@ -34,6 +39,9 @@ import {
   pricePush,
   abroadSituation,
   dayOffLine,
+  officeNow,
+  waitingOnCall,
+  callWaitReply,
   openDays,
   parsePhone,
   wrongPhoneIn,
@@ -114,10 +122,28 @@ describe("common sense checks", () => {
     expect(ownLandHome("3 bhk flat in Prestige Lakeside Habitat")).toBe(false);
   });
 
-  it("flags a home in another city, not a Bengaluru locality", () => {
+  it("flags a home in another city, not a Bengaluru locality or a road named after one", () => {
     expect(keys({ place: "Anna Nagar, Chennai" })).toEqual(["outside-area"]);
     expect(keys({ place: "HSR Layout" })).toEqual([]);
     expect(keys({ place: "Whitefield, Bangalore" })).toEqual([]);
+    expect(keys({ place: "Puravankara Purva Heritage, Hosur Road" })).toEqual([]);
+    expect(keys({ place: "Old Madras Road" })).toEqual([]);
+    expect(keys({ place: "Hosur" })).toEqual(["outside-area"]);
+    const low = contextChecks({ questions, answers: { type: "3 BHK", scope: "Full home", budget: "2 lakh" }, now, serviceArea: "Bengaluru" }).find((check) => check.key.startsWith("budget-scope"));
+    expect(low?.line).toMatch(/designer will see what fits the full home/i);
+    expect(low?.line).not.toMatch(/doing it in stages|starting with the key rooms/);
+  });
+
+  it("keeps the latest home they stated and notices a timeline that fights possession", () => {
+    expect(preferLatestHome("3 BHK Apartment", ["3 bhk apartment", "sorry it's 4 bhk"])).toBe("4 BHK Apartment");
+    expect(preferLatestHome("3 BHK Apartment", ["actually it is a villa"])).toBe("3 BHK Villa");
+    expect(preferLatestPlace("Purva Heritage", ["4 bhk", "actually it is in Whitefield, Sobha Dream Acres"])).toBe("it is in Whitefield, Sobha Dream Acres");
+    expect(preferLatestPlace("APR Bengaluru", ["Sorry my name is RITEESH shetty", "Sorry my no. Is 9663918221", "Actually my name is RITEESH shetty"])).toBe("APR Bengaluru");
+    const withTimeline = [...questions, { id: "timeline", label: "When would you like the work to start or finish?" }];
+    const clash = contextChecks({ questions: withTimeline, answers: { when: "next month", timeline: "after 2 years" }, now, serviceArea: "Bengaluru" });
+    expect(clash.some((check) => check.key.startsWith("date-clash"))).toBe(true);
+    const fine = contextChecks({ questions: withTimeline, answers: { when: "next month", timeline: "in 3 months" }, now, serviceArea: "Bengaluru" });
+    expect(fine.some((check) => check.key.startsWith("date-clash"))).toBe(false);
   });
 
   it("captures a labelled budget or size even when another question was asked", () => {
@@ -141,6 +167,36 @@ describe("common sense checks", () => {
     expect(keysOf("Okay book me a consultation")).toContain("book-consultation");
     expect(keysOf("can we schedule a site visit on saturday")).toContain("book-consultation");
     expect(keysOf("I want to design interior for my new flat")).toEqual([]);
+    expect(keysOf("how much for a 3 bhk")).not.toContain("book-consultation");
+    expect(askingPrice("how much for a 3 bhk")).toBe(true);
+    expect(askingPrice("how much will it cost")).toBe(true);
+    expect(askingPrice("what is the project timeline, how much time will it take for a 4 BHK villa")).toBe(false);
+    expect(askingPrice("minimum how many days for handover")).toBe(false);
+    expect(askingPrice("what is the minimum price")).toBe(true);
+    expect(readyToProceed("how much for a 3 bhk")).toBe(false);
+    expect(readyToProceed("please call me tomorrow")).toBe(true);
+    const hours = "Tuesday to Sunday, 10 AM to 7 PM";
+    expect(proposeConsultation(new Date("2026-10-07T10:23:00Z"), hours)).toBe("today at 5 PM");
+    expect(proposeConsultation(new Date("2026-10-05T05:30:00Z"), hours)).toBe("tomorrow at 10 AM");
+    expect(proposeConsultation(new Date("2026-10-06T13:10:00Z"), hours)).toBe("tomorrow at 10 AM");
+    expect(waitingOnCall("your team is not called yet")).toBe(true);
+    expect(waitingOnCall("why hasn't the team called me")).toBe(true);
+    expect(waitingOnCall("do not call me")).toBe(false);
+    expect(waitingOnCall("please call me tomorrow")).toBe(false);
+    expect(officeNow(new Date("2026-10-07T10:36:00Z"), hours).kind).toBe("open");
+    expect(officeNow(new Date("2026-10-07T14:30:00Z"), hours).kind).toBe("passed");
+    expect(callWaitReply(new Date("2026-10-07T10:36:00Z"), hours)).toBe("I'll check with my team");
+    expect(callWaitReply(new Date("2026-10-07T14:30:00Z"), hours)).toBe("I'll check with my team. working hours have passed, so maybe they will call u tomorrow");
+    expect(callWaitReply(new Date("2026-10-05T10:00:00Z"), hours)).toMatch(/weekly off/);
+    expect(callWaitReply(new Date("2026-10-04T14:30:00Z"), hours)).toMatch(/on Tuesday/);
+    expect(readyToProceed("I don't want a call")).toBe(false);
+    expect(keysOf("Huge amount sir")).toContain("price-shock");
+    expect(keysOf("just looking for now")).toContain("not-now");
+    expect(keysOf("need interiors for my clinic")).toContain("not-a-home");
+    expect(keysOf("when will my flat be ready?")).toContain("builder-mixup");
+    expect(keysOf("we already have an architect")).toContain("has-designer");
+    expect(keysOf("does 35 lakh include the kitchen?")).toContain("inclusions");
+    expect(keysOf("the flat in Whitefield and my parents house in Jayanagar")).toContain("two-homes");
     expect(keysOf("No i can't come and visit jst send me everything")).toContain("wants-portfolio");
     const lateMorning = new Date("2026-10-06T06:10:00Z");
     expect(pastTimeToday("Today 10 am", lateMorning)).toMatch(/already 11:40 AM/);
@@ -168,14 +224,19 @@ describe("common sense checks", () => {
     ];
     const rate = (answers: Record<string, string>) => rateLead({ questions, answers, hotBudgetLakhs: 30 }).rating;
     expect(rate({ budget: "30-50L" })).toBe("HOT");
+    expect(rate({ budget: "within 60 lakhs" })).toBe("HOT");
+    expect(rate({ budget: "under 20L" })).toBe("JUNK");
     expect(rate({ budget: "20-30L", home: "4 BHK Villa", scope: "Full home" })).toBe("JUNK");
-    expect(rate({ budget: "Not sure yet", home: "3 BHK Apartment", scope: "Poora Ghar ku karni hai" })).toBe("HOT");
+    expect(rate({ budget: "Not sure yet", home: "3 BHK Apartment", scope: "Poora Ghar ku karni hai" })).toBe("UNRATED");
+    expect(rate({ budget: "Not sure yet", home: "4 BHK Apartment", scope: "Poora Ghar ku karni hai" })).toBe("HOT");
     expect(rate({ home: "Villa", scope: "full home" })).toBe("HOT");
-    expect(rate({ home: "3 BHK Apartment", scope: "Pura ghar" })).toBe("HOT");
+    expect(rate({ home: "3 BHK Apartment", scope: "Pura ghar" })).toBe("UNRATED");
     expect(rate({ home: "3 BHK Apartment", scope: "sirf kitchen" })).toBe("JUNK");
     expect(rate({ home: "2 BHK Apartment", scope: "Full home" })).toBe("JUNK");
     expect(rate({ home: "3 BHK Apartment", scope: "only kitchen and wardrobes" })).toBe("JUNK");
     expect(rate({ home: "3 BHK Apartment" })).toBe("UNRATED");
+    expect(rate({ home: "3 BHK Independent house" })).toBe("HOT");
+    expect(rate({ home: "4 BHK Villa" })).toBe("HOT");
     expect(rate({ budget: "50L+", scope: "only the kitchen and 2 bedrooms" })).toBe("JUNK");
     expect(rate({ budget: "50L+", scope: "full home sir" })).toBe("HOT");
     expect(rateLead({ questions, answers: { budget: "50L" }, hotBudgetLakhs: 0 }).rating).toBe("UNRATED");

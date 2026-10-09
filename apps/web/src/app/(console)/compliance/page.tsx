@@ -119,7 +119,7 @@ export default async function CompliancePage() {
 
   return (
     <section>
-      <PageTitle title="Compliance" detail="How SnapServe Social follows Instagram and Facebook messaging rules, with live checks from real activity in the last 30 days." />
+      <PageTitle title="Compliance" detail="How Instagram and Facebook messaging rules are followed, with live checks from real activity in the last 30 days." />
 
       <Panel className="mb-4 flex flex-wrap items-center justify-between gap-3 p-5">
         <div>

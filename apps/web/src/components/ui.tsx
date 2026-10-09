@@ -1,20 +1,13 @@
 import type { ReactNode } from "react";
 import { clsx } from "clsx";
 
-export function SnapMark({ size = 28 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
-      <rect width="32" height="32" rx="9" fill="#0c7a72" />
-      <path d="M8 18.5 13.2 12h5.1L23.8 18.5" fill="none" stroke="white" strokeWidth="2.1" strokeLinejoin="round" strokeLinecap="round" />
-      <path d="M8 22.2h11.5" fill="none" stroke="white" strokeWidth="2.1" strokeLinecap="round" />
-      <circle cx="23.4" cy="11.2" r="1.7" fill="white" />
-    </svg>
-  );
+export function BrandMark({ height = 72, className }: { height?: number; className?: string }) {
+  return <img src="/brand/mark.png" alt="The KariGhars" height={height} className={clsx("w-auto", className)} style={{ height }} />;
 }
 
 export function StatusLabel({ tone, children }: { tone: "ok" | "wait" | "stop" | "sim" | "neutral"; children: ReactNode }) {
   const color = {
-    ok: "bg-[#e7f6f3] text-[#085e58]",
+    ok: "bg-[#f4ead2] text-[#6e5420]",
     wait: "bg-[#fff6e8] text-[#92400e]",
     stop: "bg-[#fde8ec] text-[#9f1239]",
     sim: "bg-[#eef1f4] text-[#334155]",
@@ -73,7 +66,7 @@ export function Empty({ title, body }: { title: string; body: string }) {
 
 export function Notice({ tone, children }: { tone: "ok" | "stop"; children: ReactNode }) {
   return (
-    <p className={clsx("mb-4 rounded-xl px-3 py-2 text-sm", tone === "ok" ? "bg-[#e7f6f3] text-[#085e58]" : "bg-[#fde8ec] text-[#9f1239]")}>
+    <p className={clsx("mb-4 rounded-xl px-3 py-2 text-sm", tone === "ok" ? "bg-[#f4ead2] text-[#6e5420]" : "bg-[#fde8ec] text-[#9f1239]")}>
       {children}
     </p>
   );
@@ -83,7 +76,7 @@ export function PageTitle({ title, detail, action }: { title: string; detail?: s
   return (
     <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="text-balance text-[26px] font-semibold leading-none tracking-tight">{title}</h1>
+        <h1 className="text-balance font-[family-name:var(--font-display)] text-[32px] font-medium leading-none tracking-tight">{title}</h1>
         {detail ? <p className="mt-2 max-w-2xl text-pretty text-sm text-[var(--color-muted)]">{detail}</p> : null}
       </div>
       {action}

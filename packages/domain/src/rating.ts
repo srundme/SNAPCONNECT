@@ -36,6 +36,15 @@ export function selectedRoomsOnly(scope: string): boolean {
   return !FULL_SCOPE.test(scope) && /\b(selected|some|few|only|just|one|single|kitchen|wardrobes?|bed ?rooms?|living|bathrooms?|rooms?|sirf|kuch|bas|mattum)\b/i.test(scope);
 }
 
+/** They said on their own that they want only part of the home. */
+export function volunteeredRoomsOnly(text: string): boolean {
+  const plain = text.replace(/^\(Replied to:[\s\S]*?\)\s*/, "");
+  if (FULL_SCOPE.test(plain)) return false;
+  return /\b(?:only|just|sirf|bas|mattum)\b.{0,40}\b(?:the |a |my )?(?:kitchen|wardrobes?|bed ?rooms?|living(?: room)?|bathrooms?|pooja|one room|single room|a room|some rooms|few rooms)\b/i.test(plain)
+    || /\b(?:kitchen|wardrobe|one room|single room)\s+only\b/i.test(plain)
+    || /\bselected rooms\b/i.test(plain);
+}
+
 const BIG_HOME = /\b(villa|independent house|individual house|bungalow|row house|duplex|penthouse|triplex)\b/i;
 
 function answerFor(questions: LeadQuestion[], answers: Record<string, string>, pattern: RegExp): string {
@@ -55,7 +64,9 @@ export function rateLead(input: { questions: LeadQuestion[]; answers: Record<str
   const scopeText = answerFor(input.questions, input.answers, /full home|selected rooms|scope/i);
   if (selectedRoomsOnly(scopeText)) return { rating: "JUNK", reason: `Only some rooms (${scopeText.trim()}), not a full home` };
   if (budget) {
-    return budget.low >= line
+    // "within 60 lakhs" is a ceiling they will spend up to, so rate it on the 60.
+    const spend = budget.low > 0 ? budget.low : budget.high ?? 0;
+    return spend >= line
       ? { rating: "HOT", reason: `Budget ${budgetText.trim()} (${line}L+ line)` }
       : { rating: "JUNK", reason: `Budget ${budgetText.trim()} is under ${line}L` };
   }
@@ -64,9 +75,11 @@ export function rateLead(input: { questions: LeadQuestion[]; answers: Record<str
   const area = answerFor(input.questions, input.answers, /carpet|sq\.? ?ft|area in/i);
   const bhk = Number(home.match(/(\d+)\s*-?\s*bhk/i)?.[1] ?? 0);
   const sqft = Number(area.replace(/(\d),(\d)/g, "$1$2").match(/\d{3,5}/)?.[0] ?? 0);
-  const full = FULL_SCOPE.test(scope);
+  // The firm only does full homes and no longer asks the scope, so no answer means a full home.
+  const full = FULL_SCOPE.test(scope) || !scope.trim();
   const estimate = `Estimated from project size (no budget ${budgetText ? "given" : "yet"})`;
-  if (full && (BIG_HOME.test(home) || bhk >= 3 || sqft >= 1500)) return { rating: "HOT", reason: `${estimate}: full home, ${home.trim() || `${sqft} sq ft`}` };
+  // A plain 3 BHK apartment is left UNRATED for the team to judge.
+  if (full && (BIG_HOME.test(home) || bhk >= 4 || sqft >= 1500)) return { rating: "HOT", reason: `${estimate}: full home, ${home.trim() || `${sqft} sq ft`}` };
   if (bhk && bhk <= 2) return { rating: "JUNK", reason: `${estimate}: ${bhk} BHK` };
   if (full && sqft && sqft < 1500) return { rating: "JUNK", reason: `${estimate}: ${sqft} sq ft` };
   return { rating: "UNRATED", reason: "Not enough detail yet" };

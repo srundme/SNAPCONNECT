@@ -40,10 +40,27 @@ export function whatsappAdapter(options: { baseUrl: string; version: string; fet
             messaging_product: "whatsapp",
             recipient_type: "individual",
             to: input.recipientId,
+            ...(input.replyToMessageId ? { context: { message_id: input.replyToMessageId } } : {}),
             type: "text",
             text: { body: input.text, preview_url: false },
           }),
           signal: AbortSignal.timeout(15_000),
+        }),
+      );
+    },
+    async showTyping(input) {
+      if (!input.messageId) return { status: "ACCEPTED", providerMessageId: null, providerRecipientId: null, simulated: false };
+      return classifyFetch(() =>
+        fetchImpl(`${base.origin}/${options.version}/${input.accountId}/messages`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${input.token}`, "content-type": "application/json" },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            status: "read",
+            message_id: input.messageId,
+            typing_indicator: { type: "text" },
+          }),
+          signal: AbortSignal.timeout(8_000),
         }),
       );
     },
@@ -56,6 +73,7 @@ export function whatsappAdapter(options: { baseUrl: string; version: string; fet
             messaging_product: "whatsapp",
             recipient_type: "individual",
             to: input.recipientId,
+            ...(input.replyToMessageId ? { context: { message_id: input.replyToMessageId } } : {}),
             type: "audio",
             audio: { link: input.audioUrl },
           }),

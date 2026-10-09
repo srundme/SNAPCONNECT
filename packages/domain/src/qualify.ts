@@ -503,7 +503,48 @@ const NOT_A_NAME = /^(enoda|ennoda|en|enga|unga|mera|mere|my|naan|nan|hi|hello|h
 
 const NAME_FILLER = /\b(sir|bro|bhai|bhaiya|anna|ji|mam|madam|ma'am|here|myself|this is|i am|i'm|im|my name is|my name|name is|naan|nan|en peru|enoda peru|en per|mera naam|mera nam|naam|peru|hai|dhaan|than|da|di)\b/gi;
 
-export function cleanName(candidate: string | null | undefined, source: string): string | null {
+const AGENT_GREETING = "hi+|hello+|hey+|hii+|helo+|vanakkam|namaste|namaskara|namaskar|good\\s+(?:morning|evening|afternoon)";
+const OWN_NAME_CLAIM = "my name(?:'s| is)?|i am|i'm|im|this is|call me|naan|en peru|enoda peru|ennoda peru|mera naam|mera nam|naam hai";
+
+function agentNamePattern(agentName: string): string {
+  return agentName.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function claimsAgentAsOwnName(text: string, agentName: string): boolean {
+  return new RegExp(`\\b(?:${OWN_NAME_CLAIM})\\s+${agentNamePattern(agentName)}\\b`, "i").test(text);
+}
+
+/** "Hi Varun" after his intro is them greeting him, not introducing themselves. */
+export function greetedByName(text: string, agentName: string | null | undefined): boolean {
+  const agent = agentName?.trim();
+  if (!agent || agent.length < 2) return false;
+  if (claimsAgentAsOwnName(text, agent)) return false;
+  return new RegExp(`\\b(?:${AGENT_GREETING})\\b[\\s,!.]*${agentNamePattern(agent)}\\b`, "i").test(text);
+}
+
+/** Drop the assistant's own name when the only reason it appears is a greeting. "My name is Varun" still stands. */
+export function ignoreAgentGreeting(name: string | null, texts: string[], agentName: string | null | undefined): string | null {
+  const agent = agentName?.trim();
+  if (!name || !agent || name.trim().toLowerCase() !== agent.toLowerCase()) return name;
+  if (texts.some((text) => claimsAgentAsOwnName(text, agent))) return name;
+  if (texts.some((text) => greetedByName(text, agent))) return null;
+  return name;
+}
+
+/** Take "Hi Varun," off a reply so he does not greet them with his own name. Leaves "I'm Varun" alone. */
+export function dropCallingThemAgent(reply: string, agentName: string | null | undefined): string {
+  const agent = agentName?.trim();
+  if (!agent) return reply;
+  const escaped = agentNamePattern(agent);
+  const next = reply
+    .replace(new RegExp(`\\b(?:${AGENT_GREETING})\\b[\\s,!.]*${escaped}\\b[,!.]?\\s*`, "gi"), "")
+    .replace(new RegExp(`(^|[.!?]\\s+)${escaped}\\s*[,!]\\s*`, "gi"), "$1")
+    .replace(/^[,\s]+/, "")
+    .trim();
+  return next || reply;
+}
+
+export function cleanName(candidate: string | null | undefined, source: string, agentName?: string | null): string | null {
   if (!candidate) return null;
   const words = candidate
     .normalize("NFKC")
@@ -519,7 +560,9 @@ export function cleanName(candidate: string | null | undefined, source: string):
   const said = squeeze(source.normalize("NFKC"));
   if (words.some((word) => !said.includes(squeeze(word)))) return null;
   const name = words.map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(" ");
-  return name.length <= 40 ? name : null;
+  if (name.length > 40) return null;
+  if (agentName && greetedByName(source, agentName) && name.toLowerCase() === agentName.trim().toLowerCase()) return null;
+  return name;
 }
 
 export const CALLBACK_TIME_KEY = "preferred-call-time";
@@ -600,6 +643,7 @@ export function acceptExtractedAnswers(input: {
   raw: Record<string, unknown>;
   prospectText: string;
   phoneRegion?: string;
+  agentName?: string | null;
 }): { name: string | null; phoneE164: string | null; answers: Record<string, string>; callbackTime: string | null; next?: string } {
   const answers: Record<string, string> = {};
   const nextId = typeof input.raw._next === "string" ? input.raw._next.trim() : "";
@@ -623,7 +667,7 @@ export function acceptExtractedAnswers(input: {
       continue;
     }
     if (question.kind === "name") {
-      name = cleanName(text, spoken);
+      name = cleanName(text, spoken, input.agentName);
     } else if (question.kind === "phone") {
       const phone = parsePhone(text, input.phoneRegion ?? "IN");
       const digits = text.replace(/\D/g, "").slice(-10);

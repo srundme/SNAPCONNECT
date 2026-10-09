@@ -86,7 +86,7 @@ function NavLink({
       href={href}
       className={clsx(
         "flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm",
-        active ? "bg-white font-semibold text-[var(--color-shell)]" : "text-white/75 hover:bg-white/8 hover:text-white",
+        active ? "bg-[#f4ead2] font-semibold text-[#1a140c]" : "text-white/75 hover:bg-white/8 hover:text-white",
       )}
     >
       <Icon size={18} strokeWidth={1.9} aria-hidden />

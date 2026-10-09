@@ -27,32 +27,12 @@ import {
   deleteContactData,
   getPrisma,
   ingestEvents,
-  processAvailableJobs,
   queuePostDescriptions,
   setConnectionPaused,
-  simulationRuntime,
   takeOver,
 } from "@snapsocial/db";
 import { auth } from "./auth";
 import { requireActor, requireWorkspace } from "./session";
-
-// Simulate buttons drain the shared outbox, which can hold real accounts' jobs too.
-function jobRuntime() {
-  const config = loadConfig();
-  const credentialKey = Buffer.from(config.CREDENTIAL_ENCRYPTION_KEY, "base64");
-  return simulationRuntime({
-    send: connectionSender({
-      keys: { [config.CREDENTIAL_ENCRYPTION_KEY_ID]: credentialKey },
-      instagramGraphBaseUrl: config.META_INSTAGRAM_GRAPH_BASE_URL,
-      facebookGraphBaseUrl: config.META_FACEBOOK_GRAPH_BASE_URL,
-      version: config.META_API_VERSION,
-    }),
-    credentialKeys: { [config.CREDENTIAL_ENCRYPTION_KEY_ID]: credentialKey },
-    zohoClientId: config.ZOHO_CLIENT_ID ?? null,
-    zohoClientSecret: config.ZOHO_CLIENT_SECRET ?? null,
-    zohoAccountsUrl: config.ZOHO_ACCOUNTS_URL,
-  });
-}
 
 export async function login(formData: FormData) {
   const email = String(formData.get("email") ?? "");
@@ -109,10 +89,6 @@ export async function injectSimulation(formData: FormData) {
   }
   if (scenario === "instagram-reply" || scenario === "facebook-reply") {
     const channel = scenario.startsWith("instagram") ? "INSTAGRAM" : "FACEBOOK";
-    for (let pass = 0; pass < 8; pass += 1) {
-      const processed = await processAvailableJobs(getPrisma(), jobRuntime(), 30);
-      if (processed === 0) break;
-    }
     const attempts = await getPrisma().outboundAttempt.findMany({
       where: { workspaceId: workspace.id, channel, status: "ACCEPTED" },
       orderBy: { createdAt: "desc" },
@@ -133,10 +109,7 @@ export async function injectSimulation(formData: FormData) {
       : { object: "page", entry: [{ id: facebookPage, messaging: [{ sender: { id: sender }, recipient: { id: facebookPage }, timestamp: now.getTime(), message: { mid: sender, text }, referral: attempt ? { comment_id: attempt.commentExternalId } : undefined }] }] };
     await ingestEvents(getPrisma(), { channel, mode: "SIMULATION", events: normalizeMetaPayload(channel, body, now), receivedAt: now });
   }
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const processed = await processAvailableJobs(getPrisma(), jobRuntime(), 30);
-    if (processed === 0) break;
-  }
+  // The worker processes the queued jobs; the outbox is shared by every workspace.
   revalidatePath("/inbox");
   revalidatePath("/leads");
   redirect("/inbox");
@@ -146,7 +119,9 @@ export async function claimConversation(formData: FormData) {
   const conversationId = String(formData.get("conversationId") ?? "");
   const { actor, workspace } = await requireWorkspace();
   if (!workspace || !can(actor, "inbox.reply", workspace.id)) redirect("/overview?denied=1");
-  await takeOver(getPrisma(), conversationId, actor.userId);
+  const owned = await getPrisma().conversation.findFirst({ where: { id: conversationId, workspaceId: workspace.id }, select: { id: true } });
+  if (!owned) redirect("/overview?denied=1");
+  await takeOver(getPrisma(), owned.id, actor.userId);
   revalidatePath("/inbox");
 }
 
@@ -155,7 +130,9 @@ export async function pauseConnection(formData: FormData) {
   const paused = String(formData.get("paused") ?? "") === "true";
   const { actor, workspace } = await requireWorkspace();
   if (!workspace || !can(actor, "integration.manage", workspace.id)) redirect("/overview?denied=1");
-  await setConnectionPaused(getPrisma(), connectionId, paused, actor.userId);
+  const connection = await getPrisma().channelConnection.findFirst({ where: { id: connectionId, workspaceId: workspace.id }, select: { id: true } });
+  if (!connection) redirect("/overview?denied=1");
+  await setConnectionPaused(getPrisma(), connection.id, paused, actor.userId);
   revalidatePath("/integrations");
 }
 
@@ -260,6 +237,14 @@ export async function acceptInvite(formData: FormData) {
   }
   const email = invitation.email.toLowerCase();
   let user = await getPrisma().user.findUnique({ where: { email } });
+  const existing = Boolean(user);
+  if (existing) {
+    try {
+      await auth.api.signInEmail({ body: { email, password }, headers: await headers() });
+    } catch {
+      redirect(`/invite/${token}?error=auth`);
+    }
+  }
   if (!user) {
     const userId = crypto.randomUUID();
     user = await getPrisma().user.create({
@@ -281,7 +266,7 @@ export async function acceptInvite(formData: FormData) {
     create: { workspaceId: invitation.workspaceId, userId: user.id, role: invitation.workspaceRole },
   });
   await getPrisma().invitation.update({ where: { id: invitation.id }, data: { usedAt: new Date() } });
-  await auth.api.signInEmail({ body: { email, password }, headers: await headers() });
+  if (!existing) await auth.api.signInEmail({ body: { email, password }, headers: await headers() });
   redirect("/overview");
 }
 
@@ -289,10 +274,15 @@ export async function removeMember(formData: FormData) {
   const { actor, workspace } = await requireWorkspace();
   if (!workspace || !can(actor, "team.manage", workspace.id)) redirect("/overview?denied=1");
   const userId = String(formData.get("userId") ?? "");
+  if (!userId || userId === actor.userId) redirect("/team?denied=1");
+  const target = await getPrisma().membership.findUnique({ where: { workspaceId_userId: { workspaceId: workspace.id, userId } } });
+  if (!target) redirect("/team");
+  if (target.role === "ADMIN" && actor.platformRole !== "SUPER_ADMIN") redirect("/team?denied=1");
   await getPrisma().membership.deleteMany({ where: { workspaceId: workspace.id, userId } });
-  await getPrisma().session.deleteMany({ where: { userId } });
+  const remaining = await getPrisma().membership.count({ where: { userId } });
+  if (remaining === 0) await getPrisma().session.deleteMany({ where: { userId } });
   await getPrisma().auditEvent.create({
-    data: { actorId: actor.userId, workspaceId: workspace.id, action: "membership.remove", entityType: "Membership", entityId: userId, summary: "Membership removed and sessions revoked." },
+    data: { actorId: actor.userId, workspaceId: workspace.id, action: "membership.remove", entityType: "Membership", entityId: userId, summary: remaining === 0 ? "Membership removed and sessions revoked." : "Membership removed." },
   });
   revalidatePath("/team");
 }
@@ -348,7 +338,7 @@ export async function saveAiSettings(formData: FormData) {
       services: String(formData.get("services") ?? "").trim().slice(0, 1000),
       tone: String(formData.get("tone") ?? "").trim().slice(0, 200),
       systemPrompt: String(formData.get("systemPrompt") ?? "").trim().slice(0, 4000) || null,
-      agentPrompt: formData.get("agentPromptOn") === "on" ? String(formData.get("agentPrompt") ?? "").replace(/\r\n/g, "\n").trim().slice(0, 60_000) || null : null,
+      agentPrompt: null,
       knowledgeBase: knowledgeBase.replace(/\r\n/g, "\n").trim().slice(0, 60_000),
       agentSettings: parseAgentSettings(settings),
       leadQuestions: questionsFromRows(
@@ -519,7 +509,7 @@ export async function savePostSelection(formData: FormData) {
         keywords: [],
         exclusions: ["job"],
         selectedMediaIds,
-        openingTemplate: template || "Hi, I'm the virtual assistant for SnapServe. Thanks for commenting. Are you looking at this for a business, a creator account, or an agency?",
+        openingTemplate: template || "Hi, I'm Varun from The KariGhars. Thanks for commenting. Are you looking at interiors for your home?",
         cooldownHours: 24,
         active: true,
         activatedAt: new Date(),

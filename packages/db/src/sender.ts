@@ -37,9 +37,29 @@ export function connectionSender(options: {
     if (!input.recipientId) {
       return { status: "PERMANENT_FAILURE", error: "No messaging participant id recorded yet.", simulated: false };
     }
-    if (input.audioUrl) {
-      return adapter.sendAudio({ accountId: connection.externalAccountId, recipientId: input.recipientId, audioUrl: input.audioUrl, token });
+    if (input.purpose === "typing") {
+      return adapter.showTyping({
+        accountId: connection.externalAccountId,
+        recipientId: input.recipientId,
+        messageId: input.inboundMessageId ?? null,
+        token,
+      });
     }
-    return adapter.sendText({ accountId: connection.externalAccountId, recipientId: input.recipientId, text: input.text, token });
+    if (input.audioUrl) {
+      return adapter.sendAudio({
+        accountId: connection.externalAccountId,
+        recipientId: input.recipientId,
+        audioUrl: input.audioUrl,
+        token,
+        replyToMessageId: input.inboundMessageId ?? null,
+      });
+    }
+    return adapter.sendText({
+      accountId: connection.externalAccountId,
+      recipientId: input.recipientId,
+      text: input.text,
+      token,
+      replyToMessageId: input.inboundMessageId ?? null,
+    });
   };
 }

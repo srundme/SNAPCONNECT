@@ -38,5 +38,10 @@ await db.account.create({
   },
 });
 await db.membership.create({ data: { workspaceId: seeded.workspaceId, userId, role: "ADMIN" } });
-console.log(JSON.stringify({ email: email.toLowerCase(), password, simulationWorkspaceId: seeded.workspaceId, integrationWorkspaceId: seeded.ownWorkspaceId }, null, 2));
+// The web start script runs this on every start, so a password printed there would land in hosted logs.
+if (process.stdout.isTTY) {
+  console.log(JSON.stringify({ email: email.toLowerCase(), password, simulationWorkspaceId: seeded.workspaceId, integrationWorkspaceId: seeded.ownWorkspaceId }, null, 2));
+} else {
+  console.log(JSON.stringify({ email: email.toLowerCase(), simulationWorkspaceId: seeded.workspaceId, integrationWorkspaceId: seeded.ownWorkspaceId, note: "Platform owner created. The password was not printed because output is not a terminal." }, null, 2));
+}
 await db.$disconnect();

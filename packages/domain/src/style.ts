@@ -36,6 +36,8 @@ export function rupeesIn(text: string): number | null {
 /** A budget written as a bare small number, like "3" or "15", which in Indian home interiors means lakhs. */
 export function bareBudget(text: string): number | null {
   if (/[a-z₹]/i.test(text.replace(/\b(around|about|approx\w*|max\w*|only|budget|is|my|ok)\b/gi, ""))) return null;
+  // A range like "5-8" is two numbers, never 58.
+  if (/\d\s*[-–~/]\s*\d|\d\s+\d/.test(text)) return null;
   const value = Number(text.replace(/[^\d.]/g, ""));
   return Number.isFinite(value) && value >= 1 && value < 100 ? value : null;
 }
@@ -67,10 +69,34 @@ export function sizeIn(text: string): { value: number; unit: string | null; feet
   return { value, unit: plot ? "sq ft of plot" : null, feet: value, plot };
 }
 
+/** A bedroom count no real home has. 1 to 9 is left alone, including a 9 BHK villa. */
+export function impossibleBhk(text: string): number | null {
+  const match = text.match(/\b(\d+)\s*-?\s*(?:bhk|bkh|bsk|rk)\b/i);
+  if (!match) return null;
+  const count = Number(match[1]);
+  return Number.isInteger(count) && count > 9 ? count : null;
+}
+
+/** Drops a sentence that treats an impossible BHK as their home. */
+export function dropImpossibleBhk(text: string, count: number): string {
+  const mention = new RegExp(`\\b${count}\\s*-?\\s*(?:bhk|rk)\\b`, "i");
+  return text
+    .split(/\n+/)
+    .map((line) => line
+      .split(/(?<=[.!?।])\s+|(?:\.\.\.|…)\s*/)
+      .map((part) => part.trim())
+      .filter((part) => part && !mention.test(part))
+      .join(" ")
+      .trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 /**
  * Answers no real customer would give: a telecalling team of lakhs, crores of calls a month, a home
- * budget of a few hundred rupees or hundreds of crores, a flat of a lakh square feet. These are jokes
- * or slips, so they are checked before recording. Anything merely high or low is left to the agent's judgement.
+ * budget of a few hundred rupees or hundreds of crores, a flat of a lakh square feet, a 100 BHK.
+ * These are jokes or slips, so they are checked before recording. Anything merely high or low is left
+ * to the agent's judgement.
  */
 export function unrealisticAnswers(
   questions: Array<{ id: string; label: string }>,
@@ -78,6 +104,13 @@ export function unrealisticAnswers(
 ): Array<{ id: string; label: string; value: number }> {
   return questions.flatMap((question) => {
     const raw = String(answers[question.id] ?? "");
+    if (/\bbhk\b/i.test(question.label)) {
+      const named = impossibleBhk(raw);
+      if (named) return [{ id: question.id, label: question.label, value: named }];
+      const bare = raw.trim().match(/^(\d+)$/);
+      const count = bare ? Number(bare[1]) : null;
+      return count !== null && count > 9 ? [{ id: question.id, label: question.label, value: count }] : [];
+    }
     if (/budget|price|spend|cost/i.test(question.label)) {
       if (bareBudget(raw) !== null || bareBudgetRange(raw)) return [];
       const rupees = rupeesIn(raw);
@@ -96,6 +129,47 @@ export function unrealisticAnswers(
 }
 
 const CANNED = /\b(?:is there )?anything else (?:i can help(?: you)?(?: with)?|on your mind)|\bhave a (?:great|nice|good|wonderful) day\b|\brest assured\b|\bfeel free to (?:ask|reach|contact)\b|\bhope this helps\b|\bplease be informed\b|\bkindly note\b/i;
+
+const PRICE_PITCH = /(?:₹|\b(?:rs\.?|inr)\b|\b\d[\d,.]*(?:\s*(?:-|–|to)\s*\d[\d,.]*)?\s*(?:lakh|lac|crore)s?\b|\bstarting prices?\b|\bstarts? from\b|\bno hidden costs?\b|\bfixed quote\b)/i;
+
+/** The knowledge base without its price lines: prices are never told to customers, so the model never sees them. */
+export function withoutPrices(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !/₹|\b(?:rs\.?|inr)\s*\d|\b\d[\d,.]*\s*(?:lakh|lac|crore)s?\b|\bstarting (?:price|from)\b|\bprices?\b.{0,20}\b(?:published|starting)\b/i.test(line))
+    .join("\n");
+}
+
+/** Drops a price the customer did not ask for. Keeps a real question that was stuck on the end. */
+export function dropUnaskedPrice(text: string): string {
+  const kept = text
+    .split(/\n+/)
+    .map((line) => line
+      .split(/(?<=[.!?।])\s+|(?:\.\.\.|…)\s*/)
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .flatMap((part) => {
+        if (!PRICE_PITCH.test(part)) return [part];
+        const question = part.match(/((?:what|which|where|when|who|how|may|can|could)\b[^?]{0,160}\?)\s*$/i)?.[1];
+        return question && !PRICE_PITCH.test(question) ? [question] : [];
+      })
+      .join(" ")
+      .trim())
+    .filter(Boolean)
+    .join("\n");
+  return kept;
+}
+
+/** Removes a promised callback the customer did not ask for. Keeps the rest of the reply. */
+export function dropUnaskedCallback(text: string, proceeding: boolean): string {
+  if (proceeding || !/\bteam will call\b/i.test(text)) return text;
+  const kept = text
+    .split(/\n+/)
+    .map((line) => sentencesOf(line).filter((sentence) => !/\bteam will call\b/i.test(sentence)).join(" "))
+    .filter(Boolean)
+    .join("\n");
+  return kept || text;
+}
 
 /** Removes call centre sign-offs; keeps the reply as is if that would leave nothing. */
 export function dropCannedLines(text: string): string {
@@ -120,6 +194,29 @@ export function dropIndicSentences(text: string): string {
     .map((line) => sentencesOf(line).filter((sentence) => !indicSentence(sentence)).join(" "))
     .filter(Boolean)
     .join("\n");
+}
+
+/** Drops a first line that is only "sure sir" or "nice" when the reply still says something after it. */
+export function dropEmptyPraise(text: string): string {
+  const parts = sentencesOf(text);
+  if (parts.length < 2) return text;
+  const opener = parts[0]!.replace(/[.!\s]+$/g, "");
+  if (/^(?:sure|nice|got it|sounds good|alright|okay|ok|great|perfect|wonderful|awesome|lovely)(?:\s+(?:sir|mam|madam|bro))?$/i.test(opener)) {
+    return parts.slice(1).join(" ");
+  }
+  return text;
+}
+
+/** People say sir once in a message, not in every sentence, and not in every reply. */
+export function easeAddress(text: string, earlier: string[]): string {
+  const once = oneAddress(text);
+  const recent = earlier.slice(-1).join(" ");
+  if (!/\b(?:sir|mam|madam|bro)\b/i.test(recent)) return once;
+  return once
+    .replace(/(\s*,?\s*)\b(?:sir|mam|madam|bro)\b/gi, "")
+    .replace(/\s+([.?!,])/g, "$1")
+    .replace(/ {2,}/g, " ")
+    .trim();
 }
 
 /** People say sir once in a message, not in every sentence. */
@@ -169,24 +266,30 @@ export function replyBubbles(text: string): string[] {
  * Rewrites one message the way people text on their phone: no commas or full stops, "..." between
  * short thoughts, u / ur / ok / pls, and lower case starts. Question marks stay so a question still reads as one.
  */
+/** The client wants no short forms (u, ur, pls, im, dont), and every message starting with a capital letter. */
+export function fullWords(text: string): string {
+  return text
+    .replace(/\bu\b/gi, "you")
+    .replace(/\bur\b/gi, "your")
+    .replace(/\b(?:pls|plz|plss)\b/gi, "please")
+    .replace(/\bi'?m\b/gi, "I'm")
+    .replace(/\bi'll\b/gi, "I'll")
+    .replace(/\bi(?='(?:ve|d)\b)/gi, "I")
+    .replace(/\bi\b/g, "I")
+    .replace(/\b(do|does|did|is|are|was|were|has|have|had|ca|wo|could|would|should)nt\b/gi, (_match, stem: string) => `${stem}n't`)
+    .replace(/\b(that|what|there|here|let)s\b/gi, "$1's")
+    .replace(/^(\s*)(\p{Ll})/u, (_match, space: string, letter: string) => `${space}${letter.toUpperCase()}`);
+}
+
 export function casualText(text: string, keepCase: string[] = []): string {
   const keep = new Set(keepCase.map((word) => word.toLowerCase()).filter(Boolean));
   const links: string[] = [];
   let out = plainWords(text)
     .replace(/https?:\/\/\S+?(?=[.,!?]*(?:\s|$))/g, (link) => `\u0000${links.push(link) - 1}\u0000`)
     .replace(/(\d),(?=\d)/g, "$1")
-    .replace(/\b(?:you're|youre|you are)\b/gi, "ur")
-    .replace(/\byour\b/gi, "ur")
-    .replace(/\byou\b/gi, "u")
+    .replace(/\b(?:you're|youre)\b/gi, "you are")
     .replace(/\bokay\b/gi, "ok")
-    .replace(/\bplease\b/gi, "pls")
-    .replace(/\bI(?:'m| am)\b/gi, "im")
-    .replace(/\bI'll\b/gi, "i will")
-    .replace(/\bI've\b/gi, "i have")
-    .replace(/\b(do|does|did|is|are|was|ca|wo|have|has)n't\b/gi, (_match, stem: string) => `${stem.toLowerCase() === "ca" ? "can" : stem.toLowerCase() === "wo" ? "won" : stem}nt`)
-    .replace(/\b(it|that|what|there|here|let|he|she)'s\b/gi, "$1s")
-    .replace(/\bI\b/g, "i")
-    .replace(/['‘’`]/g, "")
+    .replace(/[‘’`]/g, "'")
     .replace(/(\d):(\d)/g, "$1\u0001$2")
     .replace(/[,;:"“”()]/g, " ")
     .replace(/\u0001/g, ":")
@@ -195,7 +298,7 @@ export function casualText(text: string, keepCase: string[] = []): string {
   out = sentences.reduce((joined, sentence, index) => {
     const bare = sentence.replace(/\.+$/, "").trim();
     const first = bare.split(/\s+/)[0] ?? "";
-    const lowered = keep.has(first.toLowerCase()) || /^[A-Z0-9]{2,}$/.test(first) ? bare : bare.charAt(0).toLowerCase() + bare.slice(1);
+    const lowered = keep.has(first.toLowerCase()) || /^[A-Z0-9]{2,}$/.test(first) || /^I(?:'\w+)?$/.test(first) ? bare : bare.charAt(0).toLowerCase() + bare.slice(1);
     if (index === 0) return lowered;
     const previous = sentences[index - 1]!;
     const glue = previous.endsWith("?") ? " " : "...";
@@ -245,7 +348,8 @@ function nearlySame(words: Set<string>, recent: Set<string>[]): boolean {
 }
 
 function casualKey(sentence: string): string {
-  return sentenceKey(casualText(sentence));
+  // Older replies were saved with "u/ur", newer ones say "you/your": both count as the same sentence.
+  return sentenceKey(fullWords(casualText(sentence)));
 }
 
 function repeatTest(earlier: string[], keep?: RegExp): (sentence: string) => boolean {
@@ -264,7 +368,7 @@ export function repeatsEarlier(text: string, earlier: string[]): boolean {
 
 /**
  * Turns a written reply into the casual messages to send: split like a person would, sentences
- * Varun already sent dropped, then typed the casual way. If every sentence is a repeat, nothing is dropped.
+ * Varun already sent dropped, then typed the casual way. If every sentence is a repeat, send nothing.
  */
 export function humanBubbles(
   text: string,
@@ -276,14 +380,15 @@ export function humanBubbles(
   const repeat = repeatTest(earlier, options.keep);
   const split = replyBubbles(text).map(sentencesOf);
   const fresh = split.map((parts) => parts.filter((part) => !repeat(part)));
-  const chosen = fresh.some((parts) => parts.length) ? fresh : split;
+  if (!fresh.some((parts) => parts.length)) return [];
+  const chosen = fresh;
   if (options.split === false || !casual) {
     const lines = chosen.filter((parts) => parts.length).map((parts) => parts.join(" "));
     if (options.split === false) {
       const whole = casual ? casualText(lines.join(" "), keepCase) : lines.join(" ");
-      return whole ? [whole] : [];
+      return whole ? [fullWords(whole)] : [];
     }
-    return lines.length > 3 ? [...lines.slice(0, 2), lines.slice(2).join(" ")] : lines;
+    return (lines.length > 3 ? [...lines.slice(0, 2), lines.slice(2).join(" ")] : lines).map(fullWords);
   }
   const groups: string[][] = [];
   for (const parts of chosen.filter((item) => item.length)) {
@@ -300,16 +405,17 @@ export function humanBubbles(
   }
   const bubbles = groups.map((parts) => casualText(parts.join(" "), keepCase)).filter(Boolean);
   const most = text.includes("\n") ? 3 : 2;
-  return bubbles.length > most ? [...bubbles.slice(0, most - 1), bubbles.slice(most - 1).join("...")] : bubbles;
+  return (bubbles.length > most ? [...bubbles.slice(0, most - 1), bubbles.slice(most - 1).join("...")] : bubbles).map(fullWords);
 }
 
 /**
  * Drops sentences Varun already sent earlier in this chat, word for word.
- * A person never pastes the same line twice; if every sentence is a repeat the reply is kept as is.
+ * A person never pastes the same line twice. If every sentence is a repeat, send nothing.
  */
 export function dropRepeatedSentences(reply: string, earlier: string[]): string {
   const said = new Set(earlier.flatMap(sentencesOf).map(sentenceKey).filter((key) => key.length >= 12));
   const parts = sentencesOf(reply);
   const kept = parts.filter((part) => !said.has(sentenceKey(part)));
-  return kept.length && kept.length < parts.length ? kept.join(" ") : reply;
+  if (!kept.length) return "";
+  return kept.length < parts.length ? kept.join(" ") : reply;
 }

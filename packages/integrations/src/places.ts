@@ -4,13 +4,19 @@ export type PlaceInfo = {
   city: string | null;
   pincode: string | null;
   underConstruction: boolean;
+  /** A listing says ready to move. Not the customer's own word. */
+  readyToMove?: boolean;
+  /** A year a listing mentions for possession or handover. Not a date to invent around. */
+  possessionYear?: number | null;
   kind?: "apartment" | "villa" | null;
   address?: string | null;
-  source?: "Google Maps" | "OpenStreetMap" | "Web search";
+  /** BHK sizes the project is advertised with. Not this customer's home. */
+  bhkOptions?: number[];
+  source?: "Google Maps" | "OpenStreetMap" | "Brave Search";
 };
 
 /** A place they named that looks like a project but could not be found, so the team can check it. */
-export type PlaceMissing = { missing: string; source: "Google Maps" | "Web search" };
+export type PlaceMissing = { missing: string; source: "Google Maps" | "Brave Search" };
 
 export type PlaceLookup = (query: string, city?: string) => Promise<PlaceInfo | PlaceMissing | null>;
 
@@ -200,6 +206,49 @@ function kindFromSearch(text: string): "apartment" | "villa" | null {
   return apartments > 0 ? "apartment" : "villa";
 }
 
+/** Sizes a listing advertises, such as "2, 3 and 4 BHK". A single customer's home is not inferred from this. */
+function bhkOptionsFromSearch(text: string): number[] {
+  const found = new Set<number>();
+  for (const match of text.matchAll(/(?<![\d.])((?:\d\s*(?:[,/&]|and)\s*)*\d)\s*-?\s*bhk\b/gi)) {
+    for (const digit of match[1]?.match(/\d/g) ?? []) {
+      const value = Number(digit);
+      if (value >= 1 && value <= 9) found.add(value);
+    }
+  }
+  return [...found].sort((a, b) => a - b);
+}
+
+const AREA_SPELLING: [RegExp, string][] = [
+  [/\bmadipakka\b/gi, "Madipakkam"],
+  [/\bmadipakam\b/gi, "Madipakkam"],
+  [/\bwhitefeild\b/gi, "Whitefield"],
+  [/\bbanglore\b/gi, "Bengaluru"],
+  [/\bbanaglore\b/gi, "Bengaluru"],
+  [/\bkoramangla\b/gi, "Koramangala"],
+  [/\bindira ?nagar\b/gi, "Indiranagar"],
+  [/\bsarjapura\b/gi, "Sarjapur"],
+  [/\byelankha\b/gi, "Yelahanka"],
+  [/\bmarathalli\b/gi, "Marathahalli"],
+  [/\bjaya ?nagar\b/gi, "Jayanagar"],
+];
+
+/** Corrects a misspelled area in a search query. The project name they typed is left as they typed it. */
+export function correctAreaSpelling(text: string): string {
+  return AREA_SPELLING.reduce((next, [from, to]) => next.replace(from, to), text);
+}
+
+function projectStage(text: string): { underConstruction: boolean; readyToMove: boolean; possessionYear: number | null } {
+  const ready = /\bready[\s-]*to[\s-]*move\b|\brtm\b/i.test(text);
+  const building = /\bunder construction\b|\bongoing project\b/i.test(text);
+  const yearText = text.match(/\b(?:possession|handover|completion|ready by)\b[^.]{0,30}\b(20[2-3]\d)\b/i)
+    ?? text.match(/\b(20[2-3]\d)\b[^.]{0,30}\b(?:possession|handover|completion)\b/i);
+  return {
+    underConstruction: building && !ready,
+    readyToMove: ready && !building,
+    possessionYear: yearText ? Number(yearText[1]) : null,
+  };
+}
+
 function localityFromSearch(text: string): string | null {
   const road = text.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s+Road\b/);
   if (road && !/^(main|cross|outer|inner|ring)$/i.test(road[1]!)) return `${road[1]} Road`;
@@ -210,7 +259,7 @@ function localityFromSearch(text: string): string | null {
 
 /**
  * Reads public web results for a project name. A result counts only when it contains the
- * project's own name, and only the home type and area written there are kept.
+ * project's own name. Home type, area, and the BHK sizes the project advertises are kept.
  */
 export function bravePlaceLookup(options: { apiKey: string; fetcher?: typeof fetch; timeoutMs?: number; baseUrl?: string }): PlaceLookup {
   const fetcher = options.fetcher ?? fetch;
@@ -229,7 +278,8 @@ export function bravePlaceLookup(options: { apiKey: string; fetcher?: typeof fet
     let unmatched: string | null = null;
     for (const segment of projectSegments(query)) {
       if (nameWords(segment).length < 2) continue;
-      const textQuery = city && !segment.toLowerCase().includes(city.toLowerCase()) ? `${segment} ${city}` : segment;
+      const spelled = correctAreaSpelling(segment);
+      const textQuery = city && !spelled.toLowerCase().includes(city.toLowerCase()) ? `${spelled} ${city}` : spelled;
       const response = await fetcher(`${baseUrl}?q=${encodeURIComponent(textQuery)}&count=8&country=IN&search_lang=en`, {
         headers: { Accept: "application/json", "X-Subscription-Token": options.apiKey },
         signal: AbortSignal.timeout(options.timeoutMs ?? 6_000),
@@ -247,18 +297,23 @@ export function bravePlaceLookup(options: { apiKey: string; fetcher?: typeof fet
       const written = hits.map((item) => `${item.title ?? ""}. ${item.description ?? ""}`).join(" ");
       const locality = localityFromSearch(written);
       const foundCity = /\b(?:bengaluru|bangalore)\b/i.test(written) ? "Bengaluru" : null;
+      const bhkOptions = bhkOptionsFromSearch(written);
+      const stage = projectStage(written);
       return {
         name: projectTitle(hits[0]?.title ?? segment, segment),
         locality,
         city: foundCity,
         pincode: written.match(/\b(560\d{3})\b/)?.[1] ?? null,
-        underConstruction: /\bunder construction\b|\bongoing project\b/i.test(written),
+        underConstruction: stage.underConstruction,
+        ...(stage.readyToMove ? { readyToMove: true } : {}),
+        ...(stage.possessionYear ? { possessionYear: stage.possessionYear } : {}),
         kind: kindFromSearch(written),
         address: [locality, foundCity].filter(Boolean).join(", ") || null,
-        source: "Web search",
+        ...(bhkOptions.length ? { bhkOptions } : {}),
+        source: "Brave Search",
       };
     }
-    return unmatched ? { missing: unmatched, source: "Web search" } : null;
+    return unmatched ? { missing: unmatched, source: "Brave Search" } : null;
   }
 }
 

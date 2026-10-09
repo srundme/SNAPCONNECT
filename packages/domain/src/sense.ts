@@ -1,3 +1,4 @@
+import { homeTypeName, selectedRoomsOnly } from "./rating";
 import { bareBudget, rupeesIn, sizeIn } from "./style";
 
 export type ContextCheck = {
@@ -29,6 +30,12 @@ const FULL_HOME_FLOOR: Record<number, number> = { 1: 300_000, 2: 400_000, 3: 500
 const CARPET_RANGE: Record<number, [number, number]> = { 1: [250, 1000], 2: [450, 1700], 3: [750, 3000], 4: [1100, 5500], 5: [1600, 9000] };
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+// Whole month words only: "maybe", "marriage" and "decided" are not months, and "may" needs a date around it.
+const MONTH_WORDS = [/\bjan(?:uary)?\b/i, /\bfeb(?:ruary)?\b/i, /\bmar(?:ch)?\b/i, /\bapr(?:il)?\b/i, /\bmay\s*(?:'|20)?\d{2}\b|\b(?:in|by|of|till|until|from|before|after|end)\s+may\b/i, /\bjune?\b/i, /\bjuly?\b/i, /\baug(?:ust)?\b/i, /\bsep(?:t|tember)?\b/i, /\boct(?:ober)?\b/i, /\bnov(?:ember)?\b/i, /\bdec(?:ember)?\b/i];
+
+function monthIn(text: string): number {
+  return MONTH_WORDS.findIndex((pattern) => pattern.test(text));
+}
 const CITIES = [
   "chennai", "madras", "hyderabad", "secunderabad", "mumbai", "bombay", "navi mumbai", "thane", "pune", "delhi", "new delhi", "noida", "gurgaon", "gurugram",
   "ghaziabad", "faridabad", "kolkata", "calcutta", "kochi", "cochin", "trivandrum", "thiruvananthapuram", "kozhikode", "calicut", "coimbatore", "madurai",
@@ -78,7 +85,7 @@ function answerFor(questions: Question[], answers: Record<string, string>, patte
 }
 
 function bhkIn(text: string): number | null {
-  const match = text.match(/(\d)\s*-?\s*(?:bhk|bed\s*rooms?|br)\b/i);
+  const match = text.match(/(?<!\d)(\d{1,2})\s*-?\s*(?:bhk|bed\s*rooms?|br)\b/i);
   return match ? Number(match[1]) : null;
 }
 
@@ -92,7 +99,7 @@ function rupeeWords(rupees: number): string {
 function pastDate(text: string, now: Date): string | null {
   const year = Number(text.match(/\b(20\d{2})\b/)?.[1] ?? NaN);
   if (!Number.isFinite(year)) return null;
-  const monthIndex = MONTHS.findIndex((month) => new RegExp(`\\b${month}[a-z]*\\b`, "i").test(text));
+  const monthIndex = monthIn(text);
   const thisYear = now.getFullYear();
   if (/\b(ready|done|completed|received|got|handed|already|moved)\b/i.test(text)) return null;
   if (year < thisYear) return `${monthIndex >= 0 ? `${MONTHS[monthIndex]!.toUpperCase()} ` : ""}${year}`;
@@ -102,13 +109,24 @@ function pastDate(text: string, now: Date): string | null {
 
 /** How many months ahead a date like "March 2028", "end of 2027" or "after 2 years" is. */
 function monthsAway(text: string, now: Date): number | null {
-  const years = text.match(/\b(?:after|in)\s+(\d+(?:\.\d+)?)\s*(?:years?|yrs?)\b/i);
+  if (/\bnext month\b/i.test(text)) return 1;
+  if (/\bthis month\b/i.test(text)) return 0;
+  const months = text.match(/\b(?:after|in|within)\s+(\d+(?:\.\d+)?)\s*months?\b/i);
+  if (months) return Math.round(Number(months[1]));
+  if (/\b(?:within|in)\s+(?:a|1|one)\s*(?:year|yr)\b|\bnext year\b/i.test(text)) return 12;
+  const years = text.match(/\b(?:after|in|within)\s+(\d+(?:\.\d+)?)\s*(?:years?|yrs?)\b/i);
   if (years) return Math.round(Number(years[1]) * 12);
   const year = Number(text.match(/\b(20\d{2})\b/)?.[1] ?? NaN);
   if (!Number.isFinite(year)) return null;
-  const named = MONTHS.findIndex((month) => new RegExp(`\\b${month}[a-z]*\\b`, "i").test(text));
+  const named = monthIn(text);
   const month = named >= 0 ? named : /\bend\b/i.test(text) ? 11 : /\b(start|early|beginning)\b/i.test(text) ? 0 : 6;
   return (year - now.getFullYear()) * 12 + month - now.getMonth();
+}
+
+function whenMonths(text: string, now: Date): number | null {
+  if (!text) return null;
+  if (/\b(ready|already|living|staying|renovat)\b/i.test(text)) return 0;
+  return monthsAway(text, now);
 }
 
 /** A budget whose meaning is unclear: a rate per sq ft, a bare "3", a few thousand for a full home, or a crore for a flat. */
@@ -137,7 +155,7 @@ function budgetShorthand(
     return {
       key: `budget-small:${budget}`,
       note: `Budget "${text}" for a full home; they may mean lakhs or a budget per room.`,
-      line: `They said "${text}" for the full home, which is far below what any full home costs. They may mean lakhs, or a budget per room. Check lightly what they meant, without making them feel bad.`,
+      line: `They said "${text}" for the full home, which is far below what any full home costs. They may mean lakhs. Check lightly what they meant, without making them feel bad. Never suggest doing it room by room.`,
     };
   }
   if (budget >= 10_000_000 && !home.villa && home.bhk && home.bhk <= 4) {
@@ -150,10 +168,61 @@ function budgetShorthand(
   return null;
 }
 
+const ROAD_AFTER = /^(?:road|rd|cross|highway|expressway|main)\b/;
+
 function otherCity(text: string, serviceArea: string[]): string | null {
   const lower = ` ${text.toLowerCase().replace(/[^a-z ]+/g, " ")} `;
   if (serviceArea.some((place) => place && lower.includes(` ${place} `))) return null;
-  return CITIES.find((city) => lower.includes(` ${city} `)) ?? null;
+  return CITIES.find((city) => {
+    const needle = ` ${city} `;
+    let from = 0;
+    while (from < lower.length) {
+      const at = lower.indexOf(needle, from);
+      if (at < 0) return false;
+      if (!ROAD_AFTER.test(lower.slice(at + needle.length))) return true;
+      from = at + needle.length;
+    }
+    return false;
+  }) ?? null;
+}
+
+/** The latest single BHK and home type they stated, so a correction replaces the earlier one. */
+export function preferLatestHome(current: string, texts: string[]): string {
+  let bhk: string | null = null;
+  let kind: string | null = null;
+  for (const text of texts) {
+    const nums = [...text.matchAll(/\b([1-9])\s*-?\s*bhk\b/gi)].map((match) => match[1]!);
+    if (new Set(nums).size === 1) bhk = `${nums[0]} BHK`;
+    const type = homeTypeName(text);
+    if (type) kind = type;
+  }
+  if (!bhk && !kind) return current;
+  const kept = current.match(/\b([1-9])\s*-?\s*bhk\b/i);
+  const currentBhk = kept ? `${kept[1]} BHK` : null;
+  const nextBhk = bhk ?? currentBhk;
+  const nextKind = kind ?? homeTypeName(current);
+  return [nextBhk, nextKind].filter(Boolean).join(" ");
+}
+
+const PLACE_FIX = /\b(actually|sorry|i meant|not that|wrong project|it(?:'s| is) in)\b/i;
+const NAME_OR_CONTACT = /\bmy name\b|\bcall me\b|\b(?:i am|i'm|im)\s+(?!in\b)|\bmy (?:no\.?|number|phone|mobile|email|e-?mail)\b|@|^\+?\d[\d\s-]{8,}$/i;
+
+/** A name, phone or email correction, which must not be saved as where the home is. */
+export function notAPlaceSentence(text: string): boolean {
+  return NAME_OR_CONTACT.test(text.replace(/^\(Replied to:[\s\S]*?\)\s*/, "").trim());
+}
+
+/** A later "actually, it's in Whitefield" replaces the project they named first. */
+export function preferLatestPlace(current: string, texts: string[]): string {
+  let next = current;
+  for (const text of texts) {
+    const cleaned = text.replace(/^\(Replied to:[\s\S]*?\)\s*/, "").trim();
+    if (!PLACE_FIX.test(cleaned) || cleaned.length < 8 || cleaned.length > 160) continue;
+    if (/^\s*(?:actually|sorry|i meant)[, ]+\d\s*-?\s*bhk\b/i.test(cleaned)) continue;
+    if (notAPlaceSentence(cleaned)) continue;
+    next = cleaned.replace(/^(?:actually|sorry|i meant)[, ]+/i, "").trim();
+  }
+  return next;
 }
 
 /**
@@ -177,7 +246,7 @@ export function contextChecks(input: {
   const budget = budgetText ? rupeesIn(budgetText) : null;
   const budgetId = questionFor(questions, BUDGET)?.id ?? null;
   const scope = answerFor(questions, answers, SCOPE);
-  const fullHome = /\b(full|whole|entire|complete|all rooms|end to end)\b/i.test(scope);
+  const fullHome = !selectedRoomsOnly(scope) && (!scope || /\b(full|whole|entire|complete|all rooms|end to end)\b/i.test(scope));
   const floor = villa ? 1_000_000 : bhk ? FULL_HOME_FLOOR[Math.min(bhk, 5)] : undefined;
   const shorthand = budgetShorthand(budgetText, budget, { fullHome, villa, bhk });
   if (shorthand) {
@@ -188,7 +257,7 @@ export function contextChecks(input: {
       key: `budget-scope:${budget}:${what}`,
       questionId: null,
       note: `Budget of ${rupeeWords(budget)} looks low for a ${what} with premium interiors. Worth a review before the call.`,
-      line: `Their budget of ${rupeeWords(budget)} is on the low side for premium interiors for a ${what}. Respect it fully: never say it is too low, never mock it, never turn them away and never suggest a cheaper package. Say in one line that the team will look at what is possible in that range, perhaps by doing it in stages or starting with the key rooms, then continue.`,
+      line: `Their budget of ${rupeeWords(budget)} is on the low side for premium interiors for a ${what}. Respect it fully: never say it is too low, never mock it, never turn them away and never suggest a cheaper package, stages, or selected rooms. Say in one line that the designer will see what fits the full home in that range, then continue.`,
     });
   }
 
@@ -238,6 +307,24 @@ export function contextChecks(input: {
       questionId: question.id,
       note: `"${text}" for "${question.label}" is already in the past.`,
       line: `They said "${text}" for ${question.label.toLowerCase().replace(/\?$/, "")}, but that date has already passed. Lightly check whether they meant next year, or whether the home is already handed over. One short question, no fuss.`,
+    });
+  }
+
+  const possessionText = answerFor(questions, answers, POSSESSION);
+  const timelineText = questions
+    .filter((question) => /\b(start|finish|timeline)\b/i.test(question.label) && !POSSESSION.test(question.label))
+    .map((question) => String(answers[question.id] ?? "").trim())
+    .find(Boolean) ?? "";
+  const possessionMonths = whenMonths(possessionText, input.now);
+  const timelineMonths = whenMonths(timelineText, input.now);
+  const soon = (months: number | null) => months !== null && months <= 3;
+  const distant = (months: number | null) => months !== null && months >= 18;
+  if (possessionText && timelineText && ((soon(possessionMonths) && distant(timelineMonths)) || (distant(possessionMonths) && soon(timelineMonths)))) {
+    checks.push({
+      key: `date-clash:${possessionMonths}:${timelineMonths}`,
+      questionId: null,
+      note: `Possession "${possessionText}" and timeline "${timelineText}" do not sit together.`,
+      line: `They said possession is "${possessionText}" and the work timing is "${timelineText}". Those do not sit together. Check once, lightly, which one they mean. Do not insist, and do not ask any other question in that reply.`,
     });
   }
 

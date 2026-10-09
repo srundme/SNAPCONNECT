@@ -3,13 +3,16 @@ import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { loadConfig, loadDotEnv } from "@snapsocial/config";
 import { connectionSender, getPrisma, processAvailableJobs, recoverStaleJobs, simulationRuntime } from "@snapsocial/db";
-import { bestPlaceLookup, bravePlaceLookup, cartesiaSpeaker, fixtureLlm, googlePlaceLookup, ollamaLlm, osmPlaceLookup, sarvamDocumentReader, sarvamLlm, sarvamTranscriber, sarvamVision, whatsappMediaUrl } from "@snapsocial/integrations";
+import { bravePlaceLookup, cartesiaSpeaker, fixtureLlm, ollamaLlm, sarvamDocumentReader, sarvamLlm, sarvamTranscriber, sarvamVision, whatsappMediaUrl } from "@snapsocial/integrations";
 
 loadDotEnv(process.cwd());
 
 const config = loadConfig();
 if (config.LLM_MODE === "sarvam" && !config.SARVAM_API_KEY) {
   throw new Error("SARVAM_API_KEY is required when LLM_MODE is sarvam.");
+}
+if (config.LLM_MODE === "fixture") {
+  console.warn("LLM_MODE is fixture: replies are empty test output, not a real model. Set LLM_MODE=sarvam for live chats.");
 }
 const db = getPrisma();
 const credentialKey = Buffer.from(config.CREDENTIAL_ENCRYPTION_KEY, "base64");
@@ -47,11 +50,9 @@ const runtime = simulationRuntime({
       }
     : {}),
   replySettleMs: 2500,
-  lookupPlace: bestPlaceLookup(
-    config.GOOGLE_PLACES_API_KEY ? googlePlaceLookup({ apiKey: config.GOOGLE_PLACES_API_KEY }) : null,
-    osmPlaceLookup({ userAgent: `SnapServeSocial/1.0 (${config.APP_BASE_URL})` }),
-    config.BRAVE_SEARCH_API_KEY ? bravePlaceLookup({ apiKey: config.BRAVE_SEARCH_API_KEY }) : null,
-  ),
+  lookupPlace: config.BRAVE_SEARCH_API_KEY
+    ? bravePlaceLookup({ apiKey: config.BRAVE_SEARCH_API_KEY })
+    : async () => null,
   pause: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 });
 
@@ -63,7 +64,22 @@ const worker = new Worker("snapsocial-outbox", async (job) => {
   return { outboxJobId: job.data.outboxJobId ?? null };
 }, { connection: redis, concurrency: 1, lockDuration: 600_000 });
 
+let ticking = false;
+
+// One tick at a time, and a failed database call is logged instead of crashing the worker.
 async function tick() {
+  if (ticking || stopping) return;
+  ticking = true;
+  try {
+    await work();
+  } catch (error) {
+    console.error("Worker tick failed:", error);
+  } finally {
+    ticking = false;
+  }
+}
+
+async function work() {
   await db.workerHeartbeat.upsert({
     where: { id: "worker" },
     update: { seenAt: new Date(), detail: config.LLM_MODE },
@@ -78,7 +94,7 @@ async function tick() {
     if (redis.status === "wait") await redis.connect();
     const pending = await db.outboxJob.findMany({ where: { status: "PENDING", availableAt: { lte: new Date() } }, take: 20, select: { id: true } });
     for (const job of pending) {
-      await queue.add("process", { outboxJobId: job.id }, { jobId: job.id, removeOnComplete: true });
+      await queue.add("process", { outboxJobId: job.id }, { jobId: job.id, removeOnComplete: true, removeOnFail: true });
       await db.outboxJob.updateMany({ where: { id: job.id, status: "PENDING" }, data: { status: "DISPATCHED" } });
     }
   } catch {
@@ -107,5 +123,7 @@ async function shutdown() {
   process.exit(0);
 }
 
+worker.on("error", (error) => console.error("Queue worker error:", error));
+process.on("unhandledRejection", (error) => console.error("Unhandled rejection:", error));
 process.on("SIGINT", () => { void shutdown(); });
 process.on("SIGTERM", () => { void shutdown(); });

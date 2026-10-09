@@ -4,8 +4,14 @@ import {
   mediaNote,
   documentNote,
   dropCannedLines,
+  dropEmptyPraise,
+  dropUnaskedCallback,
+  dropUnaskedPrice,
+  easeAddress,
   oneAddress,
   unrealisticAnswers,
+  impossibleBhk,
+  dropImpossibleBhk,
   casualText,
   humanBubbles,
   plainWords,
@@ -18,6 +24,9 @@ import {
   publicFigure,
   asksSomething,
   cleanName,
+  greetedByName,
+  ignoreAgentGreeting,
+  dropCallingThemAgent,
   wrongPhoneIn,
   validPhonesIn,
   nameInReply,
@@ -38,6 +47,7 @@ import {
   questionAsked,
   dropAnsweredQuestions,
   dropEchoes,
+  bareBudget,
   bareBudgetRange,
   looksEnglish,
   chatLanguageSample,
@@ -505,7 +515,7 @@ describe("webhooks", () => {
     expect(edits([{ message_edit: { mid: "mid-10", text: "fixed", num_edit: 2 } }])[0]).toMatchObject({ kind: "message_edit", editCount: 2 });
   });
 
-  it("reads WhatsApp text, voice and button messages and skips statuses", () => {
+  it("reads WhatsApp text, voice and button messages and keeps delivery receipts", () => {
     const events = normalizeMetaPayload("WHATSAPP", {
       object: "whatsapp_business_account",
       entry: [{
@@ -530,9 +540,26 @@ describe("webhooks", () => {
     const messages = events.filter((event) => event.kind === "message");
     expect(messages).toHaveLength(3);
     expect(messages[0]).toMatchObject({ externalAccountId: "pnid-1", senderId: "919845012345", text: "Hi, need AI calling", senderName: "Kishore" });
+    const replied = normalizeMetaPayload("WHATSAPP", {
+      object: "whatsapp_business_account",
+      entry: [{
+        id: "waba-1",
+        changes: [{
+          field: "messages",
+          value: {
+            metadata: { phone_number_id: "pnid-1" },
+            messages: [{ from: "919845012345", id: "wamid.5", timestamp: "1759670040", type: "text", context: { id: "wamid.out" }, text: { body: "no" } }],
+          },
+        }],
+      }],
+    }, new Date("2026-10-05T00:00:00Z"));
+    expect(replied[0]).toMatchObject({ kind: "message", text: "no", replyToMessageId: "wamid.out" });
     expect(messages[1]).toMatchObject({ text: "", audioMediaId: "media-9" });
     expect(messages[2]).toMatchObject({ text: "Yes" });
     expect(events.some((event) => event.kind === "ignore" && event.reason.includes("reaction"))).toBe(true);
+    const delivered = events.find((event) => event.kind === "delivery");
+    expect(delivered).toMatchObject({ messageId: "wamid.out", status: "delivered", recipient: null, errorCode: null });
+    expect(delivered && dedupKey("WHATSAPP", delivered)).toBe("WHATSAPP:pnid-1:delivery:wamid.out:delivered");
     expect(normalizeMetaPayload("WHATSAPP", { object: "page", entry: [] }, new Date())[0]?.kind).toBe("ignore");
   });
 
@@ -794,6 +821,11 @@ describe("ai validation", () => {
     expect(absorbTranscript({ questions, messages: [{ author: "AI", body: "Since it is a 2 BHK, may I know your name?" }, { author: "PROSPECT", body: "91 6383653279" }], name: null, phoneE164: "+919061847240", answers: {} }).phoneE164).toBe("+916383653279");
     expect(deterministicIntent("stop messaging me").optOut).toBe(true);
     expect(deterministicIntent("please leave me alone").optOut).toBe(true);
+    expect(deterministicIntent("STOP").optOut).toBe(true);
+    expect(deterministicIntent("pls stop").optOut).toBe(true);
+    expect(deterministicIntent("stop sending messages").optOut).toBe(true);
+    expect(deterministicIntent("my flat is near the bus stop").optOut).toBe(false);
+    expect(deterministicIntent("one stop solution for full home?").optOut).toBe(false);
     expect(platformReplyBlock("I am a real person on the team.")).toBeTruthy();
     expect(platformReplyBlock("Please share the OTP from your bank.")).toBeTruthy();
     expect(withAutomationDisclosure("Thanks for commenting.", "SnapServe")).toContain("automated assistant");
@@ -935,6 +967,16 @@ describe("name capture", () => {
     expect(cleanName("Gopi 123", "Gopi 123")).toBeNull();
     expect(cleanName("Acha", "Achaaaa")).toBeNull();
     expect(cleanName(null, "anything")).toBeNull();
+    expect(cleanName("Varun", "Hi Varun", "Varun")).toBeNull();
+    expect(cleanName("Varun", "hello varun, I want a 3 bhk", "Varun")).toBeNull();
+    expect(cleanName("Varun", "my name is Varun", "Varun")).toBe("Varun");
+    expect(cleanName("Karthik", "Hi Varun, I am Karthik", "Varun")).toBe("Karthik");
+    expect(greetedByName("Hi Varun", "Varun")).toBe(true);
+    expect(greetedByName("my name is Varun", "Varun")).toBe(false);
+    expect(ignoreAgentGreeting("Varun", ["Hi Varun"], "Varun")).toBeNull();
+    expect(ignoreAgentGreeting("Varun", ["Hi Varun", "my name is Varun"], "Varun")).toBe("Varun");
+    expect(dropCallingThemAgent("Hi Varun, where is the home?", "Varun")).toBe("where is the home?");
+    expect(dropCallingThemAgent("I'm Varun, the assistant for KariGhars.", "Varun")).toBe("I'm Varun, the assistant for KariGhars.");
   });
 
   it("falls back to text rules when the name reader is unavailable", () => {
@@ -1054,6 +1096,8 @@ describe("lead form read by the model", () => {
     expect(unrealisticAnswers(budget, { budget: "20-30" })).toEqual([]);
     expect(unrealisticAnswers(budget, { budget: "500 rupees" }).map((item) => item.id)).toEqual(["budget"]);
     expect(bareBudgetRange("20 to 30")).toEqual({ low: 20, high: 30 });
+    expect(bareBudget("5-8")).toBeNull();
+    expect(bareBudget("30")).toBe(30);
     expect(bareBudgetRange("4 BHK")).toBeNull();
     const style = [{ id: "style", label: "Any style you love or must-haves?", kind: "text" as const, zohoField: null }];
     expect(acceptExtractedAnswers({ questions: style, raw: { style: "Not necessarily right now" }, prospectText: "Not necessarily right now" }).answers).toEqual({});
@@ -1111,6 +1155,7 @@ describe("name sanity", () => {
 
   it("asks once when the name clearly differs from the profile", () => {
     expect(nameConcern("Ramesh", ["Karthikeyan", "karthikeyansru"])).toEqual({ kind: "profile_mismatch", name: "Ramesh", profile: "Karthikeyan / karthikeyansru" });
+    expect(nameConcern("Ramesh", [])).toBeNull();
     expect(nameConcern("Karthik", ["Karthikeyan"])).toBeNull();
     expect(nameConcern(null, ["Karthikeyan"])).toBeNull();
   });
@@ -1128,19 +1173,19 @@ describe("human reply style", () => {
     const earlier = ["Sir, exact office address details na team demo call alli confirm madthare. Neenu voice message kalisidde, adu sariyaagi arthavagalilla."];
     expect(dropRepeatedSentences("Sure sir, team call alli ella details share madthare. Neenu voice message kalisidde, adu sariyaagi arthavagalilla.", earlier))
       .toBe("Sure sir, team call alli ella details share madthare.");
-    expect(dropRepeatedSentences("Neenu voice message kalisidde, adu sariyaagi arthavagalilla.", earlier))
-      .toBe("Neenu voice message kalisidde, adu sariyaagi arthavagalilla.");
+    // Every sentence is a repeat, so nothing is left; the engine decides whether to send the repeat anyway.
+    expect(dropRepeatedSentences("Neenu voice message kalisidde, adu sariyaagi arthavagalilla.", earlier)).toBe("");
     expect(dropRepeatedSentences("Got it. Which number should the team call you on?", ["Which number should the team call you on, mam?"]))
       .toBe("Got it.");
   });
 });
 
 describe("texting like a person", () => {
-  it("drops commas and full stops, uses short forms and joins short thoughts with dots", () => {
+  it("drops commas and full stops, uses no short forms and joins short thoughts with dots", () => {
     expect(casualText("Okay sir, please type your number. I'm waiting! Don't worry, it's safe."))
-      .toBe("ok sir pls type ur number...im waiting...dont worry its safe");
+      .toBe("ok sir please type your number...I'm waiting...don't worry it's safe");
     expect(casualText("Sure sir, 3:30 PM should be fine. Our agent handles 40,000 calls.")).toBe("sure sir 3:30 PM should be fine...our agent handles 40000 calls");
-    expect(casualText("Hi sir. SnapServe can help you?", ["SnapServe"])).toBe("hi sir...SnapServe can help u?");
+    expect(casualText("Hi sir. SnapServe can help you?", ["SnapServe"])).toBe("hi sir...SnapServe can help you?");
   });
 
   it("swaps chatbot praise for plain words", () => {
@@ -1149,10 +1194,17 @@ describe("texting like a person", () => {
 
   it("sends a reply as one or two messages like a person would", () => {
     expect(humanBubbles("Great sir! 25 is a good number. How many calls do you handle in a month?", []))
-      .toEqual(["ok sir", "25 is a good number...how many calls do u handle in a month?"]);
-    expect(humanBubbles("Sure sir, 3:30 PM should be fine.", [])).toEqual(["sure sir 3:30 PM should be fine"]);
+      .toEqual(["Ok sir", "25 is a good number...how many calls do you handle in a month?"]);
+    expect(humanBubbles("Sure sir, 3:30 PM should be fine.", [])).toEqual(["Sure sir 3:30 PM should be fine"]);
     expect(humanBubbles("Got it sir.\nWhich number should the team call you on?", ["got it sir...which number should the team call u on?"]))
-      .toEqual(["got it sir"]);
+      .toEqual(["Got it sir"]);
+    expect(humanBubbles(
+      "a snapshot or PDF works the designer can begin planning the layout before u take over\nwhich time suits u? the team is available Tuesday to Sunday 10 AM to 7 PM and they will confirm it",
+      [
+        "a snapshot or PDF works the designer can begin planning the layout before u take over",
+        "which time suits u? the team is available Tuesday to Sunday 10 AM to 7 PM Monday closed and they will confirm it",
+      ],
+    )).toEqual([]);
   });
 
   it("waits longer for longer messages", () => {
@@ -1170,6 +1222,18 @@ describe("joke numbers and canned lines", () => {
     { id: "company", label: "Company name" },
   ];
 
+  it("rejects a BHK no home has and keeps a normal one", () => {
+    const home = [{ id: "home", label: "What kind of home is it, and how many BHK?" }];
+    expect(impossibleBhk("it is a 100 bhk")).toBe(100);
+    expect(impossibleBhk("I have 100 BSK house")).toBe(100);
+    expect(impossibleBhk("3 BHK apartment")).toBeNull();
+    expect(unrealisticAnswers(home, { home: "100 BHK" })).toEqual([{ id: "home", label: home[0]!.label, value: 100 }]);
+    expect(unrealisticAnswers(home, { home: "100" })).toEqual([{ id: "home", label: home[0]!.label, value: 100 }]);
+    expect(unrealisticAnswers(home, { home: "4 BHK Apartment" })).toEqual([]);
+    expect(unrealisticAnswers(home, { home: "9 BHK Villa" })).toEqual([]);
+    expect(dropImpossibleBhk("100 BHK, noted. When is possession?", 100)).toBe("When is possession?");
+  });
+
   it("flags a team of lakhs or crores of calls, not normal numbers", () => {
     expect(unrealisticAnswers(questions, { team: "100000", volume: "300000000", company: "999999" }).map((item) => item.id)).toEqual(["team", "volume"]);
     expect(unrealisticAnswers(questions, { team: "79", volume: "40000" })).toEqual([]);
@@ -1179,6 +1243,12 @@ describe("joke numbers and canned lines", () => {
     expect(dropCannedLines("Got it sir. The team will call at 6 PM. Anything else on your mind sir?")).toBe("Got it sir. The team will call at 6 PM.");
     expect(dropCannedLines("Is there anything else I can help you with?")).toBe("Is there anything else I can help you with?");
     expect(oneAddress("Got it sir, one lakh noted. The team will call you at 6 PM sir. Anything else sir?")).toBe("Got it sir, one lakh noted. The team will call you at 6 PM. Anything else?");
+    expect(dropEmptyPraise("Sure sir. 3 BHK starts from 35 lakh.")).toBe("3 BHK starts from 35 lakh.");
+    expect(easeAddress("Hello sir, 3 BHK starts from 35 lakh.", ["Sure sir, noted."])).toBe("Hello, 3 BHK starts from 35 lakh.");
+    expect(dropUnaskedPrice("good to hear\nsince its a full home project the starting prices are 3 BHK from 35 lakh and above...the designer will give a fixed quote with no hidden costs...what kind of property is this?")).toBe("good to hear\nwhat kind of property is this?");
+    expect(dropUnaskedPrice("3 BHK starts from 35 lakh.")).toBe("");
+    expect(dropUnaskedCallback("3 BHK starts from 35 lakh. The team will call you tomorrow.", false)).toBe("3 BHK starts from 35 lakh.");
+    expect(dropUnaskedCallback("The team will call you tomorrow.", true)).toBe("The team will call you tomorrow.");
   });
 });
 

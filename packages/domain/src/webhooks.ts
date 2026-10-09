@@ -37,6 +37,8 @@ export type NormalizedMessage = {
   imageUrls?: string[];
   imageMediaId?: string | null;
   document?: { url: string | null; mediaId: string | null; fileName: string | null; mimeType: string | null } | null;
+  /** The earlier message they swiped to reply to, when the app sends one. */
+  replyToMessageId?: string | null;
 };
 
 export type NormalizedMessageEdit = {
@@ -56,7 +58,18 @@ export type NormalizedIgnore = {
   nativeId: string | null;
 };
 
-export type NormalizedEvent = NormalizedComment | NormalizedMessage | NormalizedMessageEdit | NormalizedIgnore;
+export type NormalizedDelivery = {
+  kind: "delivery";
+  externalAccountId: string;
+  messageId: string;
+  status: string;
+  recipient: string | null;
+  errorCode: number | null;
+  errorTitle: string | null;
+  errorDetail: string | null;
+};
+
+export type NormalizedEvent = NormalizedComment | NormalizedMessage | NormalizedMessageEdit | NormalizedIgnore | NormalizedDelivery;
 
 type Json = Record<string, unknown>;
 
@@ -77,6 +90,7 @@ export function dedupKey(channel: Channel, event: NormalizedEvent): string {
   if (event.kind === "comment") return `${channel}:${account}:comment:${event.action}:${event.commentId}`;
   if (event.kind === "message") return `${channel}:${account}:message:${event.messageId}`;
   if (event.kind === "message_edit") return `${channel}:${account}:message_edit:${event.messageId}:${event.editCount}`;
+  if (event.kind === "delivery") return `${channel}:${account}:delivery:${event.messageId}:${event.status}`;
   return `${channel}:${account}:ignore:${event.reason}:${event.nativeId ?? "none"}`;
 }
 
@@ -184,6 +198,7 @@ function whatsappEntry(entry: Json, receivedAt: Date): NormalizedEvent[] {
         continue;
       }
       const referral = asObject(message.referral);
+      const replyToMessageId = asString(asObject(message.context)?.id);
       events.push({
         kind: "message",
         externalAccountId: phoneNumberId,
@@ -202,6 +217,25 @@ function whatsappEntry(entry: Json, receivedAt: Date): NormalizedEvent[] {
         document: type === "document"
           ? { url: null, mediaId: asString(media?.id), fileName: asString(media?.filename), mimeType: asString(media?.mime_type) }
           : null,
+        replyToMessageId,
+      });
+    }
+    for (const raw of asArray(value.statuses)) {
+      const status = asObject(raw);
+      const messageId = asString(status?.id);
+      const state = asString(status?.status);
+      if (!status || !messageId || !state) continue;
+      const error = asObject(asArray(status.errors)[0]);
+      const code = error?.code;
+      events.push({
+        kind: "delivery",
+        externalAccountId: phoneNumberId,
+        messageId,
+        status: state,
+        recipient: asString(status.recipient_id),
+        errorCode: typeof code === "number" ? code : null,
+        errorTitle: asString(error?.title),
+        errorDetail: asString(asObject(error?.error_data)?.details) ?? asString(error?.message),
       });
     }
   }
@@ -351,6 +385,7 @@ function readMessaging(accountId: string, value: unknown, receivedAt: Date): Nor
     .filter((url): url is string => Boolean(url));
   const file = attachments.find((item) => asString(item?.type) === "file");
   const fileUrl = asString(asObject(file?.payload)?.url);
+  const replyTo = asObject(message.reply_to);
   return {
     kind: "message",
     externalAccountId: accountId,
@@ -366,6 +401,7 @@ function readMessaging(accountId: string, value: unknown, receivedAt: Date): Nor
     imageUrl: imageUrls[0] ?? null,
     imageUrls,
     document: fileUrl ? { url: fileUrl, mediaId: null, fileName: fileNameFromUrl(fileUrl), mimeType: null } : null,
+    replyToMessageId: asString(replyTo?.mid),
   };
 }
 

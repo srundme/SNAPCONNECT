@@ -1,9 +1,8 @@
 import { LogOut } from "lucide-react";
 import { logout } from "@/lib/actions";
-import { productName } from "@/lib/auth";
 import { requireWorkspace } from "@/lib/session";
 import { ConsoleNav } from "@/components/console-nav";
-import { SnapMark } from "@/components/ui";
+import { BrandMark } from "@/components/ui";
 import { WorkspaceSwitch } from "@/components/workspace-switch";
 
 function roleLabel(role: string | null) {
@@ -20,12 +19,8 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[252px_minmax(0,1fr)]">
       <aside className="flex flex-col bg-[var(--color-shell)] text-white lg:sticky lg:top-0 lg:z-20 lg:h-screen lg:self-start lg:overflow-y-auto">
-        <div className="flex items-center gap-2.5 px-4 pb-4 pt-5">
-          <SnapMark />
-          <div>
-            <p className="text-[15px] font-semibold tracking-tight">{productName}</p>
-            <p className="text-[12px] text-white/50">Comment to lead</p>
-          </div>
+        <div className="px-3 pb-3 pt-4">
+          <BrandMark height={78} />
         </div>
         <WorkspaceSwitch current={workspace?.id} workspaces={workspaces} />
         <ConsoleNav showPlatform={actor.platformRole === "SUPER_ADMIN"} viewer={viewer} />
@@ -44,7 +39,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
         {workspace?.mode === "SIMULATION" ? (
           <p className="bg-[#111318] px-5 py-2 text-[12px] font-medium text-white/70 lg:px-8">Practice workspace. Nothing here is sent to Instagram, Facebook, or Zoho.</p>
         ) : (
-          <p className="bg-[#e7f6f3] px-5 py-2 text-[12px] font-medium text-[#085e58] lg:px-8">Live workspace. A channel sends messages only after it is connected and automation is on.</p>
+          <p className="bg-[#f4ead2] px-5 py-2 text-[12px] font-medium text-[#6e5420] lg:px-8">Live workspace. A channel sends messages only after it is connected and automation is on.</p>
         )}
         <div className="px-4 py-5 sm:px-6 lg:px-8 lg:py-7">{children}</div>
       </div>

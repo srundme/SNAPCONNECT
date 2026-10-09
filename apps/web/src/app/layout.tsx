@@ -1,17 +1,17 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Cormorant_Garamond, Inter } from "next/font/google";
 import "./globals.css";
-import { productName } from "@/lib/auth";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+const display = Cormorant_Garamond({ subsets: ["latin"], weight: ["500", "600"], variable: "--font-cormorant" });
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = { title: productName, description: "Shared inbox that turns Instagram and Facebook comments into leads." };
+export const metadata: Metadata = { title: "The KariGhars", description: "Home interiors enquiries, from the first message to the team." };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="en" className={`${inter.variable} ${display.variable}`}>
       <body className="font-sans">{children}</body>
     </html>
   );

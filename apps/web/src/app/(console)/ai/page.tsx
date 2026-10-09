@@ -1,4 +1,4 @@
-import { agentToggles, defaultAgentPrompt, defaultZohoField, PROMPT_FACTS, externalLeadKeyField, MAX_LEAD_QUESTIONS, parseAgentSettings, parseLeadQuestions } from "@snapsocial/domain";
+import { agentToggles, defaultZohoField, externalLeadKeyField, MAX_LEAD_QUESTIONS, parseAgentSettings, parseLeadQuestions } from "@snapsocial/domain";
 import { getPrisma } from "@snapsocial/db";
 import { AgentForm } from "@/components/lead-formation";
 import { Empty, Notice, PageTitle } from "@/components/ui";
@@ -29,9 +29,6 @@ export default async function AiPage({ searchParams }: { searchParams: Promise<{
             tone={workspace.tone}
             persona={workspace.agentPersona ?? ""}
             systemPrompt={workspace.systemPrompt ?? ""}
-            agentPrompt={workspace.agentPrompt ?? ""}
-            defaultPrompt={defaultAgentPrompt({ brandName: workspace.brandName, agentName: workspace.agentName, persona: workspace.agentPersona, services: workspace.services, settings })}
-            promptFacts={Object.entries(PROMPT_FACTS)}
             externalKey={externalKey}
             knowledgeBase={workspace.knowledgeBase}
             maxQuestions={MAX_LEAD_QUESTIONS}

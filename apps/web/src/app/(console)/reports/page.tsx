@@ -39,7 +39,7 @@ function seconds(ms: number | null): string {
 
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ channel?: string; range?: string }> }) {
   const params = await searchParams;
-  const { workspace } = await requireWorkspace();
+  const { workspace, role } = await requireWorkspace();
   if (!workspace) return <Empty title="No workspace" body="Select a workspace." />;
   const agent = workspace.agentName || "Assistant";
   const db = getPrisma();
@@ -198,7 +198,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         { label: "Comments", value: comments },
         { label: "Conversations", value: replied.length },
         { label: "Sent to Zoho", value: zoho.length },
-        { label: "Comment to lead", value: percent(zoho.length, comments) },
+        { label: "Became a lead", value: percent(zoho.length, comments) },
         { label: `${agent} reply time`, value: seconds(medianWait) },
       ]} />
       <div className="mt-3">
@@ -313,7 +313,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         ) : <p className="mt-3 text-sm text-[var(--color-muted)]">No post activity in this range yet.</p>}
       </Panel>
 
-      <Panel className="mt-4 p-5">
+      {role === "VIEWER" ? null : <Panel className="mt-4 p-5">
         <h2 className="text-[15px] font-semibold">Latest leads sent to Zoho</h2>
         {recent.length ? (
           <table className="mt-3 w-full text-sm">
@@ -332,7 +332,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
             </tbody>
           </table>
         ) : <p className="mt-3 text-sm text-[var(--color-muted)]">No Zoho leads in this range yet.</p>}
-      </Panel>
+      </Panel>}
     </section>
   );
 }

@@ -61,6 +61,52 @@ const BEHAVIOUR: Array<[string, string, string]> = [
   ["expertAdvice", "Expert advice", "Advises like an experienced designer from the AI's own knowledge plus the design notes. Company facts, prices and promises still come only from the knowledge base."],
 ];
 
+function FollowUps({ on, hours }: { on: boolean; hours: number[] }) {
+  const [enabled, setEnabled] = useState(on);
+  const [slots, setSlots] = useState([hours[0] ? String(hours[0]) : "", hours[1] ? String(hours[1]) : "", hours[2] ? String(hours[2]) : ""]);
+  const planned = slots
+    .map((value, index) => ({ index, hours: Number(value) }))
+    .filter((slot) => Number.isFinite(slot.hours) && slot.hours >= 1 && slot.hours <= 23)
+    .sort((a, b) => a.hours - b.hours);
+  const last = planned.at(-1)?.index;
+  return (
+    <div className="grid gap-4 p-5">
+      <input type="hidden" name="followUpHours" value={slots.map((value) => value.trim()).filter(Boolean).join(", ")} />
+      <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--color-line)] px-3 py-2.5 font-normal">
+        <input type="checkbox" name="toggle:followUps" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-accent)]" />
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold">Send follow-ups</span>
+          <span className="mt-0.5 block text-[12px] leading-5 text-[var(--color-muted)]">A check-in when they go quiet. It does not continue the questions and it is not a reply to their last message.</span>
+        </span>
+      </label>
+      <div className={`grid gap-3 ${enabled ? "" : "opacity-50"}`}>
+        {slots.map((value, index) => {
+          const sending = planned.some((slot) => slot.index === index);
+          const message = !sending ? "Leave this blank to skip it." : index === last ? "no rush. whenever u are ready, message here" : "just checking in. whenever u want to continue, message here";
+          return (
+            <label key={index} className="grid gap-1 sm:grid-cols-[180px_120px_minmax(0,1fr)] sm:items-center">
+              <span className="text-sm font-semibold">Check-in {index + 1}</span>
+              <input
+                type="number"
+                min={1}
+                max={23}
+                step={1}
+                inputMode="numeric"
+                disabled={!enabled}
+                value={value}
+                placeholder={index === 0 ? "3" : index === 1 ? "20" : ""}
+                onChange={(event) => setSlots((current) => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))}
+              />
+              <span className="text-[12px] leading-5 text-[var(--color-muted)]">{sending ? `After ${Number(value)} hours. “${message}”` : message}</span>
+            </label>
+          );
+        })}
+      </div>
+      <p className="text-[12px] leading-5 text-[var(--color-muted)]">Hours are counted from their last message, from 1 to 23. WhatsApp and Instagram only allow this for 24 hours after that message. A time before 9:30 AM or after 9:00 PM India time waits until 10:00 AM. Nothing goes out if the team has taken the chat, they opted out, or the lead is already in Zoho. The earliest time is sent first.</p>
+    </div>
+  );
+}
+
 function Section({ title, detail, children }: { title: string; detail: string; children: React.ReactNode }) {
   return (
     <Panel>
@@ -99,9 +145,6 @@ export function AgentForm({
   tone,
   persona,
   systemPrompt,
-  agentPrompt,
-  defaultPrompt,
-  promptFacts,
   questions,
   externalKey,
   knowledgeBase,
@@ -115,9 +158,6 @@ export function AgentForm({
   tone: string;
   persona: string;
   systemPrompt: string;
-  agentPrompt: string;
-  defaultPrompt: string;
-  promptFacts: Array<[string, string]>;
   questions: Array<{ label: string; zohoField: string | null; required: boolean }>;
   externalKey: string;
   knowledgeBase: string;
@@ -127,8 +167,6 @@ export function AgentForm({
   const [rows, setRows] = useState<Row[]>(questions.length ? questions.map(toRow) : [{ label: "", zoho: "", custom: "", required: true }]);
   const [leadKey, setLeadKey] = useState(externalKey);
   const [knowledge, setKnowledge] = useState(knowledgeBase);
-  const [promptOn, setPromptOn] = useState(Boolean(agentPrompt.trim()));
-  const [prompt, setPrompt] = useState(agentPrompt.trim() || defaultPrompt);
   const filled = rows.filter((row) => row.label.trim());
 
   function update(index: number, patch: Partial<Row>) {
@@ -138,29 +176,6 @@ export function AgentForm({
   return (
     <form className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]" action={action}>
       <div className="grid gap-4">
-        <Section title="System prompt" detail="When this is on, the agent follows only this prompt. Code reads photos, voice and documents, fills the lead form, sends the lead to Zoho and sends the messages, and nothing else.">
-          <div className="grid gap-3 p-5">
-            <label className="flex cursor-pointer items-center gap-3 font-normal">
-              <input type="checkbox" name="agentPromptOn" checked={promptOn} onChange={(event) => setPromptOn(event.target.checked)} className="h-4 w-4 accent-[var(--color-accent)]" />
-              <span className="text-sm font-semibold">Use this system prompt</span>
-            </label>
-            <label>
-              Prompt
-              <textarea name="agentPrompt" rows={28} maxLength={60000} value={prompt} onChange={(event) => setPrompt(event.target.value)} spellCheck={false} className="font-mono text-[13px]" />
-            </label>
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-[var(--color-muted)]">
-              <span>{prompt.length.toLocaleString("en-IN")} of 60,000 characters</span>
-              <button type="button" className="border-[var(--color-line)] text-[12px]" onClick={() => setPrompt(defaultPrompt)}>Reset to the starting prompt</button>
-            </div>
-            <div className="text-[12px] leading-5 text-[var(--color-muted)]">
-              <p className="font-semibold">Filled in for every reply. Write these where you want them; any you leave out are added at the end.</p>
-              <ul className="mt-1 grid gap-x-4 sm:grid-cols-2">
-                {promptFacts.map(([key, label]) => <li key={key}><code>{`{{${key}}}`}</code> {label}</li>)}
-              </ul>
-              {promptOn ? <p className="mt-2">Still used from below: the knowledge base, design knowledge, lead questions, Zoho settings, and the voice replies, photo reading, split messages, human timing and follow-up switches. The other fields only shape the starting prompt.</p> : null}
-            </div>
-          </div>
-        </Section>
         <Panel>
           <div className="border-b border-[var(--color-line)] px-5 py-4">
             <h2 className="text-[17px] font-semibold tracking-tight">1. Who replies</h2>
@@ -239,14 +254,8 @@ export function AgentForm({
             ))}
           </div>
         </Section>
-        <Section title="5. Follow-ups" detail="If the customer goes quiet, the agent checks in. Meta allows this only within 24 hours of their last message, never at night, and it stops once staff take over or the lead reaches Zoho.">
-          <div className="grid gap-4 p-5 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-end">
-            <Switch name="toggle:followUps" label="Send follow-ups" detail="Up to three short check-ins." defaultOn={settings.toggles.followUps ?? false} />
-            <label>
-              Hours after their last message
-              <input name="followUpHours" defaultValue={settings.followUpHours.join(", ")} placeholder="3, 20" />
-            </label>
-          </div>
+        <Section title="5. Follow-ups" detail="If the customer goes quiet, Varun checks in. Each box is one check-in.">
+          <FollowUps on={settings.toggles.followUps ?? false} hours={settings.followUpHours} />
         </Section>
         <Section title="6. Extra notes" detail="Anything else for every chat. A post can add its own notes under Replies.">
           <div className="p-5">
@@ -266,37 +275,34 @@ export function AgentForm({
               Add question
             </button>
           </div>
-          <div className="hidden grid-cols-[32px_minmax(0,1.4fr)_minmax(160px,0.8fr)_120px_72px] gap-3 px-5 py-2 text-[12px] font-semibold text-[var(--color-muted)] sm:grid">
-            <span />
-            <span>Question</span>
-            <span>Zoho field</span>
-            <span>Needed</span>
-            <span />
-          </div>
           <ol className="grid">
             {rows.map((row, index) => {
               const yesNo = /\bdemo\b|interested/i.test(row.label);
               return (
-                <li key={index} className="grid gap-2 border-t border-[var(--color-line)] px-5 py-3 sm:grid-cols-[32px_minmax(0,1.4fr)_minmax(160px,0.8fr)_120px_72px] sm:items-center">
-                  <span className="text-sm font-semibold text-[var(--color-muted)]">{index + 1}</span>
-                  <input className="w-full min-w-0" name="questionLabel" aria-label={`Question ${index + 1}`} value={row.label} maxLength={180} placeholder="Person name" onChange={(event) => update(index, { label: event.target.value })} />
-                  <div className="grid gap-2">
-                    <select className="w-full min-w-0" name="questionZoho" aria-label={`Zoho field for question ${index + 1}`} value={row.zoho} onChange={(event) => update(index, { zoho: event.target.value })}>
-                      {STANDARD.map(([value, label]) => <option key={value || "description"} value={value}>{label}</option>)}
-                      <option value="__custom__">Custom API name</option>
-                    </select>
-                    {row.zoho === "__custom__" ? (
-                      <input name="questionZohoCustom" aria-label={`API name for question ${index + 1}`} value={row.custom} spellCheck={false} placeholder="Team_Size" onChange={(event) => update(index, { custom: event.target.value })} />
-                    ) : <input type="hidden" name="questionZohoCustom" value="" />}
+                <li key={index} className="grid gap-2 border-t border-[var(--color-line)] px-5 py-4">
+                  <div className="flex items-center gap-3">
+                    <span className="w-6 shrink-0 text-sm font-semibold text-[var(--color-muted)]">{index + 1}</span>
+                    <input className="min-w-0 flex-1" name="questionLabel" aria-label={`Question ${index + 1}`} value={row.label} maxLength={180} placeholder="Person name" onChange={(event) => update(index, { label: event.target.value })} />
                   </div>
-                  <select className="w-full min-w-0" name="questionRequired" aria-label={`Is question ${index + 1} needed`} value={row.required ? "yes" : "no"} onChange={(event) => update(index, { required: event.target.value === "yes" })}>
-                    <option value="yes">Must-have</option>
-                    <option value="no">Nice to have</option>
-                  </select>
-                  <button className="h-10 border-transparent px-0 text-sm text-[var(--color-muted)] hover:text-[var(--color-ink)]" type="button" disabled={rows.length === 1} onClick={() => setRows((current) => current.filter((_, item) => item !== index))}>
-                    Remove
-                  </button>
-                  {yesNo ? <p className="text-[12px] text-[var(--color-muted)] sm:col-span-5">Yes sends the lead. No keeps it in the inbox.</p> : null}
+                  <div className="grid items-center gap-2 pl-9 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
+                    <div className="grid gap-2">
+                      <select className="w-full min-w-0" name="questionZoho" aria-label={`Zoho field for question ${index + 1}`} value={row.zoho} onChange={(event) => update(index, { zoho: event.target.value })}>
+                        {STANDARD.map(([value, label]) => <option key={value || "description"} value={value}>{label}</option>)}
+                        <option value="__custom__">Custom API name</option>
+                      </select>
+                      {row.zoho === "__custom__" ? (
+                        <input name="questionZohoCustom" aria-label={`API name for question ${index + 1}`} value={row.custom} spellCheck={false} placeholder="Team_Size" onChange={(event) => update(index, { custom: event.target.value })} />
+                      ) : <input type="hidden" name="questionZohoCustom" value="" />}
+                    </div>
+                    <select className="w-full min-w-0" name="questionRequired" aria-label={`Is question ${index + 1} needed`} value={row.required ? "yes" : "no"} onChange={(event) => update(index, { required: event.target.value === "yes" })}>
+                      <option value="yes">Must-have</option>
+                      <option value="no">Nice to have</option>
+                    </select>
+                    <button className="h-10 border-transparent px-0 text-sm text-[var(--color-muted)] hover:text-[var(--color-ink)]" type="button" disabled={rows.length === 1} onClick={() => setRows((current) => current.filter((_, item) => item !== index))}>
+                      Remove
+                    </button>
+                  </div>
+                  {yesNo ? <p className="pl-9 text-[12px] text-[var(--color-muted)]">Yes sends the lead. No keeps it in the inbox.</p> : null}
                 </li>
               );
             })}
@@ -331,7 +337,7 @@ export function AgentForm({
               Unique Zoho field
               <input name="externalKeyField" value={leadKey} spellCheck={false} placeholder="External_Lead_Key" onChange={(event) => setLeadKey(event.target.value)} />
             </label>
-            <p className="text-[12px] leading-5 text-[var(--color-muted)]">API name for the SnapServe id. Yours is External_Lead_Key. Two underscores in a row are rejected.</p>
+            <p className="text-[12px] leading-5 text-[var(--color-muted)]">API name that stores this lead's id in Zoho. Yours is External_Lead_Key. Two underscores in a row are rejected.</p>
             <label>
               Company when none is asked
               <input name="zohoCompanyFallback" maxLength={80} defaultValue={settings.zohoCompanyFallback} placeholder="Residential" />
@@ -349,7 +355,7 @@ export function AgentForm({
             <p className="text-[12px] leading-5 text-[var(--color-muted)]">Optional API name of a text or picklist field with HOT and JUNK. The rating always goes in the Description too.</p>
           </div>
         </Panel>
-        <button className="border-transparent bg-[var(--color-accent)] text-white hover:bg-[#0a655f]" type="submit">Save agent</button>
+        <button className="border-transparent bg-[var(--color-accent)] text-white hover:bg-[#745722]" type="submit">Save agent</button>
       </aside>
     </form>
   );

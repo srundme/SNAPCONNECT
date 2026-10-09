@@ -137,7 +137,7 @@ export function messageSituations(text: string, brandName: string): Situation[] 
     found.push({
       key: "book-consultation",
       note: `Wants to book a consultation: "${said}"`,
-      line: "They want to book the free consultation. If they have not said when, ask which day and time suit them for the team's call, within working hours. When they give one, say it is noted for the team and that the team will call to confirm it. Never confirm a booked slot yourself. In a line, say what happens in it (the designer understands their needs, then a site visit and 3D designs) if the knowledge base covers that.",
+      line: "They want the free consultation. If they have not named a time, ask which time inside working hours suits them. When they name one, say it is noted for the team to confirm. Never say the slot is booked. Never mention designers, 3D designs, layouts or site visits.",
       always: true,
     });
   }
@@ -145,7 +145,7 @@ export function messageSituations(text: string, brandName: string): Situation[] 
     found.push({
       key: "renovation",
       note: `Renovating a home they already have: "${said}"`,
-      line: "They are renovating a home they already have, so it is ready: never ask about possession or whether it is ready. Talk like a renovation consultant: find out what is not working in the current home or what they most want to change, and share one useful renovation point, like dismantling the old work, doing it room by room so they can keep living there, or the team checking the old wiring and plumbing at the site visit.",
+      line: "They are renovating a home they already have, so it is ready: never ask about possession or whether it is ready. They are still only enquiring. Never suggest doing it room by room, one room at a time, or while they keep living there, and never talk as if the work is already planned. Ask what they are considering.",
     });
   }
   if (TINY.test(text)) {
@@ -187,7 +187,7 @@ export function messageSituations(text: string, brandName: string): Situation[] 
     found.push({
       key: `competitor:${rival ?? "quote"}`,
       note: `Comparing with ${rival ? rival.replace(/\b\w/g, (letter) => letter.toUpperCase()) : "another quote"}: "${said}"`,
-      line: `They mentioned ${rival ? "another company" : "another quote"} ("${said}"). Never criticise the other company, never match or beat a price, and never promise a discount. Give one or two concrete strengths from the knowledge base that matter for their home, like the materials, the pricing promise or the warranty, said plainly and confidently, then say the team will walk them through exactly what is included so they can compare properly.`,
+      line: `They are comparing ("${said}"). They have not chosen the company. Never criticise the other company, never match or beat a price, and never promise a discount. Give one or two concrete strengths from the knowledge base, such as the materials, the fixed price or the warranty. Do not offer a call unless they ask for one.`,
     });
   }
   if (RUSH.test(text)) {
@@ -197,7 +197,110 @@ export function messageSituations(text: string, brandName: string): Situation[] 
       line: "They sound in a hurry. Never promise a finish date or a call time. If it is about finishing the work, share the usual timeline from the knowledge base and say the team will check what is possible. If it is about a call, say the team calls in working hours.",
     });
   }
+  if (priceShock(text)) {
+    found.push({
+      key: "price-shock",
+      note: `Reacted to the price, not a budget: "${said}"`,
+      line: "They are reacting to a price, not stating a budget. Do not save this as their budget and never say within that range or that it fits a budget. One calm line is enough, then continue with the next real detail. Do not jump to the phone because of this.",
+      always: true,
+    });
+  }
+  if (notNow(text)) {
+    found.push({
+      key: "not-now",
+      note: `Not ready to go ahead: "${said}"`,
+      line: "They are not ready to go ahead now. Pause the questions. One short warm line, and tell them they can message here when they are ready. Do not ask for the phone, email, photos, carpet area or timeline.",
+      always: true,
+    });
+  }
+  if (notAHome(text)) {
+    found.push({
+      key: "not-a-home",
+      note: `Not a home: "${said}"`,
+      line: "This is not a home. The company does home interiors only, not an office, shop, clinic or restaurant. Say that kindly and stop. Do not ask anything else. If they then say there is a home to do, continue.",
+      always: true,
+    });
+  }
+  if (aboutTheBuilding(text)) {
+    found.push({
+      key: "builder-mixup",
+      note: `Asking about the building, not the interiors: "${said}"`,
+      line: `They are asking about the building, not the interiors. Say once, plainly, that ${brandName} does the interiors and the builder handles the flat, its price and its possession. Then continue with the interiors. Do not invent a possession date or a flat price.`,
+      always: true,
+    });
+  }
+  if (alreadyHasDesigner(text)) {
+    found.push({
+      key: "has-designer",
+      note: `Already has a designer or architect: "${said}"`,
+      line: "Someone else is already designing it. Ask once whether they want the company to execute that design. Do not restart the questionnaire and do not ask about style.",
+      always: true,
+    });
+  }
+  if (asksInclusions(text)) {
+    found.push({
+      key: "inclusions",
+      note: `Asked what the price includes: "${said}"`,
+      line: "They asked what the price includes. Never give a figure. Say: 'The budget will be quoted by our team after understanding your requirement, the scope and the materials you choose.' Do not invent a list of inclusions, appliances or a per sq ft rate.",
+      always: true,
+    });
+  }
+  if (mentionsTwoHomes(text)) {
+    found.push({
+      key: "two-homes",
+      note: `More than one home: "${said}"`,
+      line: "They mentioned more than one home. Ask only which home this chat is about. Do not mix the BHK of one with the area of the other.",
+      always: true,
+    });
+  }
   return found;
+}
+
+/** "Huge amount" after a price is a reaction, not a budget they can spend. */
+export function priceShock(text: string): boolean {
+  const plain = text.replace(/^\(Replied to:[\s\S]*?\)\s*/, "");
+  if (/\d/.test(plain) && /\b(?:lakh|lac|crore|rs|₹)\b/i.test(plain)) return false;
+  return /\b(?:huge amount|too much|very (?:high|costly|expensive)|so (?:much|costly|expensive)|too costly|too expensive|can(?:not|'t|t) afford|out of (?:my |our )?budget|lot of money)\b/i.test(plain);
+}
+
+/** "Just looking" or "call me later" pauses the script. A date such as "after Diwali" does not. */
+export function notNow(text: string): boolean {
+  const plain = text.replace(/^\(Replied to:[\s\S]*?\)\s*/, "");
+  return /\b(?:just (?:looking|browsing|checking|enquiring|inquiring|asking)|only looking|not now|not right now|maybe later|not urgent|not serious|i(?:'ll| will) (?:think|decide|see)|call me later|call me after|call me next year)\b/i.test(plain);
+}
+
+/** An office, shop, clinic or restaurant, unless they are also describing a home. */
+export function notAHome(text: string): boolean {
+  if (/\bhome office\b/i.test(text)) return false;
+  // Asking about our office or showroom is not a commercial enquiry.
+  if (/\b(?:your|ur|the karighars'?|karighars'?)\s+(?:office|showroom|experience cent(?:re|er)|studio)\b|\bwhere\s+(?:is|r|are)\s+(?:the\s+|your\s+|ur\s+)?(?:office|showroom)\b|\b(?:visit|come to|address of)\s+(?:the\s+|your\s+|ur\s+)?(?:office|showroom|experience cent(?:re|er))\b/i.test(text)) return false;
+  if (/\b(\d\s*-?\s*bhk|apartment|flat|villa|independent house|bungalow|my house|my home|our house|our home)\b/i.test(text)) return false;
+  return /\b(?:office|shop|showroom|clinic|restaurant|café|cafe|warehouse|godown|commercial space|salon|hotel)\b/i.test(text);
+}
+
+/** They think the interiors firm is the builder of the flat. */
+export function aboutTheBuilding(text: string): boolean {
+  return /\bwhen\b[^?]{0,40}\b(?:flat|apartment|villa|project)\b[^?]{0,24}\b(?:ready|possession)\b|\b(?:price|cost|rate) of (?:the |my |our )?(?:flat|apartment|plot|unit)\b|\b(?:booking amount|which tower|rera)\b/i.test(text);
+}
+
+/** An architect or interior designer is already on the job. */
+export function alreadyHasDesigner(text: string): boolean {
+  return /\b(?:we|i) (?:already )?have (?:an? )?(?:interior designer|architect|designer)\b|\b(?:our|my) (?:architect|interior designer|designer) (?:will|is)\b|\barchitect (?:is|has) (?:already )?/i.test(text);
+}
+
+/** What the published starting price covers. */
+export function asksInclusions(text: string): boolean {
+  return /\b(?:what(?:'s| is) included|does (?:it|that|this|the price|\d+|₹)[^?]{0,24}include|include[sd]? (?:the )?(?:kitchen|false ceiling|appliances|wardrobes?)|with (?:the )?kitchen and)\b/i.test(text);
+}
+
+/** Two different homes in one message, so the chat has to pick one. */
+export function mentionsTwoHomes(text: string): boolean {
+  if (/\b(?:both|another|second|two) (?:flats|houses|homes|villas|apartments|flat|house|home|villa|apartment)\b/i.test(text)) return true;
+  if (/\b(?:parents?|mom|dad|in[- ]?laws?)(?:'s|s)?\b/i.test(text) && /\b(?:and|also|plus)\b/i.test(text) && /\b(?:flat|house|home|villa|apartment)\b/i.test(text)) return true;
+  const homes = text.match(/\b(?:flats|apartments|villas|houses|homes|flat|apartment|villa|house|home)\b/gi) ?? [];
+  const places = (text.match(/\b(?:in|at)\s+[A-Za-z][a-z]+/gi) ?? [])
+    .filter((place) => !/\s(?:the|a|an|my|our|your|ur|this|that|least|earliest|present|moment|once|all|first|last|end|home|house|flat|time|any|some|one)$/i.test(place));
+  return homes.length >= 2 && places.length >= 2;
 }
 
 /** "Today 10 am" when it is already past 10 in India: the model does not reliably compare times itself. */
@@ -228,7 +331,22 @@ export function pastTimeReply(text: string, now: Date): string | null {
   return `${passed.time} today has already passed, it's ${passed.clock} now. Would a later time today or another day work for u?`;
 }
 
-const PRICE = /\b(how much|price|pricing|cost|rate|approx\w*|ballpark|rough(ly)? (cost|idea|estimate)|estimate|quote|starting (price|from)|per sq ?ft|minimum|budget (range|kitna|evlo)|evlo aagum|kitna (lagega|hoga))\b/i;
+// "how much time" and "minimum how many days" are about time, not price.
+const PRICE = /\b(how much(?!\s+(?:time|days?|weeks?|months?|years?|long|duration))|price|pricing|cost|rate|approx\w*|ballpark|rough(ly)? (cost|idea|estimate)|estimate|quote|starting (price|from)|per sq ?ft|minimum (?:price|cost|budget|amount|charge)|budget (range|kitna|evlo)|evlo aagum|kitna (lagega|hoga))\b/i;
+
+/** A direct price question, not a decision to go ahead. */
+export function askingPrice(text: string): boolean {
+  return PRICE.test(text.replace(/^\(Replied to:[\s\S]*?\)\s*/, ""));
+}
+
+const PROCEED = /\b(?:book|schedule|fix|arrange|set ?up)\b(?:\s+\w+){0,3}?\s+(?:a |the )?(?:consultation|meeting|appointment|site visit|visit|call)\b|\b(?:call me|please call|give me a call|want (?:a |the )?call|let'?s (?:go ahead|proceed|do this|start)|i want to (?:proceed|go ahead|start|book)|we(?:'d| would) like to (?:proceed|go ahead|start)|ready for (?:a |the )?(?:consultation|call)|send (?:the |your )?team)\b/i;
+
+/** They asked for a call or said they want to go ahead. A price question is not this. */
+export function readyToProceed(text: string): boolean {
+  const plain = text.replace(/^\(Replied to:[\s\S]*?\)\s*/, "");
+  if (/\b(?:do not|don't|dont|no)\b[^.]{0,24}\b(?:call|proceed|consultation)\b/i.test(plain)) return false;
+  return PROCEED.test(plain);
+}
 
 /** Asking the price again after hearing it depends: the same explanation again would read like a script. */
 export function pricePush(prospectTexts: string[]): Situation | null {
@@ -237,7 +355,7 @@ export function pricePush(prospectTexts: string[]): Situation | null {
   return {
     key: "price-push",
     note: `Asked about price ${asked.length} times.`,
-    line: "They are asking about the price again. Do not repeat your earlier explanation or its words. Acknowledge plainly that they want a number, give one fresh honest reason it varies so much (for example the same 3 BHK can differ a lot by materials and how much storage and custom work they want), and offer the quickest way to a real estimate: a short call with the team or a visit to the experience centre. Never make up a number or estimate their home: only a starting price written in the knowledge base may be shared, said as a starting price.",
+    line: "They are asking about the price again. Never give any figure. In fresh words, say the team quotes after understanding their requirement, the scope and the materials they choose. Offer the free consultation or an experience centre visit as the way to get the quote.",
     always: true,
   };
 }
@@ -309,6 +427,74 @@ function clockLabel(minutes: number): string {
   return `${hour % 12 || 12}${minute ? `:${String(minute).padStart(2, "0")}` : ""} ${hour >= 12 ? "PM" : "AM"}`;
 }
 
+export type OfficeNow = {
+  kind: "open" | "passed" | "before" | "off" | "unknown";
+  /** "tomorrow", "Tuesday", or "later today". */
+  next: string;
+  openLabel: string;
+  closeLabel: string;
+};
+
+function nextOpenLabel(now: Date, days: Set<string>, start: number, holidays = ""): string {
+  for (let add = start; add < 8; add += 1) {
+    const day = istDate(now, add);
+    if (!days.has(day.weekday) || holidayOn(day.iso, holidays)) continue;
+    return add === 1 ? "tomorrow" : day.weekday;
+  }
+  return "the next working day";
+}
+
+/** Whether the team can call at this moment. The model gets this wrong if it only sees a clock and a hours string. */
+export function officeNow(now: Date, workingHours: string, holidays = ""): OfficeNow {
+  const hours = openHours(workingHours);
+  const days = openDays(workingHours);
+  if (!hours || !days) return { kind: "unknown", next: "", openLabel: "", closeLabel: "" };
+  const india = new Date(now.getTime() + 330 * 60_000);
+  const nowMinutes = india.getUTCHours() * 60 + india.getUTCMinutes();
+  const today = istDate(now);
+  const openLabel = clockLabel(hours.open);
+  const closeLabel = clockLabel(hours.close);
+  if (!days.has(today.weekday)) return { kind: "off", next: nextOpenLabel(now, days, 1, holidays), openLabel, closeLabel };
+  if (nowMinutes < hours.open) return { kind: "before", next: "later today", openLabel, closeLabel };
+  if (nowMinutes >= hours.close) return { kind: "passed", next: nextOpenLabel(now, days, 1, holidays), openLabel, closeLabel };
+  return { kind: "open", next: "", openLabel, closeLabel };
+}
+
+/** Fed on every turn so a reply can say "open until 7" or "hours have passed, tomorrow" instead of a vague "working hours". */
+export function officeNowLine(now: Date, workingHours: string, holidays = ""): string {
+  if (holidayOn(istDate(now).iso, holidays)) {
+    return "The team is off today for a holiday. Do not say they will call today or during working hours. If someone is waiting for a call, say you will check with the team, and that maybe they will call on the next working day.";
+  }
+  const status = officeNow(now, workingHours, holidays);
+  if (status.kind === "unknown") return "";
+  if (status.kind === "open") return `The team is in working hours right now, until ${status.closeLabel}. If a call has not happened, say you will check with the team. Do not answer with only "during working hours". Never promise when they will call, and never say they will call soon.`;
+  if (status.kind === "before") return `Working hours have not started. They start at ${status.openLabel} today. If someone is waiting for a call, say you will check with the team, and that maybe they will call later today after ${status.openLabel}. Do not say only "during working hours".`;
+  if (status.kind === "off") return `Today is the weekly off. The next time the team can call is ${status.next} from ${status.openLabel}. If someone is waiting, say you will check with the team, and that today is off so maybe they will call ${status.next === "tomorrow" ? "tomorrow" : `on ${status.next}`}. Do not say only "during working hours".`;
+  return `Working hours ended at ${status.closeLabel}. The next time the team can call is ${status.next} from ${status.openLabel}. If someone is waiting for a call, say you will check with the team, and that working hours have passed so maybe they will call ${status.next === "tomorrow" ? "tomorrow" : `on ${status.next}`}. Do not say only "during working hours", and do not tell them how many minutes ago their details were sent.`;
+}
+
+const WAITING_CALL = /\bnot called\b|\bno(?:body| one)\b(?:\s+\w+){0,6}\s+call(?:ed|ing)?\b|\b(?:haven'?t|hasn'?t|didn'?t|did not|yet to|still not|not yet)\b(?:\s+\w+){0,5}\s+call(?:ed)?\b|\bwaiting for\b(?:\s+\w+){0,4}\s+call\b|\bno call (?:yet|till now|until now|so far|from)\b/i;
+const REFUSE_CALL = /\b(?:do not|don't|dont)\s+call\b|\bno (?:need|thanks)\b[^.?!\n]{0,16}\bcall\b|\bnot interested\b/i;
+
+/** They are chasing a call that has not happened, not asking for one and not refusing one. */
+export function waitingOnCall(text: string): boolean {
+  const said = text.replace(/^\(Replied to:[\s\S]*?\)\s*/, "");
+  if (REFUSE_CALL.test(said)) return false;
+  return WAITING_CALL.test(said);
+}
+
+/** The whole reply when they say the team has not called. No minute count, no vague "working hours". */
+export function callWaitReply(now: Date, workingHours: string, holidays = "", alreadyAsked = false): string {
+  const lead = alreadyAsked ? "I have asked the team to check" : "I'll check with my team";
+  if (holidayOn(istDate(now).iso, holidays)) return `${lead}. today is a holiday, so maybe they will call on the next working day`;
+  const status = officeNow(now, workingHours, holidays);
+  if (status.kind === "open" || status.kind === "unknown") return lead;
+  if (status.kind === "before") return `${lead}. working hours start at ${status.openLabel}, so maybe later today`;
+  if (status.kind === "off") return `${lead}. today is the weekly off, so maybe they will call u ${status.next === "tomorrow" ? "tomorrow" : `on ${status.next}`}`;
+  if (status.next === "tomorrow") return `${lead}. working hours have passed, so maybe they will call u tomorrow`;
+  return `${lead}. working hours have passed, and tomorrow is off, so maybe they will call u on ${status.next}`;
+}
+
 /** Opening and closing minutes read from working hours like "Tuesday to Sunday, 10 AM to 7 PM". */
 export function openHours(workingHours: string): { open: number; close: number } | null {
   const match = workingHours.match(/(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\s*(?:to|-|–|till|until)\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)/i);
@@ -338,8 +524,15 @@ export function requestedTime(text: string, now: Date, workingHours: string): Re
     minutes = target % 1440;
   } else if (absolute) {
     minutes = ((Number(absolute[1]) % 12) + (absolute[3]!.toLowerCase() === "pm" ? 12 : 0)) * 60 + Number(absolute[2] ?? 0);
+    const weekday = text.match(/\b(sun|mon|tue|wed|thu|fri|sat)(?:s|nes|rs|ur)?(?:day)?\b/i);
     if (/\btomorrow\b|\bkal\b|\bnaalai\b|\bnaale\b/i.test(text)) addDays = 1;
-    else if (minutes <= nowMinutes) return null;
+    else if (weekday && !/\btoday\b/i.test(text)) {
+      // "Saturday 11 am" means the coming Saturday, not today.
+      const target = WEEK.findIndex((day) => day.toLowerCase().startsWith(weekday[1]!.toLowerCase()));
+      const todayIndex = WEEK.indexOf(istDate(now).weekday);
+      addDays = (target - todayIndex + 7) % 7;
+      if (addDays === 0 && minutes <= nowMinutes) addDays = 7;
+    } else if (minutes <= nowMinutes) return null;
   } else {
     return null;
   }
@@ -350,6 +543,27 @@ export function requestedTime(text: string, now: Date, workingHours: string): Re
   if (open && !open.has(day)) return { clock, day: dayWord, inside: false, why: `${day} is the team's weekly off` };
   if (minutes < hours.open || minutes >= hours.close) return { clock, day: dayWord, inside: false, why: `it is outside working hours (${clockLabel(hours.open)} to ${clockLabel(hours.close)})` };
   return { clock, day: dayWord, inside: true, why: "" };
+}
+
+/** The next open time to offer when they want a consultation but have not named one. */
+export function proposeConsultation(now: Date, workingHours: string): string | null {
+  const hours = openHours(workingHours);
+  const open = openDays(workingHours);
+  if (!hours || !open) return null;
+  const india = new Date(now.getTime() + 330 * 60_000);
+  const nowMinutes = india.getUTCHours() * 60 + india.getUTCMinutes();
+  for (let add = 0; add < 8; add += 1) {
+    const day = istDate(now, add);
+    if (!open.has(day.weekday)) continue;
+    if (add === 0) {
+      const earliest = Math.max(hours.open, Math.ceil((nowMinutes + 60) / 60) * 60);
+      if (earliest + 60 <= hours.close) return `today at ${clockLabel(earliest)}`;
+      continue;
+    }
+    const label = add === 1 ? "tomorrow" : day.weekday;
+    return `${label} at ${clockLabel(hours.open)}`;
+  }
+  return null;
 }
 
 export function requestedTimeLine(time: RequestedTime): string {

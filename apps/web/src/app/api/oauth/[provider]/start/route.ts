@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { loadConfig } from "@snapsocial/config";
 import { assertAllowedUrl } from "@snapsocial/integrations";
 import { getPrisma } from "@snapsocial/db";
+import { can } from "@snapsocial/domain";
 import { auth } from "@/lib/auth";
 
 export async function GET(request: Request, context: { params: Promise<{ provider: string }> }) {
@@ -11,6 +12,15 @@ export async function GET(request: Request, context: { params: Promise<{ provide
   if (!session) return new Response("Unauthorized", { status: 401 });
   const workspaceId = new URL(request.url).searchParams.get("workspaceId");
   if (!workspaceId || !["instagram", "facebook", "zoho"].includes(provider)) return new Response("Bad request", { status: 400 });
+  const user = await getPrisma().user.findUnique({ where: { id: session.user.id }, include: { memberships: true } });
+  if (!user || user.suspendedAt) return new Response("Unauthorized", { status: 401 });
+  const actor = {
+    userId: user.id,
+    platformRole: user.platformRole,
+    suspended: false,
+    memberships: user.memberships.map((item) => ({ workspaceId: item.workspaceId, role: item.role })),
+  };
+  if (!can(actor, "integration.manage", workspaceId)) return new Response("Forbidden", { status: 403 });
   const config = loadConfig();
   const state = randomBytes(24).toString("base64url");
   await getPrisma().oauthState.create({

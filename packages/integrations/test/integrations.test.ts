@@ -97,7 +97,7 @@ describe("documents", () => {
 import { zohoAdapter } from "../src/zoho";
 import { checkWhatsAppNumber, subscribeWhatsAppAccount, whatsappAdapter } from "../src/whatsapp";
 import { cartesiaSpeaker, speechLocale, speechScript, speechSentences } from "../src/cartesia";
-import { bestPlaceLookup, bravePlaceLookup, googlePlaceLookup, osmPlaceLookup } from "../src/places";
+import { bestPlaceLookup, bravePlaceLookup, correctAreaSpelling, googlePlaceLookup, osmPlaceLookup } from "../src/places";
 
 describe("project lookup", () => {
   const reply = (results: unknown[]) => (async () => new Response(JSON.stringify(results), { status: 200 })) as unknown as typeof fetch;
@@ -159,8 +159,13 @@ describe("project lookup", () => {
       { title: "Casagrand Casablanca | Luxury Flats in Mallasandra, Kanakapura Road", description: "2, 3 and 4 BHK apartments and 5 BHK floor villas in Bengaluru. Ongoing project." },
       { title: "Some other Casagrand project", description: "Villas in Whitefield" },
     ])("Casagrande Casablanca", "Bengaluru");
-    expect(casagrand).toMatchObject({ name: "Casagrand Casablanca", kind: "apartment", locality: "Kanakapura Road", city: "Bengaluru", underConstruction: true, source: "Web search" });
-    expect(await hits([{ title: "Brigade Woods", description: "Apartments in Bengaluru" }])("Brigade Utopia", "Bengaluru")).toEqual({ missing: "Brigade Utopia", source: "Web search" });
+    expect(casagrand).toMatchObject({ name: "Casagrand Casablanca", kind: "apartment", locality: "Kanakapura Road", city: "Bengaluru", underConstruction: true, bhkOptions: [2, 3, 4, 5], source: "Brave Search" });
+    expect(await hits([{ title: "Prestige Lakeside Habitat", description: "Ready to move 3 BHK apartments on Sarjapur Road, Bengaluru 560087." }])("Prestige Lakeside Habitat", "Bengaluru")).toMatchObject({ bhkOptions: [3], underConstruction: false, readyToMove: true });
+    expect(await hits([{ title: "Sobha Dream Acres", description: "Apartments in Bengaluru. Possession in 2027." }])("Sobha Dream Acres", "Bengaluru")).toMatchObject({ possessionYear: 2027, underConstruction: false });
+    expect(await hits([{ title: "Brigade Cornerstone Utopia", description: "Ready to move and under construction apartments in Bengaluru." }])("Brigade Cornerstone Utopia", "Bengaluru")).toMatchObject({ underConstruction: false });
+    expect(correctAreaSpelling("sri bakthi nivas in madipakka")).toBe("sri bakthi nivas in Madipakkam");
+    expect(await hits([{ title: "Sobha City", description: "Apartments in Bengaluru, priced around 560087 per home." }])("Sobha City", "Bengaluru")).not.toHaveProperty("bhkOptions");
+    expect(await hits([{ title: "Brigade Woods", description: "Apartments in Bengaluru" }])("Brigade Utopia", "Bengaluru")).toEqual({ missing: "Brigade Utopia", source: "Brave Search" });
     expect(await hits([])("HSR Layout", "Bengaluru")).toBeNull();
   });
 

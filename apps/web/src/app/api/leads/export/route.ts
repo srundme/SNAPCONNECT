@@ -1,4 +1,4 @@
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { getPrisma } from "@snapsocial/db";
 import { can, toCsv } from "@snapsocial/domain";
 import { auth } from "@/lib/auth";
@@ -14,7 +14,11 @@ export async function GET() {
     suspended: false,
     memberships: user.memberships.map((item) => ({ workspaceId: item.workspaceId, role: item.role })),
   };
-  const workspaceId = user.memberships[0]?.workspaceId;
+  const selected = (await cookies()).get("ss_workspace")?.value;
+  const allowed = actor.platformRole === "SUPER_ADMIN"
+    ? await getPrisma().workspace.findMany({ orderBy: { name: "asc" }, select: { id: true } })
+    : await getPrisma().workspace.findMany({ where: { id: { in: actor.memberships.map((item) => item.workspaceId) } }, orderBy: { name: "asc" }, select: { id: true } });
+  const workspaceId = (allowed.find((item) => item.id === selected) ?? allowed[0])?.id;
   if (!workspaceId || !can(actor, "lead.export", workspaceId)) return new Response("Forbidden", { status: 403 });
   const leads = await getPrisma().lead.findMany({ where: { workspaceId, archivedAt: null, crmState: "SYNCED" }, include: { contact: true } });
   const csv = toCsv(leads.map((lead) => ({

@@ -127,7 +127,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
                     return (
                       <li key={message.id} className={clsx("max-w-[82%]", inbound ? "justify-self-start" : "justify-self-end")}>
                         <p className={clsx("mb-1 text-[11px] font-semibold uppercase tracking-[0.04em]", inbound ? "text-[var(--color-muted)]" : "text-right text-[var(--color-accent-ink)]")}>{authorLabel(message.author)}{message.voice ? " · Voice note" : ""}</p>
-                        <p className={clsx("rounded-2xl px-3 py-2 text-sm leading-5", inbound ? "rounded-tl-md bg-[var(--color-paper)]" : message.author === "STAFF" ? "rounded-tr-md bg-[var(--color-ink)] text-white" : "rounded-tr-md bg-[#e7f6f3]")}>{message.body}</p>
+                        <p className={clsx("rounded-2xl px-3 py-2 text-sm leading-5", inbound ? "rounded-tl-md bg-[var(--color-paper)]" : message.author === "STAFF" ? "rounded-tr-md bg-[var(--color-ink)] text-white" : "rounded-tr-md bg-[#f4ead2]")}>{message.body}</p>
                         {message.voiceClipId ? (
                           <audio controls preload="none" className="mt-1 h-8 w-56 justify-self-end" src={`/api/voice/${message.voiceClipId}`} />
                         ) : null}
@@ -142,7 +142,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
                       <span className="sr-only">Reply</span>
                       <textarea name="body" disabled={!eligibility?.allowed} rows={2} placeholder={eligibility?.allowed ? "Write a reply" : "Reply is unavailable"} />
                     </label>
-                    <button className="inline-flex shrink-0 items-center gap-1.5 border-transparent bg-[var(--color-accent)] text-white hover:bg-[#0a655f]" type="submit" disabled={!eligibility?.allowed}>
+                    <button className="inline-flex shrink-0 items-center gap-1.5 border-transparent bg-[var(--color-accent)] text-white hover:bg-[#745722]" type="submit" disabled={!eligibility?.allowed}>
                       <Send size={15} aria-hidden />
                       Send
                     </button>

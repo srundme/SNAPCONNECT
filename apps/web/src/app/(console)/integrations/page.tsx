@@ -104,7 +104,7 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
         </article>
         <article className="border border-[var(--color-line)] bg-white p-4">
           <h2 className="font-semibold">Zoho CRM</h2>
-          <p className="mt-2 text-sm">{zoho?.mode === "INTEGRATION" ? `Connected · ${zoho.apiDomain ?? "API domain not recorded"}` : "Not connected. Ready leads stay in SnapServe until this login succeeds."}</p>
+          <p className="mt-2 text-sm">{zoho?.mode === "INTEGRATION" ? `Connected · ${zoho.apiDomain ?? "API domain not recorded"}` : "Not connected. Ready leads stay here until this login succeeds."}</p>
           {live ? <p className="mt-3 text-sm"><a className="font-medium text-[var(--color-accent-ink)]" href={`/api/oauth/zoho/start?workspaceId=${workspace.id}`}>{zoho?.mode === "INTEGRATION" ? "Reconnect Zoho" : "Connect Zoho"}</a></p> : <p className="mt-3 text-sm text-[var(--color-muted)]">Switch to Own accounts before connecting Zoho.</p>}
           <ol className="mt-4 grid list-decimal gap-2 pl-5 text-sm text-[var(--color-muted)]">
             <li>In Zoho API Console, create a Server-based client. Self Client cannot connect this app.</li>
