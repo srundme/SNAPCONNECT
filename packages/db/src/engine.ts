@@ -106,6 +106,7 @@ import {
   phoneProblem,
   dropRepeatedSentences,
   fullWords,
+  casualText,
   areaOnly,
   profileFirstName,
   zohoReady,
@@ -4207,7 +4208,14 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     await db.aiRun.create({ data: { workspaceId: workspace.id, conversationId: conversation.id, model: claude.model, simulated: false, latencyMs: Date.now() - started, valid: false, diagnostic: `${diagnostics.join("; ")}; not sent: ${fresh.owner !== "AI" ? "the team took over" : "a newer message came in, it is answered next"}`.slice(0, 1000) } });
     return "done";
   }
-  const bubbles = answer.bubbles.map((bubble) => bubble.trim()).filter(Boolean).slice(0, 3);
+  // How it looks on the phone, like a person texting: no commas, full stops or hyphens, "you" in full, a capital first.
+  // Only punctuation and case change; every word is Claude's.
+  const keepCase = [workspace.brandName, workspace.agentName ?? "", ...workspace.brandName.split(/\s+/), "BHK", "AM", "PM"];
+  const texted = (bubble: string) => fullWords(casualText(humanizeReply(bubble).replace(/(?<=[a-z])-(?=[a-z])/gi, " "), keepCase));
+  const bubbles = answer.bubbles.map((bubble) => bubble.trim()).filter(Boolean).slice(0, 3).map((bubble) => (agent.casualTexting ? texted(bubble) : bubble));
+  // A person reads the message, then types each bubble; Claude's thinking time counts toward the first one.
+  const typingPause = (text: string) => Math.min(12_000, Math.max(2_000, 1_200 + text.length * 130));
+  const readPause = Math.min(6_000, 800 + readingMs(latest));
   const window = replyEligibility({
     now: runtime.now(),
     lastUserMessageAt: fresh.lastUserMessageAt,
@@ -4245,7 +4253,11 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     }
     if (!voiceSent) {
       for (const [index, bubble] of bubbles.entries()) {
-        if (agent.typingDelay) await runtime.pause?.(typingMs(bubble));
+        if (agent.typingDelay) {
+          const wait = index === 0 ? Math.max(800, readPause + typingPause(bubble) - (Date.now() - started)) : 700 + typingPause(bubble);
+          await signalTyping(db, runtime, conversation, connection).catch(() => undefined);
+          await runtime.pause?.(wait);
+        }
         const now = await db.conversation.findUnique({ where: { id: conversation.id }, select: { revision: true, owner: true } });
         if (!now || now.revision !== expectedRevision || now.owner !== "AI") {
           diagnostics.push(`Stopped before bubble ${index + 1}: ${now?.owner !== "AI" ? "the team took over" : "a newer message came in"}`);

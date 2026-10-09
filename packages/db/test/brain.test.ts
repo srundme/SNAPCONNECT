@@ -98,7 +98,8 @@ describeDb("Claude brain: facts in, words out", () => {
 
     // Claude's words go out exactly as written, as separate bubbles; the prompt and facts go in.
     const first = await say("Hi, I have a 3 bhk villa in Prestige Lakeside", [reply(["Thank you for reaching out.", "When do you get possession, or is the home already ready?"], { details: { bhk: "3", home_type: "villa", property: "Prestige Lakeside" } })]);
-    expect(first).toEqual(["Thank you for reaching out.", "When do you get possession, or is the home already ready?"]);
+    // Claude's words, texted like a person: no commas or full stops, the question mark kept.
+    expect(first).toEqual(["Thank you for reaching out", "When do you get possession or is the home already ready?"]);
     expect(calls[0]!.system).toMatch(/You are Varun, the AI assistant of The KariGhars/);
     expect(calls[0]!.system).toMatch(/# FACTS/);
     const saved = await db.lead.findFirstOrThrow({ where: { contactId: contact.id } });
@@ -107,7 +108,7 @@ describeDb("Claude brain: facts in, words out", () => {
 
     // A fake email is never saved, and Claude is asked again with the problem as a fact.
     const email = await say("abc@abc.com", [reply(["Got it."], { details: { email: "abc@abc.com" } }), reply(["That email does not look right. Could you share the one you use?"])]);
-    expect(email).toEqual(["That email does not look right. Could you share the one you use?"]);
+    expect(email).toEqual(["That email does not look right...could you share the one you use?"]);
     expect(calls[1]!.system).toMatch(/Email "abc@abc\.com" looks wrong/);
     expect(JSON.stringify((await db.lead.findFirstOrThrow({ where: { contactId: contact.id } })).answers)).not.toMatch(/abc@abc/);
 
