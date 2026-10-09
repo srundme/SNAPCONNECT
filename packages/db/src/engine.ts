@@ -143,6 +143,7 @@ import {
 import { decryptSecret, encryptSecret, fixtureLlm, refreshZohoAccess, simulationAdapter, simulationZoho, neutralDirection, speechLocale, speechScript, speechSentences, zohoAdapter, ZohoOAuthError, type DocumentReader, type LlmProvider, type SendResult, type Speaker, type VoiceDirection, type ZohoAdapter } from "@snapsocial/integrations";
 import { randomBytes } from "node:crypto";
 import type { Db } from "./client";
+import { linkByPhoneOrEmail, linkContacts, mergePersonLeads, personContactIds, personLeads, primaryOf, rejectMatch, suggestMatches } from "./people";
 import type { Prisma } from "./generated/prisma/client";
 
 export type SendConnection = {
@@ -460,6 +461,40 @@ async function describePosts(db: Db, workspaceId: string, runtime: Runtime): Pro
  * The same person on another channel: the same contact (their WhatsApp number matched a number
  * they typed on Instagram or Facebook), or another contact whose lead has the same phone number.
  */
+const SPOKEN_BEFORE = /\bhave we spoken before on (Instagram|Facebook|WhatsApp)\b/i;
+
+/**
+ * Runs before a reply: if Varun asked "have we spoken before on Facebook?", a yes joins the two
+ * contacts and a no stops the suggestion. Then everything the person told us on any channel is
+ * shared, so the next question is chosen from one answer sheet.
+ */
+async function joinAcrossChannels(db: Db, conversationId: string, expectedRevision: number): Promise<void> {
+  const conversation = await db.conversation.findUnique({
+    where: { id: conversationId },
+    include: { contact: true, messages: { where: { author: { in: ["PROSPECT", "AI"] } }, orderBy: { createdAt: "desc" }, take: 12 } },
+  });
+  if (!conversation || conversation.revision !== expectedRevision || conversation.owner !== "AI") return;
+  const latestFirst = conversation.messages;
+  const lastAiIndex = latestFirst.findIndex((message) => message.author === "AI");
+  const lastAi = lastAiIndex >= 0 ? latestFirst[lastAiIndex]!.body : "";
+  const fresh = latestFirst.slice(0, lastAiIndex >= 0 ? lastAiIndex : latestFirst.length).filter((message) => message.author === "PROSPECT").reverse().map((message) => message.body).join(" ").trim();
+  if (SPOKEN_BEFORE.test(lastAi) && fresh) {
+    const match = await db.personMatch.findFirst({
+      where: { contactId: conversation.contactId, status: "SUGGESTED", askedAt: { not: null } },
+      orderBy: { askedAt: "desc" },
+    });
+    if (match) {
+      if (/^(?:yes|yeah|ya|yep|yup|haan|ha|aama|ji|correct|right|sure|ok(?:ay)?)\b/i.test(fresh) && !/\b(?:no|not|never)\b/i.test(fresh)) {
+        await linkContacts(db, { workspaceId: conversation.workspaceId, contactId: conversation.contactId, otherId: match.candidateId, evidence: "CUSTOMER_CONFIRMED" });
+      } else if (/^(?:no|nope|nah|nahi|illa|never|not)\b/i.test(fresh)) {
+        await rejectMatch(db, conversation.workspaceId, match.id, "CUSTOMER");
+      }
+    }
+  }
+  const current = await db.contact.findUnique({ where: { id: conversation.contactId }, select: { personId: true } });
+  if (current?.personId) await mergePersonLeads(db, conversation.contactId);
+}
+
 async function otherChannelLine(
   db: Db,
   conversation: { id: string; contactId: string; workspaceId: string; channel: Channel },
@@ -472,11 +507,12 @@ async function otherChannelLine(
         take: 3,
       })
     : [];
+  const person = await personContactIds(db, conversation.contactId);
   const others = await db.conversation.findMany({
     where: {
       id: { not: conversation.id },
       channel: { not: conversation.channel },
-      contactId: { in: [conversation.contactId, ...samePhone.map((lead) => lead.contactId)] },
+      contactId: { in: [...new Set([...person, ...samePhone.map((lead) => lead.contactId)])] },
     },
     include: { messages: { where: { author: { in: ["PROSPECT", "AI"] } }, orderBy: { createdAt: "desc" }, take: 8 } },
     orderBy: { updatedAt: "desc" },
@@ -485,7 +521,7 @@ async function otherChannelLine(
   const chats = others.filter((other) => other.messages.length);
   if (!chats.length) return "";
   return [
-    "This same person also chatted with you on another channel. Treat it as one ongoing conversation: never ask again for anything they already told you there. Do not bring up the other chat on your own; mention it only if they refer to it or it directly answers what they ask now.",
+    "This same person also chatted with you on another channel. Treat it as one ongoing conversation and continue from where it was left: never ask again for anything they already told you there. If this is their first message here, a warm 'welcome back' fits. Do not repeat their earlier details back to them (their number, address, project or budget) unless they bring them up first, and do not quote the other chat.",
     ...chats.map((other) => `Their ${channelLabel(other.channel)} chat, latest last:\n${other.messages.reverse().map((message) => `${message.author === "AI" ? "You" : "They"}: ${message.body.replace(/\s+/g, " ").slice(0, 200)}`).join("\n")}`),
   ].join("\n");
 }
@@ -1458,6 +1494,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     return "requeue";
   }
   try {
+    // The same person on other channels: their yes to "have we spoken before", then one shared answer sheet.
+    await joinAcrossChannels(db, conversationId, expectedRevision);
     const conversation = await db.conversation.findUniqueOrThrow({
       where: { id: conversationId },
       include: { messages: { orderBy: { createdAt: "asc" } }, contact: true },
@@ -2224,9 +2262,16 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     const homeOpen = blockedBhk !== null && !questions.some((question) => /\bbhk\b/i.test(question.label) && /\b[1-9]\s*-?\s*(?:bhk|rk)\b/i.test(recordedAnswers[question.id] ?? "") && !impossibleBhk(recordedAnswers[question.id] ?? ""));
     const bhkAgain = homeOpen ? questions.find((question) => /\bbhk\b/i.test(question.label)) : undefined;
+    // On Instagram and Facebook the number is what joins channels later, so once the name and place are in, it comes next.
+    const phoneAskable = questions.find((question) => question.kind === "phone");
+    const placeAsked = questions.find((question) => /\b(where is the home|which area|location)\b/i.test(question.label));
+    const phoneFirst = conversation.channel !== "WHATSAPP" && phoneAskable && !recordedPhone && recordedName
+      && (!placeAsked || recordedAnswers[placeAsked.id]) && missingNow.includes(phoneAskable) && !justAsked(phoneAskable) && !ignored(phoneAskable)
+      ? phoneAskable
+      : undefined;
     const nextDetail = holdScript || offerConsultation || needsTime || chasingCall || onlyHello
       ? undefined
-      : bhkAgain ?? modelPick ?? missingNow.find((question) => !skipDetail(question) && !ignored(question) && !justAsked(question)) ?? (optionalNext && !skipDetail(optionalNext) ? optionalNext : undefined) ?? missingNow.find((question) => !skipDetail(question) && !justAsked(question));
+      : bhkAgain ?? phoneFirst ?? modelPick ?? missingNow.find((question) => !skipDetail(question) && !ignored(question) && !justAsked(question)) ?? (optionalNext && !skipDetail(optionalNext) ? optionalNext : undefined) ?? missingNow.find((question) => !skipDetail(question) && !justAsked(question));
     const phoneQuestion = questions.find((question) => question.kind === "phone");
     const wrongNumber = phoneQuestion && !complete?.cold
       ? wrongInEdit ?? wrongPhoneIn(latestProspect, phoneRegion, nextDetail?.kind === "phone" ? 6 : 8)
@@ -2505,6 +2550,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     await applyUpdates(db, lead.id, conversation.contactId, readsName || formRead ? validated.updates.filter((update) => update.field !== "chosenName") : validated.updates);
     if (!formRead) await applyCustomAnswers(db, lead.id, validated.customAnswers);
+    // A phone number or email that another channel already gave joins the two; then every channel shares this turn's answers.
+    await linkByPhoneOrEmail(db, workspace.id, conversation.contactId).catch((error: unknown) => console.warn(`Cross-channel link failed: ${error instanceof Error ? error.message : String(error)}`));
+    await mergePersonLeads(db, conversation.contactId);
     const updatedLead = await db.lead.findUniqueOrThrow({ where: { id: lead.id }, include: { contact: true } });
     if (questions.length && agent.hotBudgetLakhs) {
       const rated = rateLead({ questions, answers: answerRecord(updatedLead.answers), hotBudgetLakhs: agent.hotBudgetLakhs });
@@ -2736,11 +2784,24 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : null;
     const personal = profileName && runtime.llm.addressFor ? await runtime.llm.addressFor(profileName).then((word) => word !== "bro").catch(() => false) : false;
     const nameAsk = profileName && personal ? `Shall I note your name as ${profileName}?` : null;
-    // A check against the project lookup comes first, then the name, then the plain home type.
-    const confirmAsk = projectAsk ?? nameAsk ?? (needsType ? TYPE_ASK : null);
+    // Possibly the same person on another channel (name, project, size), with no phone or email to prove it:
+    // staff see a suggestion, and on a strong one Varun asks once, without revealing anything from the other chat.
+    const askedSpokenBefore = spoken.some((message) => message.author === "AI" && SPOKEN_BEFORE.test(message.body));
+    const suggestion = !conversation.contact.personId && Number(payload.followUp ?? 0) === 0
+      ? await suggestMatches(db, { workspaceId: workspace.id, contactId: conversation.contactId, channel: conversation.channel, now: runtime.now() }).catch(() => null)
+      : null;
+    const suggestedChannel = suggestion && suggestion.score >= 4 && !askedSpokenBefore
+      ? (await db.contact.findUnique({ where: { id: suggestion.id }, select: { channel: true } }))?.channel ?? null
+      : null;
+    const matchAsk = suggestedChannel ? `Have we spoken before on ${channelLabel(suggestedChannel)} about your home?` : null;
+    // A check against the project lookup comes first, then "spoken before", then the name, then the plain home type.
+    const confirmAsk = projectAsk ?? matchAsk ?? nameAsk ?? (needsType ? TYPE_ASK : null);
     const held = confirmAsk && heldBase && Number(payload.followUp ?? 0) === 0 && !holdScript && !offerConsultation && !needsTime && !chasingCall
       ? [heldBase.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n"), confirmAsk].filter(Boolean).join("\n")
       : heldBase;
+    if (matchAsk && suggestion && held?.includes(matchAsk)) {
+      await db.personMatch.updateMany({ where: { contactId: conversation.contactId, candidateId: suggestion.id }, data: { askedAt: runtime.now() } });
+    }
     const savedHome = questions
       .filter((question) => /\bbhk\b/i.test(question.label))
       .map((question) => recordedAnswers[question.id] ?? "")
@@ -3525,8 +3586,13 @@ async function refreshMemory(
 }
 
 async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done"> {
-  const lead = await db.lead.findUniqueOrThrow({ where: { id: leadId }, include: { contact: true, crm: true, workspace: true } });
+  const asked = await db.lead.findUniqueOrThrow({ where: { id: leadId }, select: { contactId: true } });
+  // One person on several channels is one Zoho lead: every channel updates the primary lead's record.
+  const group = await personLeads(db, asked.contactId);
+  const primaryId = primaryOf(group)?.id ?? leadId;
+  const lead = await db.lead.findUniqueOrThrow({ where: { id: primaryId }, include: { contact: true, crm: true, workspace: true } });
   if (lead.contact.optedOutAt || lead.archivedAt) return "done";
+  const siblings = group.filter((item) => item.id !== lead.id);
   const rule = leadRule(lead.workspace);
   const questions = parseLeadQuestions(lead.workspace.leadQuestions);
   if (questions.length) {
@@ -3607,6 +3673,11 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
             : `Name check: "${concern.name}" differs from the ${channelLabel(lead.channel)} profile (${concern.profile}). Self-reported, please confirm on the call.`]
         : []),
     ];
+    const channels = [...new Set([lead.channel, ...siblings.map((item) => item.channel)])].map(channelLabel);
+    if (channels.length > 1) lines.push(`Channels: ${channels.join(", ")} (same person)`);
+    for (const earlier of siblings.filter((item) => item.crm?.crmId && item.crm.crmId !== lead.crm?.crmId)) {
+      lines.push(`Also in Zoho as ${earlier.crm!.crmId} from ${channelLabel(earlier.channel)}, created before the channels were joined. Please merge it into this lead.`);
+    }
     if (lines.length) record.Description = [record.Description, ...lines].filter(Boolean).join("\n");
     if (mapping.externalKeyField) record[mapping.externalKeyField] = lead.id;
   }
@@ -3635,6 +3706,16 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
       create: { leadId: lead.id, crmId: result.crmId, syncedRevision: lead.revision, simulated: result.simulated },
     });
     await db.lead.update({ where: { id: lead.id }, data: { crmState: "SYNCED" } });
+    // The person's other channels point at the same Zoho record from now on.
+    for (const sibling of siblings) {
+      if (sibling.crm?.crmId && sibling.crm.crmId !== result.crmId) continue;
+      await db.crmMapping.upsert({
+        where: { leadId: sibling.id },
+        update: { crmId: result.crmId, syncedRevision: sibling.revision, simulated: result.simulated },
+        create: { leadId: sibling.id, crmId: result.crmId, syncedRevision: sibling.revision, simulated: result.simulated },
+      });
+      await db.lead.update({ where: { id: sibling.id }, data: { crmState: "SYNCED" } });
+    }
   } else {
     await db.lead.update({ where: { id: lead.id }, data: { crmState: result.status === "RETRYABLE" ? "RETRYING" : "NEEDS_ATTENTION" } });
   }

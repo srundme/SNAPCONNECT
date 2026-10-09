@@ -361,6 +361,8 @@ model Contact {
   memoryUpdatedAt DateTime?
   optedOutAt      DateTime?
   lastOutboundAt  DateTime?
+  /// Contacts on different channels that are the same person share a personId.
+  personId        String?
   createdAt       DateTime          @default(now())
   connection      ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   identities      ContactIdentity[]
@@ -368,6 +370,25 @@ model Contact {
   leads           Lead[]
 
   @@index([workspaceId, channel])
+  @@index([personId])
+}
+
+/// A possible same person across channels, found from name, project and size. Staff or the customer confirm it.
+model PersonMatch {
+  id          String    @id @default(uuid())
+  workspaceId String
+  contactId   String
+  candidateId String
+  score       Int
+  reasons     String
+  status      String    @default("SUGGESTED")
+  askedAt     DateTime?
+  decidedBy   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([contactId, candidateId])
+  @@index([workspaceId, status])
 }
 
 model ContactIdentity {

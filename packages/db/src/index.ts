@@ -3,3 +3,4 @@ export { seedDemo, DEMO_SLUG, OWN_SLUG, IG_ACCOUNT, FB_PAGE, SHARED_COMMENT } fr
 export { ingestEvents, processAvailableJobs, recoverStaleJobs, simulationRuntime, takeOver, handBack, setConnectionPaused, deleteContactData, queuePostDescriptions } from "./engine";
 export type { Runtime, SendInput, SendConnection } from "./engine";
 export { connectionSender } from "./sender";
+export * from "./people";
