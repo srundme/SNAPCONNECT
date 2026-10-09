@@ -459,6 +459,9 @@ export function absorbTranscript(input: {
     }
     const phone = parsePhone(text, input.phoneRegion ?? "IN");
     if (phone.kind === "valid") phoneE164 = phone.e164;
+    // "My name is Gopinath" replaces any name we had, including one taken from their profile.
+    const stated = input.nameReadElsewhere ? null : cleanName(statedName(text), text);
+    if (stated) name = stated;
     for (const question of input.questions) {
       const askedThis = lastAi.includes(scriptQuestion(question)) || askedAbout(question, lastAi);
       if (question.kind === "name" && !name && !input.nameReadElsewhere) name = cleanName(nameFrom(text, askedThis && plain), text);
@@ -715,6 +718,15 @@ export function mentionsOwnName(text: string): boolean {
 export function nameInReply(text: string, askedForName: boolean): string | null {
   const plain = !YES_ANSWER.test(text) && !NO_ANSWER.test(text) && !/\?$/.test(text);
   return cleanName(nameFrom(text, askedForName && plain), text);
+}
+
+/** Only a clear "my name is X" or "call me X", never a bare word or "I am …". */
+function statedName(text: string): string | null {
+  const word = text.match(/\b(?:my|en|enoda|ennoda|mera)\s+(?:name|naam|peru)\s+(?:is\s+)?([A-Za-z]{2,30})\b/i)?.[1]
+    ?? text.match(/\bcall me\s+([A-Za-z]{2,30})\b/i)?.[1]
+    ?? text.match(/\b([A-Za-z]{2,30})\s+hai mera naam\b/i)?.[1];
+  if (!word || NOT_A_NAME.test(word) || NOT_A_NAME.test(squeeze(word))) return null;
+  return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
 function nameFrom(text: string, bareAllowed: boolean): string | null {

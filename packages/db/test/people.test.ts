@@ -158,6 +158,26 @@ describeDb("one person across channels", () => {
     expect(text).toMatch(/free consultation|experience centre/i);
   });
 
+  it("uses the Instagram first name without asking, and a typed name replaces it", async () => {
+    const { workspace, ig } = await setup();
+    const sender = `igsid-name-${Date.now()}`;
+    const contact = await db.contact.create({ data: { workspaceId: workspace.id, connectionId: ig.id, channel: "INSTAGRAM", username: "gopi.talks" } });
+    await db.contactIdentity.create({ data: { workspaceId: workspace.id, connectionId: ig.id, contactId: contact.id, channel: "INSTAGRAM", identityType: "MESSAGING_PARTICIPANT", externalId: sender, evidence: "INBOUND_MESSAGE" } });
+    await db.lead.create({ data: { workspaceId: workspace.id, contactId: contact.id, channel: "INSTAGRAM", connectionId: ig.id, activeContactKey: contact.id, sourceType: "DIRECT_MESSAGE", testRecord: true } });
+    const send = async (text: string, offsetMs: number) => {
+      const at = new Date(Date.now() - 120_000 + offsetMs);
+      const events = normalizeMetaPayload("INSTAGRAM", { object: "instagram", entry: [{ id: ig.externalAccountId, messaging: [{ sender: { id: sender }, recipient: { id: ig.externalAccountId }, timestamp: at.getTime(), message: { mid: `mid-${sender}-${offsetMs}`, text } }] }] }, at);
+      await ingestEvents(db, { channel: "INSTAGRAM", mode: "SIMULATION", events, receivedAt: at });
+      await drain();
+    };
+    await send("Hi, I need interiors for my home", 0);
+    expect((await db.contact.findUniqueOrThrow({ where: { id: contact.id } })).chosenName).toBe("Gopi");
+    const replies = await db.message.findMany({ where: { conversation: { contactId: contact.id }, author: "AI" } });
+    expect(replies.map((reply) => reply.body).join(" ")).not.toMatch(/your name|am I chatting with|shall I note/i);
+    await send("my name is Gopinath", 30_000);
+    expect((await db.contact.findUniqueOrThrow({ where: { id: contact.id } })).chosenName).toBe("Gopinath");
+  });
+
   it("staff can separate a contact joined by mistake", async () => {
     const { workspace, ig, wa, person } = await setup();
     const one = await person(ig.id, "INSTAGRAM", { username: "a.one" }, { phoneE164: "+919845022222" });

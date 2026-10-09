@@ -472,6 +472,23 @@ async function describePosts(db: Db, workspaceId: string, runtime: Runtime): Pro
  * The same person on another channel: the same contact (their WhatsApp number matched a number
  * they typed on Instagram or Facebook), or another contact whose lead has the same phone number.
  */
+/**
+ * On Instagram and Facebook a person's profile usually carries their name. Like a salesperson would, Varun
+ * just uses the first name ("Hi Gopi") instead of asking. A name they type later replaces it.
+ */
+async function adoptProfileName(db: Db, runtime: Runtime, conversationId: string): Promise<void> {
+  const conversation = await db.conversation.findUnique({ where: { id: conversationId }, include: { contact: true } });
+  if (!conversation || conversation.channel === "WHATSAPP" || conversation.contact.chosenName) return;
+  const first = profileFirstName(conversation.contact.displayName, conversation.contact.username);
+  if (!first) return;
+  const personal = runtime.llm.addressFor ? await runtime.llm.addressFor(first).then((word) => word !== "bro").catch(() => false) : true;
+  if (!personal) return;
+  await db.contact.update({ where: { id: conversation.contactId }, data: { chosenName: first } });
+  await db.message.create({
+    data: { workspaceId: conversation.workspaceId, connectionId: conversation.connectionId, conversationId, author: "SYSTEM", body: `Name from profile: ${first} | Taken from their ${channelLabel(conversation.channel)} profile. A name they type replaces it.`, createdAt: runtime.now() },
+  });
+}
+
 const SPOKEN_BEFORE = /\bhave we spoken before on (Instagram|Facebook|WhatsApp)\b/i;
 
 /**
@@ -1508,6 +1525,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
   try {
     // The same person on other channels: their yes to "have we spoken before", then one shared answer sheet.
     await joinAcrossChannels(db, conversationId, expectedRevision);
+    await adoptProfileName(db, runtime, conversationId);
     const conversation = await db.conversation.findUniqueOrThrow({
       where: { id: conversationId },
       include: { messages: { orderBy: { createdAt: "asc" } }, contact: true },
@@ -2937,15 +2955,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const homeSaved = questions.filter((question) => /\bbhk\b/i.test(question.label)).map((question) => recordedAnswers[question.id] ?? "").join(" ");
     const needsType = /\d\s*-?\s*bhk\b/i.test(homeSaved) && /\bhouse\b/i.test(homeSaved) && !homeTypeName(homeSaved)
       && !spoken.some((message) => message.author === "AI" && /\bindependent house\b/i.test(message.body));
-    // Instagram or Facebook: when the profile carries a real name, confirm it instead of asking for it.
-    const profileName = conversation.channel !== "WHATSAPP" && !recordedName && nextDetail?.kind === "name"
-      && !spoken.some((message) => message.author === "AI" && /\b(?:shall I note your name as|am I chatting with)\b/i.test(message.body))
-      ? profilePersonName(conversation.contact.displayName, conversation.contact.username)
-      : null;
-    const personal = profileName && runtime.llm.addressFor ? await runtime.llm.addressFor(profileName).then((word) => word !== "bro").catch(() => false) : false;
-    // Only the first name, asked the way a person would: "Am I chatting with Gopi?"
-    const firstName = profileName ? profileFirstName(conversation.contact.displayName, conversation.contact.username) : null;
-    const nameAsk = firstName && personal ? `Am I chatting with ${firstName}?` : null;
+    // The profile name is used directly (adoptProfileName), so there is no name confirmation question.
+    const nameAsk: string | null = null;
     // Possibly the same person on another channel (name, project, size), with no phone or email to prove it:
     // staff see a suggestion, and on a strong one Varun asks once, without revealing anything from the other chat.
     const askedSpokenBefore = spoken.some((message) => message.author === "AI" && SPOKEN_BEFORE.test(message.body));
@@ -3297,15 +3308,16 @@ async function writeOpening(
   if (!runtime.llm.complete) return null;
   const agent = parseAgentSettings(workspace.agentSettings);
   const questions = parseLeadQuestions(workspace.leadQuestions);
-  const first = questions.find((question) => question.required !== false && question.kind !== "phone") ?? questions[0];
+  // A real first name on their profile is simply used, so the opener asks the next detail instead of the name.
+  const profileName = profileFirstName(null, input.name);
+  const usableName = profileName && runtime.llm.addressFor
+    ? await runtime.llm.addressFor(profileName).then((word) => word !== "bro").catch(() => false)
+    : false;
+  const first = questions.find((question) => question.required !== false && question.kind !== "phone" && !(usableName && question.kind === "name")) ?? questions[0];
   const sample = chatLanguageSample([input.comment]);
   const guessedAddress = agent.addressSirMam && input.name && runtime.llm.addressFor ? await runtime.llm.addressFor(input.name).catch(() => null) : null;
   const address = guessedAddress === "bro" ? null : guessedAddress;
-  // Their profile carries a real name: the opener confirms it instead of asking for it.
-  const profile = first?.kind === "name" ? profileFirstName(null, input.name) : null;
-  const confirmName = profile && runtime.llm.addressFor
-    ? await runtime.llm.addressFor(profile).then((word) => word !== "bro").catch(() => false)
-    : false;
+  const profile = usableName ? profileName : null;
   try {
     const raw = await runtime.llm.complete({
       system: [
@@ -3318,7 +3330,7 @@ async function writeOpening(
           ? `They commented in ${languageName(sample)}, like "${sample}". Write the whole message, the question too, in exactly that language and style.`
           : "Write the whole message, the question too, in the language and style of their comment: plain English for an English comment; Tamil, Hindi or another Indian language typed in English letters (Tanglish, Hinglish) when they wrote that way.",
         address ? `Address them only as ${address}.` : "",
-        "You do not know their real name yet. Never use their profile name or username, except in the one name question you are told to ask.",
+        profile ? `Their name is ${profile}. Greet them by it once, naturally, like "Hi ${profile}".` : "You do not know their real name yet. Never use their profile name or username.",
         "Someone just commented on a post. You are sending them their first private message about it.",
         "This is only an enquiry: do not sound like they have already chosen you, and do not oversell.",
       ].filter(Boolean).join("\n\n"),
@@ -3332,9 +3344,7 @@ async function writeOpening(
           `1. Say hi and that you are ${workspace.agentName ?? "the"} AI assistant for ${workspace.brandName}, in a few words.`,
           "2. If the comment asks something (in any language), answer exactly that in one short sentence using only the knowledge base, never quoting a price (follow the pricing rule). If it only says hi, praises the post or says they are interested, thank them for reaching out in a few plain words. This sentence asks nothing.",
           `Only say what their comment actually says. Never claim they praised, appreciated or asked about something they did not write. If they name something ${workspace.brandName} does not offer (like an integration, an app or a product), do not repeat it back as if it were our work; just thank them and talk about home interiors.`,
-          confirmName && profile
-            ? `3. End with exactly this question: "Am I chatting with ${profile}?"`
-            : first
+          first
             ? `3. End with one natural question, in the same language as the rest, asking for: ${first.label} That is only the topic: do not copy its words.`
             : "3. End by asking how you can help, in the same language as the rest.",
           "If the comment is in Tanglish (Tamil in English letters, like \"evlo aagum\") or Hinglish (like \"kitna hoga\"), every sentence must be in that same style, not English.",
