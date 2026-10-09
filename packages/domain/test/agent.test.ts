@@ -231,16 +231,15 @@ describe("common sense checks", () => {
     expect(rate({ budget: "Not sure yet", home: "4 BHK Apartment", scope: "Poora Ghar ku karni hai" })).toBe("HOT");
     expect(rate({ home: "Villa", scope: "full home" })).toBe("HOT");
     expect(rate({ home: "3 BHK Apartment", scope: "Pura ghar" })).toBe("UNRATED");
-    // Size is never junk (9 Oct 2026): a kitchen only, a 1 BHK, a few rooms are for the team to judge.
-    expect(rate({ home: "3 BHK Apartment", scope: "sirf kitchen" })).toBe("UNRATED");
+    // Any size is welcome, but only the full home (9 Oct 2026): a kitchen only or a few rooms is not a lead.
+    expect(rate({ home: "3 BHK Apartment", scope: "sirf kitchen" })).toBe("JUNK");
     expect(rate({ home: "2 BHK Apartment", scope: "Full home" })).toBe("UNRATED");
     expect(rate({ home: "1 BHK Apartment", scope: "Full home" })).toBe("UNRATED");
-    expect(rate({ home: "3 BHK Apartment", scope: "only kitchen and wardrobes" })).toBe("UNRATED");
+    expect(rate({ home: "3 BHK Apartment", scope: "only kitchen and wardrobes" })).toBe("JUNK");
     expect(rate({ home: "3 BHK Apartment" })).toBe("UNRATED");
     expect(rate({ home: "3 BHK Independent house" })).toBe("HOT");
     expect(rate({ home: "4 BHK Villa" })).toBe("HOT");
-    // Ready to spend 50L on a few rooms is a good lead: size never makes it junk.
-    expect(rate({ budget: "50L+", scope: "only the kitchen and 2 bedrooms" })).toBe("HOT");
+    expect(rate({ budget: "50L+", scope: "only the kitchen and 2 bedrooms" })).toBe("JUNK");
     expect(rate({ budget: "50L+", scope: "full home sir" })).toBe("HOT");
     expect(rateLead({ questions, answers: { budget: "50L" }, hotBudgetLakhs: 0 }).rating).toBe("UNRATED");
     expect(homeTypeName("He flat hai")).toBe("Apartment");

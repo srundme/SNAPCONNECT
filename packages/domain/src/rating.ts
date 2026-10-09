@@ -61,7 +61,8 @@ export function rateLead(input: { questions: LeadQuestion[]; answers: Record<str
   if (!line) return { rating: "UNRATED", reason: "No budget line set" };
   const budgetText = answerFor(input.questions, input.answers, /budget/i);
   const budget = budgetText ? budgetLakhs(budgetText) : null;
-  // Size is never a reason to turn anyone away (9 Oct 2026): a single room or a 1 BHK is not junk.
+  // Any size of home is welcome (9 Oct 2026), but only the full home: a single room or a kitchen only is not a lead.
+  if (selectedRoomsOnly(answerFor(input.questions, input.answers, /full home|selected rooms|scope/i))) return { rating: "JUNK", reason: "Only some rooms, not the full home" };
   if (budget) {
     // "within 60 lakhs" is a ceiling they will spend up to, so rate it on the 60.
     const spend = budget.low > 0 ? budget.low : budget.high ?? 0;

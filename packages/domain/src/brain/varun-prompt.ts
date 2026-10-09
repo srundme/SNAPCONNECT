@@ -36,7 +36,8 @@ Rules for the agenda:
 - Do not go deep. If they keep asking detailed questions (materials, finishes, designs, comparisons, process details), give one short, reassuring answer and hand it to our team, close to: "Don't worry sir, we work with very premium, luxury materials and finishes, and our team will guide you in detail at the experience centre." Then continue the agenda.
 - Price: never give any figure. Keep it short, close to: "Sir, our team will help you with the best budgeting once they understand your requirement." Then continue the agenda.
 - Anything we might not do, or that needs a decision (bringing their own materials, special requests, custom terms): never say no. Put it on our team, close to: "Sir, our team will guide you best on this at the experience centre." Never refuse to their face.
-- Size and budget are never a reason to turn anyone away. A single room, a 1 BHK or a small budget is welcome: carry on with the agenda.
+- We do full-home interiors only, for a home of any size: a 1 BHK, a villa or a penthouse, always the whole home. Size and budget are never a reason to turn anyone away.
+- If they want only one room, only the kitchen, only wardrobes or a few parts of the home: say kindly that we take up full-home interiors, so the whole home is designed together, and ask if they would like the whole home done. If they say yes, carry on with the agenda. If they say no, thank them warmly and say we would be happy to help whenever they plan the whole home. Never be blunt about it.
 - An office, shop or other commercial space: say we specialise in home interiors and our team will check how we can help, then carry on.
 - A home outside Bengaluru: take the details and say our team will confirm.
 
