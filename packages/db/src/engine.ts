@@ -1580,8 +1580,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     }
     const spoken = conversation.messages.filter((message) => (message.author === "PROSPECT" || message.author === "AI") && message.body.trim());
     // Claude writes the reply from the system prompt and the facts code gathers. No reply text in code, and every
-    // customer message gets an answer (even "ok thank you"), so Varun always has the last word. Spam stops still apply.
-    if (runtime.claude && parseAgentSettings(workspace.agentSettings).brain !== "off" && !(await chatIsFlooding(db, workspace.id, conversation, spoken, runtime))) {
+    // customer message gets an answer (even "ok thank you"), so Varun always has the last word.
+    if (runtime.claude && parseAgentSettings(workspace.agentSettings).brain !== "off") {
       return await brainReply(db, runtime, { payload, expectedRevision, conversation, workspace, connection, lead });
     }
     const lastSpoken = spoken[spoken.length - 1];
@@ -1599,39 +1599,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       });
       return "done";
     }
-    // Spam: a burst of messages pauses this chat for 30 minutes; the same text from many senders gets no reply.
-    const nowMs = runtime.now().getTime();
-    // Typed messages only: a customer sharing 15 photos of their home is not spam.
-    const burst = spoken.filter((message) => message.author === "PROSPECT" && nowMs - message.createdAt.getTime() < 10 * 60_000 && !/^\(Sent (?:a |an )?(?:photo|voice|document|attachment|video|sticker)/i.test(message.body)).length;
-    const floodNote = conversation.messages.filter((message) => message.author === "SYSTEM" && message.body.startsWith("Situation: flood")).at(-1);
-    const latestText = [...spoken].reverse().find((message) => message.author === "PROSPECT")?.body.trim() ?? "";
-    // Only promotional text counts: ad leads all send the same prefilled "Hi, I'm interested" and must get replies.
-    const promotional = /https?:\/\/|www\.|\b(offer|discount|earn|click|join|subscribe|loan|crypto|bitcoin|investment|followers|promotion|deal|lottery|winner)\b/i.test(latestText);
-    const sameElsewhere = promotional && latestText.length >= 20 && !/^\(/.test(latestText)
-      ? await db.message.groupBy({
-        by: ["conversationId"],
-        where: { workspaceId: workspace.id, author: "PROSPECT", body: latestText, createdAt: { gte: new Date(nowMs - 2 * 3_600_000) } },
-      }).then((rows) => rows.length).catch(() => 0)
-      : 0;
-    // A customer answering Varun's questions quickly is a conversation, not a flood: Varun replied to most of it.
-    const repliedInBurst = spoken.filter((message) => message.author === "AI" && nowMs - message.createdAt.getTime() < 10 * 60_000).length;
-    const spamStop = burst >= 15 && repliedInBurst < burst / 2
-      ? "flood"
-      : floodNote && nowMs - floodNote.createdAt.getTime() < 30 * 60_000
-        ? "flood-wait"
-        : sameElsewhere >= 5 ? "broadcast" : null;
-    if (spamStop) {
-      if (spamStop !== "flood-wait") {
-        await db.message.create({
-          data: { workspaceId: workspace.id, connectionId: conversation.connectionId, conversationId, author: "SYSTEM", body: spamStop === "flood" ? `Situation: flood | ${burst} messages in 10 minutes. Replies paused for 30 minutes.` : `Situation: broadcast | The same message came from ${sameElsewhere} chats in 2 hours.`, createdAt: runtime.now() },
-        });
-        await alertTeam("flag", spamStop === "flood" ? `⚠️ ${conversation.contact.displayName ?? conversation.contact.username ?? "A chat"} sent ${burst} messages in 10 minutes. Replies paused for 30 minutes.` : `⚠️ The same message came from ${sameElsewhere} chats. Treated as spam, no reply.`);
-      }
-      await db.aiRun.create({
-        data: { workspaceId: workspace.id, conversationId, model: runtime.llm.model, simulated: runtime.llm.mode === "fixture", latencyMs: 0, valid: true, diagnostic: `No reply: ${spamStop === "broadcast" ? "same message from many senders" : "message flood"}.` },
-      });
-      return "done";
-    }
+    // No spam protection: every message gets a reply (owner's decision, 9 Oct 2026).
     const recent = spoken.slice(-MEMORY_WINDOW);
     const prospectTimes = spoken.filter((message) => message.author === "PROSPECT").map((message) => message.createdAt.getTime());
     const gapHours = prospectTimes.length >= 2 ? (prospectTimes[prospectTimes.length - 1]! - prospectTimes[prospectTimes.length - 2]!) / 3_600_000 : 0;
@@ -4284,22 +4252,6 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   }
   await refreshMemory(db, runtime, conversation.contact, spoken);
   return "done";
-}
-
-/** The spam stop's test (a burst Varun is not answering, a recent flood pause, one promo text from many chats), read only. */
-async function chatIsFlooding(db: Db, workspaceId: string, conversation: { messages: Array<{ author: string; body: string; createdAt: Date }> }, spoken: Array<{ author: string; body: string; createdAt: Date }>, runtime: Runtime): Promise<boolean> {
-  const nowMs = runtime.now().getTime();
-  const burst = spoken.filter((message) => message.author === "PROSPECT" && nowMs - message.createdAt.getTime() < 10 * 60_000 && !/^\(Sent (?:a |an )?(?:photo|voice|document|attachment|video|sticker)/i.test(message.body)).length;
-  const replied = spoken.filter((message) => message.author === "AI" && nowMs - message.createdAt.getTime() < 10 * 60_000).length;
-  if (burst >= 15 && replied < burst / 2) return true;
-  const floodNote = conversation.messages.filter((message) => message.author === "SYSTEM" && message.body.startsWith("Situation: flood")).at(-1);
-  if (floodNote && nowMs - floodNote.createdAt.getTime() < 30 * 60_000) return true;
-  const latest = [...spoken].reverse().find((message) => message.author === "PROSPECT")?.body.trim() ?? "";
-  if (latest.length >= 20 && /https?:\/\/|www\.|\b(offer|discount|earn|click|join|subscribe|loan|crypto|bitcoin|investment|followers|promotion|deal|lottery|winner)\b/i.test(latest)) {
-    const chats = await db.message.groupBy({ by: ["conversationId"], where: { workspaceId, author: "PROSPECT", body: latest, createdAt: { gte: new Date(nowMs - 2 * 3_600_000) } } }).then((rows) => rows.length).catch(() => 0);
-    if (chats >= 5) return true;
-  }
-  return false;
 }
 
 /** The firm's never-rules, checked on Claude's words: a price figure, a work duration, or a booking claim. */

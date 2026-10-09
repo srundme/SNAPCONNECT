@@ -39,31 +39,4 @@ describeDb("owner summary and spam", () => {
     expect(ours[0]!.text).toMatch(/2 chats · 2 new leads · 1 HOT/);
   });
 
-  it("pauses a chat that floods messages", async () => {
-    const seeded = await seedDemo(db);
-    await db.channelConnection.upsert({
-      where: { channel_mode_externalAccountId: { channel: "WHATSAPP", mode: "SIMULATION", externalAccountId: "pnid-flood" } },
-      update: { automationPaused: false, revokedAt: null },
-      create: { workspaceId: seeded.workspaceId, channel: "WHATSAPP", mode: "SIMULATION", externalAccountId: "pnid-flood", displayName: "WA flood", automationPaused: false },
-    });
-    const waId = `9198480${String(Date.now()).slice(-5)}`;
-    const base = Date.now() - 120_000;
-    for (let index = 0; index < 16; index += 1) {
-      const at = new Date(base + index * 1000);
-      const events = normalizeMetaPayload("WHATSAPP", {
-        object: "whatsapp_business_account",
-        entry: [{ id: "waba-flood", changes: [{ field: "messages", value: { messaging_product: "whatsapp", metadata: { display_phone_number: "919000000001", phone_number_id: "pnid-flood" }, contacts: [{ profile: { name: "Flood" }, wa_id: waId }], messages: [{ from: waId, id: `wamid.flood.${waId}.${index}`, timestamp: String(Math.floor(at.getTime() / 1000)), type: "text", text: { body: `message number ${index}` } }] } }] }],
-      }, at);
-      await ingestEvents(db, { channel: "WHATSAPP", mode: "SIMULATION", events, receivedAt: at });
-    }
-    const runtime = simulationRuntime();
-    for (let index = 0; index < 20; index += 1) {
-      if (await db.outboxJob.count({ where: { status: "PENDING", availableAt: { lte: new Date() } } }) === 0) break;
-      await processAvailableJobs(db, runtime, 40);
-    }
-    const identity = await db.contactIdentity.findFirstOrThrow({ where: { channel: "WHATSAPP", externalId: waId } });
-    const conversation = await db.conversation.findFirstOrThrow({ where: { contactId: identity.contactId } });
-    const notes = await db.message.findMany({ where: { conversationId: conversation.id, author: "SYSTEM", body: { startsWith: "Situation: flood" } } });
-    expect(notes.length).toBe(1);
-  });
 });
