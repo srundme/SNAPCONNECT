@@ -1852,7 +1852,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       if (bhkQuestion && bareBhk && /\bbhk\b|\bbed ?rooms?\b/i.test(lastAsk) && (!/\d\s*-?\s*(bhk|rk)\b/i.test(absorbed.answers[bhkQuestion.id] ?? "") || /\bhow many BHK\b/i.test(lastAsk))) {
         const words = ["one", "two", "three", "four", "five", "six", "seven", "eight"];
         const count = /\d/.test(bareBhk) ? bareBhk : String(words.indexOf(bareBhk) + 1);
-        const kind = homeTypeName(prospectBodies.join("\n")) ?? mapType;
+        // Only the type they said: a listing calling the project "villas" is not their word.
+        const kind = homeTypeName(prospectBodies.join("\n"));
         absorbed.answers[bhkQuestion.id] = `${count} BHK${kind ? ` ${kind}` : ""}`;
       }
       const plansSeen = [...prospectBodies].reverse().map((body) => body.match(PHOTO_SEEN)?.[1] ?? body.match(DOCUMENT_SEEN)?.[2] ?? "")
@@ -1882,18 +1883,17 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       }
       if (bhkQuestion && !/\d\s*-?\s*(bhk|rk)\b|\bstudio\b/i.test(absorbed.answers[bhkQuestion.id] ?? "")) {
         homeKind = prospectBodies.join("\n").match(/\b(apartment|appartment|flat|villa|bungalow|independent house|individual house|row house|duplex|penthouse)\b/i)?.[1]?.toLowerCase() ?? null;
-        const saidKind = Boolean(homeKind);
-        if (!homeKind && found?.kind) homeKind = found.kind;
+        if (!homeKind && found?.kind) {
+          memoryLines.push(`${found.name} is listed as ${found.kind === "apartment" ? "an apartment" : "a villa"} project, but they have not said what theirs is. When the BHK is your next detail, ask only how many BHK${advertised ? `, like "those are mostly ${advertised}, how many BHK is yours?"` : ""}. Never call it a villa or a flat yet.${advertised ? ` Never record ${advertised} as their answer.` : ""} Never name Google, Maps, Brave or any website.`);
+        }
         if (homeKind) {
           delete absorbed.answers[bhkQuestion.id];
           const type = homeTypeName(homeKind);
-          memoryLines.push(saidKind || !found?.kind
-            ? `They already said it is ${/^[aeiou]/.test(homeKind) ? "an" : "a"} ${homeKind}${type && type.toLowerCase() !== homeKind ? ` (${type.toLowerCase()})` : ""}. Never ask the home type again; when the BHK is your next detail, ask only how many BHK.`
-            : `A lookup lists ${found.name} as ${found.kind === "apartment" ? "an apartment" : "a villa"} project, so take it as ${found.kind === "apartment" ? "an apartment" : "a villa"}. Never ask apartment, villa or independent house; when the BHK is your next detail, ask only how many BHK in words that let them correct you, like "${advertised ? `those are mostly ${advertised}, how many BHK is urs?` : `how many BHK is ur ${found.kind === "apartment" ? "flat" : "villa"} in ${found.name}?`}".${advertised ? ` Never record ${advertised} as their answer.` : ""} Never name Google, Maps, Brave or any website.`);
+          memoryLines.push(`They already said it is ${/^[aeiou]/.test(homeKind) ? "an" : "a"} ${homeKind}${type && type.toLowerCase() !== homeKind ? ` (${type.toLowerCase()})` : ""}. Never ask the home type again; when the BHK is your next detail, ask only how many BHK.`);
         }
       } else if (bhkQuestion) {
         const value = absorbed.answers[bhkQuestion.id]!;
-        const type = homeTypeName(value) ?? homeTypeName(prospectBodies.join("\n")) ?? mapType;
+        const type = homeTypeName(value) ?? homeTypeName(prospectBodies.join("\n"));
         const size = value.match(/\d+\s*-?\s*(?:bhk|rk)\b/i)?.[0]?.replace(/\s*-?\s*(bhk|rk)/i, (_, unit: string) => ` ${unit.toUpperCase()}`);
         if (type && size) absorbed.answers[bhkQuestion.id] = `${size} ${type}`;
       }
@@ -1902,7 +1902,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         const typeAsked = spoken.some((message) => message.author === "AI" && /\bis yours an? [a-z ]+ there or an? (?:flat|villa)\b/i.test(message.body));
         const sizeAsked = spoken.some((message) => message.author === "AI" && /\bmostly has\b[^?]*\bBHK\b[^?]*\bis yours\b/i.test(message.body));
         // Their answer to the type check replaces the type they said first.
-        const freshType = typeAsked ? homeTypeName(typedFresh) : null;
+        // "Is yours a villa there or a flat?" answered "yes" means the first one.
+        const offeredType = typeAsked ? [...spoken].reverse().find((message) => message.author === "AI")?.body.match(/\bis yours an? ([a-z ]+?) there or\b/i)?.[1] : undefined;
+        const freshType = typeAsked
+          ? homeTypeName(typedFresh) ?? (offeredType && /^(?:yes|yeah|ya|yep|haan|ha|aama|ji|correct|right)\b/i.test(typedFresh.trim()) ? homeTypeName(offeredType) : null)
+          : null;
         if (freshType) {
           const size = (absorbed.answers[bhkQuestion.id] ?? "").match(/\d+\s*-?\s*(?:bhk|rk)\b/i)?.[0];
           if (size) absorbed.answers[bhkQuestion.id] = `${size.replace(/\s*-?\s*(bhk|rk)/i, (_, unit: string) => ` ${unit.toUpperCase()}`)} ${freshType}`;
@@ -1912,7 +1916,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         const listedType = found.kind ? homeTypeName(found.kind) : null;
         const count = Number((absorbed.answers[bhkQuestion.id] ?? "").match(/(?<!\d)([1-9])\s*-?\s*bhk\b/i)?.[1] ?? 0);
         const options = found.bhkOptions ?? [];
-        if (saidType && listedType && saidType !== listedType && !typeAsked) {
+        if (!saidType && listedType && count && !typeAsked) {
+          // They gave the BHK but not the type: ask once, in a way only a type word answers.
+          projectAsk = found.kind === "apartment" ? "Is yours a flat there or a villa?" : "Is yours a villa there or a flat?";
+        } else if (saidType && listedType && saidType !== listedType && !typeAsked) {
           const said = saidType.toLowerCase();
           projectAsk = `${found.name} is mostly ${found.kind === "apartment" ? "apartments" : "villas"}, is yours ${/^[aeiou]/.test(said) ? "an" : "a"} ${said} there or ${found.kind === "apartment" ? "a flat" : "a villa"}?`;
           memoryLines.push(`They said ${said}, but ${found.name} is listed as ${found.kind === "apartment" ? "an apartment" : "a villa"} project. Ask once, lightly, only this: "${projectAsk}" Never name Google, Maps, Brave or any website.`);
@@ -3009,7 +3016,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     // A check against the project lookup comes first, then "spoken before", then the name, then the plain home type.
     const confirmAsk = projectAsk ?? emailAsk ?? matchAsk ?? nameAsk ?? (needsType ? TYPE_ASK : null);
     const held = confirmAsk && heldBase && Number(payload.followUp ?? 0) === 0 && !holdScript && !offerConsultation && !needsTime && !chasingCall
-      ? [heldWithProof!.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n"), confirmAsk].filter(Boolean).join("\n")
+      // While asking the home type, no sentence may already claim one ("3 BHK villa at …").
+      ? [heldWithProof!.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/)
+        .filter((part) => !isQuestionSentence(part) && !(/\bis yours an? [a-z ]+ there or\b/i.test(confirmAsk) && /\b(villa|flat|apartment|independent house|bungalow)\b/i.test(part)))
+        .join(" ").trim()).filter(Boolean).join("\n"), confirmAsk].filter(Boolean).join("\n")
       : heldWithProof;
     if (matchAsk && suggestion && held?.includes(matchAsk)) {
       await db.personMatch.updateMany({ where: { contactId: conversation.contactId, candidateId: suggestion.id }, data: { askedAt: runtime.now() } });

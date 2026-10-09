@@ -98,5 +98,17 @@ describeDb("property check and proof", () => {
     expect(second).toMatch(/how many BHK/i);
     const lead = await db.lead.findFirstOrThrow({ where: { contactId: contact.id } });
     expect(JSON.stringify(lead.answers)).toMatch(/Adarsh Palm Retreat, Sarjapur Road/);
+
+    // "3": the listing says villas, but they have not said so. Save only the BHK and ask the type once.
+    const third = await say("3", "3 BHK villa at Adarsh Palm Retreat. When do you get possession?");
+    expect(third).toMatch(/is yours a villa there or a flat\?/i);
+    expect(third).not.toMatch(/BHK villa/i);
+    const afterBhk = await db.lead.findFirstOrThrow({ where: { contactId: contact.id } });
+    expect(JSON.stringify(afterBhk.answers)).toMatch(/"3 BHK"/);
+    expect(JSON.stringify(afterBhk.answers)).not.toMatch(/villa/i);
+
+    await say("Villa", "Got it. When do you get possession, or is the home already ready?");
+    const typed = await db.lead.findFirstOrThrow({ where: { contactId: contact.id } });
+    expect(JSON.stringify(typed.answers)).toMatch(/3 BHK Villa/i);
   });
 });
