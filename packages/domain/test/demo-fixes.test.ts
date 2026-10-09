@@ -93,7 +93,16 @@ describe("prices are never told to customers", () => {
       languageLine: "This chat is in English.", chatLanguage: null, activePost: null, otherPosts: null,
       knowledgeBase: "- 3 BHK: starting from ₹35 lakh.",
     } as never);
-    expect(prompt).not.toMatch(/₹35|3D designs?, |site visit and 3D/);
+    expect(prompt).not.toMatch(/₹35|site visit and 3D|designer goes through/);
     expect(prompt).toMatch(/quoted by our team/);
+  });
+});
+
+describe("no designer talk", () => {
+  it("drops design planning lines but keeps the question and place names", async () => {
+    const { dropDesignTalk } = await import("../src/index");
+    expect(dropDesignTalk("That is convenient since you are in possession we can move ahead with the design planning. Would our team reach you on this number?"))
+      .toBe("Would our team reach you on this number?");
+    expect(dropDesignTalk("Nice, a villa in HSR Layout. How many BHK is it?")).toBe("Nice, a villa in HSR Layout. How many BHK is it?");
   });
 });

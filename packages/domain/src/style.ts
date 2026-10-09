@@ -132,6 +132,21 @@ const CANNED = /\b(?:is there )?anything else (?:i can help(?: you)?(?: with)?|o
 
 const PRICE_PITCH = /(?:₹|\b(?:rs\.?|inr)\b|\b\d[\d,.]*(?:\s*(?:-|–|to)\s*\d[\d,.]*)?\s*(?:lakh|lac|crore)s?\b|\bstarting prices?\b|\bstarts? from\b|\bno hidden costs?\b|\bfixed quote\b)/i;
 
+const DESIGN_TALK = /\b(designers?|3D|3-D|design planning|design process|planning the (?:layout|design)|the layout|site visits?|floor plans?)\b/i;
+
+/** The client does not want Varun talking about designers, 3D, layouts or site visits unless the customer asked. */
+export function dropDesignTalk(text: string): string {
+  return text
+    .split(/\n+/)
+    .map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !DESIGN_TALK.test(part)).join(" ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function asksAboutDesign(text: string): boolean {
+  return DESIGN_TALK.test(text) || /\b(design|3d|render)\b/i.test(text);
+}
+
 /** The knowledge base without its price lines: prices are never told to customers, so the model never sees them. */
 export function withoutPrices(text: string): string {
   return text

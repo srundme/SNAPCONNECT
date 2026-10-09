@@ -193,8 +193,16 @@ export function googlePlaceLookup(options: { apiKey: string; fetcher?: typeof fe
 
 type BraveHit = { title?: string; description?: string };
 
+function decodeEntities(text: string): string {
+  return text.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ");
+}
+
+/** "Concorde Manhattans Apartment in Electronic City, Bangalore- Reviews, Photos" is the project "Concorde Manhattans". */
 function projectTitle(title: string, segment: string): string {
-  const head = title.split(/\s+[|\-–—]\s+/)[0]?.trim() || title.trim();
+  const clean = decodeEntities(title);
+  const head = clean.split(/\s*\|\s*|\s+[-–—]\s+|-\s+(?=[A-Z])/)[0]?.trim() || clean.trim();
+  const short = head.replace(/\s+(?:(?:luxury\s+)?(?:apartments?|flats?|villas?|residences?|homes?)\s+)?in\s+[a-z].*$/i, "").trim();
+  if (short && nameInside(short, segment)) return short;
   return nameInside(head, segment) ? head : segment;
 }
 

@@ -167,6 +167,8 @@ describe("project lookup", () => {
     expect(await hits([{ title: "Sobha City", description: "Apartments in Bengaluru, priced around 560087 per home." }])("Sobha City", "Bengaluru")).not.toHaveProperty("bhkOptions");
     expect(await hits([{ title: "Brigade Woods", description: "Apartments in Bengaluru" }])("Brigade Utopia", "Bengaluru")).toEqual({ missing: "Brigade Utopia", source: "Brave Search" });
     expect(await hits([])("HSR Layout", "Bengaluru")).toBeNull();
+    const concorde = await hits([{ title: "Concorde Manhattans Apartment in Electronic City, Bangalore- Reviews, Photos, Amenities, Price &amp; Floor Plan", description: "2 and 3 BHK apartments on Neeladri Road, Bengaluru. Ready to move." }])("concorde manhattans", "Bengaluru");
+    expect(concorde).toMatchObject({ name: "Concorde Manhattans", kind: "apartment", bhkOptions: [2, 3] });
   });
 
   it("falls back to OpenStreetMap when Google finds nothing", async () => {

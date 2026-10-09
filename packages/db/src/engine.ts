@@ -106,6 +106,8 @@ import {
   phoneProblem,
   dropRepeatedSentences,
   fullWords,
+  dropDesignTalk,
+  asksAboutDesign,
   humanBubbles,
   materialLine,
   withoutPrices,
@@ -1592,6 +1594,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     let form: Awaited<ReturnType<typeof readLeadForm>> = null;
     let homeKind: string | null = null;
     let blockedBhk: number | null = null;
+    // A question to confirm what they said against the project lookup, asked once.
+    let projectAsk: string | null = null;
     if (questions.length) {
       let absorbed = absorbTranscript({
         questions,
@@ -1713,6 +1717,30 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         const type = homeTypeName(value) ?? homeTypeName(prospectBodies.join("\n")) ?? mapType;
         const size = value.match(/\d+\s*-?\s*(?:bhk|rk)\b/i)?.[0]?.replace(/\s*-?\s*(bhk|rk)/i, (_, unit: string) => ` ${unit.toUpperCase()}`);
         if (type && size) absorbed.answers[bhkQuestion.id] = `${size} ${type}`;
+      }
+      if (found && bhkQuestion) {
+        const typedHome = prospectBodies.filter((body) => !PHOTO_SEEN.test(body) && !DOCUMENT_SEEN.test(body)).join("\n");
+        const typeAsked = spoken.some((message) => message.author === "AI" && /\bis yours an? [a-z ]+ there or an? (?:flat|villa)\b/i.test(message.body));
+        const sizeAsked = spoken.some((message) => message.author === "AI" && /\bmostly has\b[^?]*\bBHK\b[^?]*\bis yours\b/i.test(message.body));
+        // Their answer to the type check replaces the type they said first.
+        const freshType = typeAsked ? homeTypeName(typedFresh) : null;
+        if (freshType) {
+          const size = (absorbed.answers[bhkQuestion.id] ?? "").match(/\d+\s*-?\s*(?:bhk|rk)\b/i)?.[0];
+          if (size) absorbed.answers[bhkQuestion.id] = `${size.replace(/\s*-?\s*(bhk|rk)/i, (_, unit: string) => ` ${unit.toUpperCase()}`)} ${freshType}`;
+          homeKind = freshType.toLowerCase();
+        }
+        const saidType = freshType ?? homeTypeName(absorbed.answers[bhkQuestion.id] ?? "") ?? homeTypeName(typedHome);
+        const listedType = found.kind ? homeTypeName(found.kind) : null;
+        const count = Number((absorbed.answers[bhkQuestion.id] ?? "").match(/(?<!\d)([1-9])\s*-?\s*bhk\b/i)?.[1] ?? 0);
+        const options = found.bhkOptions ?? [];
+        if (saidType && listedType && saidType !== listedType && !typeAsked) {
+          const said = saidType.toLowerCase();
+          projectAsk = `${found.name} is mostly ${found.kind === "apartment" ? "apartments" : "villas"}, is yours ${/^[aeiou]/.test(said) ? "an" : "a"} ${said} there or ${found.kind === "apartment" ? "a flat" : "a villa"}?`;
+          memoryLines.push(`They said ${said}, but ${found.name} is listed as ${found.kind === "apartment" ? "an apartment" : "a villa"} project. Ask once, lightly, only this: "${projectAsk}" Never name Google, Maps, Brave or any website.`);
+        } else if (count && options.length && count > Math.max(...options) && !sizeAsked) {
+          projectAsk = `${found.name} mostly has ${options.join(" and ")} BHK homes, is yours a ${count} BHK?`;
+          memoryLines.push(`They said ${count} BHK, but ${found.name} mostly lists ${options.join(" and ")} BHK homes. Ask once, lightly, only this: "${projectAsk}" Never name Google, Maps, Brave or any website.`);
+        }
       }
       const HOME_TYPE_ONLY = /^(?:it(?:'s| is) )?(?:an? )?(apartment|appartment|flat|villa|bungalow|independent house|individual house|row house|duplex|penthouse)(?: sir| ji)?\.?$/i;
       const SCOPE_ONLY = /^(?:(?:it(?:'s| is) )?(?:the )?(?:full|whole|entire|complete) (?:home|house|flat)|selected rooms|only (?:some|few) rooms)(?: sir| ji)?\.?$/i;
@@ -2657,7 +2685,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       ? `${offeredBase}\nhere is our experience centre: ${centreLink}`
       : offeredBase;
     // Never a price figure in any reply. A price question gets the quote line instead.
-    const unpriced = offered ? dropUnaskedPrice(offered) : offered;
+    const pricedOut = offered ? dropUnaskedPrice(offered) : offered;
+    // No designer, 3D, layout or site visit talk unless they asked about it.
+    const unpriced = pricedOut && !asksAboutDesign(freshText) ? dropDesignTalk(pricedOut) || pricedOut : pricedOut;
     const quotedBefore = spoken.some((message) => message.author === "AI" && /quoted by our team/i.test(message.body));
     const heldBase = askingPrice(freshText) && !quotedBefore && !/\bquoted by our team\b/i.test(unpriced ?? "")
       ? [unpriced, QUOTE_LINE].filter(Boolean).join("\n")
@@ -2666,8 +2696,10 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const homeSaved = questions.filter((question) => /\bbhk\b/i.test(question.label)).map((question) => recordedAnswers[question.id] ?? "").join(" ");
     const needsType = /\d\s*-?\s*bhk\b/i.test(homeSaved) && /\bhouse\b/i.test(homeSaved) && !homeTypeName(homeSaved)
       && !spoken.some((message) => message.author === "AI" && /\bindependent house\b/i.test(message.body));
-    const held = needsType && heldBase && Number(payload.followUp ?? 0) === 0 && !holdScript && !offerConsultation && !needsTime && !chasingCall
-      ? [heldBase.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n"), TYPE_ASK].filter(Boolean).join("\n")
+    // A check against the project lookup comes first, then the plain home type.
+    const confirmAsk = projectAsk ?? (needsType ? TYPE_ASK : null);
+    const held = confirmAsk && heldBase && Number(payload.followUp ?? 0) === 0 && !holdScript && !offerConsultation && !needsTime && !chasingCall
+      ? [heldBase.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n"), confirmAsk].filter(Boolean).join("\n")
       : heldBase;
     const savedHome = questions
       .filter((question) => /\bbhk\b/i.test(question.label))
