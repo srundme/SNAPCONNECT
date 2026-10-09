@@ -14,7 +14,8 @@ export type ClaudeBlock =
 export type ClaudeMessage = { role: "user" | "assistant"; content: string | ClaudeBlock[] };
 
 export type ClaudeCall = {
-  system: string;
+  /** A string, or blocks where the stable part carries cache_control so it is not re-read every turn. */
+  system: string | Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }>;
   messages: ClaudeMessage[];
   maxTokens?: number;
   temperature?: number;
@@ -82,7 +83,9 @@ export function claudeClient(options: { apiKey: string; model?: string; fetchImp
     async json<T>(call: ClaudeCall & { name: string; description: string; schema: Record<string, unknown> }) {
       // Opus does not take a forced tool_choice, so the tool is offered and the instruction says to always use it.
       const withTool = {
-        ...base({ ...call, system: `${call.system}\n\nAlways answer by calling the ${call.name} tool exactly once. Never answer in plain text.` }),
+        ...base({ ...call, system: typeof call.system === "string"
+          ? `${call.system}\n\nAlways answer by calling the ${call.name} tool exactly once. Never answer in plain text.`
+          : [...call.system, { type: "text" as const, text: `Always answer by calling the ${call.name} tool exactly once. Never answer in plain text.` }] }),
         tools: [{ name: call.name, description: call.description, input_schema: call.schema }],
         tool_choice: { type: "auto" },
       };

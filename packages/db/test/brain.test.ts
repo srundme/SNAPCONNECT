@@ -23,8 +23,8 @@ describeDb("Claude brain: facts in, words out", () => {
     claude: {
       model: "claude-test",
       async text() { return ""; },
-      async json<T>(call: { system: string; messages: unknown[] }) {
-        calls.push({ system: call.system, messages: call.messages });
+      async json<T>(call: { system: unknown; messages: unknown[] }) {
+        calls.push({ system: typeof call.system === "string" ? call.system : (call.system as Array<{ text: string }>).map((block) => block.text).join("\n"), messages: call.messages });
         return (scripted.shift() ?? { bubbles: ["Thank you."], details: {}, offer_choice: null, slot: null, handoff: false, flag: null, opt_out: false }) as T;
       },
     },

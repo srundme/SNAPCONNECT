@@ -70,7 +70,8 @@ export function rateLead(input: { questions: LeadQuestion[]; answers: Record<str
       ? { rating: "HOT", reason: `Budget ${budgetText.trim()} (${line}L+ line)` }
       : { rating: "JUNK", reason: `Budget ${budgetText.trim()} is under ${line}L` };
   }
-  const home = answerFor(input.questions, input.answers, /bhk|kind of home|home type|property/i);
+  // "…what is the property name?" is the place question: the home is the BHK / kind-of-home question.
+  const home = answerFor(input.questions, input.answers, /bhk|kind of home|home type/i);
   const scope = answerFor(input.questions, input.answers, /full home|selected rooms|scope/i);
   const area = answerFor(input.questions, input.answers, /carpet|sq\.? ?ft|area in/i);
   const bhk = Number(home.match(/(\d+)\s*-?\s*bhk/i)?.[1] ?? 0);

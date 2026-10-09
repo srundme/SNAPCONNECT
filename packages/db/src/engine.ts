@@ -4009,6 +4009,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   let answers = answerRecord(lead.answers);
   let name = conversation.contact.chosenName;
   let phoneE164 = lead.phoneE164;
+  let phoneAgreed = false;
   const placeQuestion = questions.find((question) => roleOf(question) === "place");
 
   // The property they named, looked up once (cached), with proof from our own completed homes.
@@ -4043,7 +4044,9 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   const openSet = openDays(agent.workingHours);
 
   const factsFor = (extra: string[], found: Awaited<ReturnType<typeof lookupPlaceFor>>) => {
-    const valueOf = (question: LeadQuestion) => question.kind === "name" ? name : question.kind === "phone" ? phoneE164 : answers[question.id];
+    // On WhatsApp their number is known, but they still say whether we may call on it.
+    const callable = phoneE164 && (conversation.channel !== "WHATSAPP" || phoneE164 !== lead.whatsappE164 || lead.sameNumberConfirmed || phoneAgreed) ? phoneE164 : null;
+    const valueOf = (question: LeadQuestion) => question.kind === "name" ? name : question.kind === "phone" ? callable : answers[question.id];
     const known = questions.filter((question) => valueOf(question)?.trim()).map((question) => `- ${question.label} ${valueOf(question)}`);
     const missing = questions.filter((question) => question.required !== false && !valueOf(question)?.trim()).map((question) => `- ${question.label}`);
     return [
@@ -4082,7 +4085,10 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
 
   const knowledge = knowledgeBlock({ knowledgeBase: workspace.knowledgeBase, services: workspace.services, agent });
   const ask = async (facts: string, fix?: string) => claude.json<BrainAnswer>({
-    system: `${VARUN_PROMPT}\n\n${knowledge}\n\n# FACTS (written by our systems for this turn)\n${facts}${fix ? `\n\n# Your previous draft broke these rules; write it again\n${fix}` : ""}`,
+    system: [
+      { type: "text", text: `${VARUN_PROMPT}\n\n${knowledge}`, cache_control: { type: "ephemeral" } },
+      { type: "text", text: `# FACTS (written by our systems for this turn)\n${facts}${fix ? `\n\n# Your previous draft broke these rules; write it again\n${fix}` : ""}` },
+    ],
     messages: turns,
     name: "reply",
     description: "Send your reply to the customer and report what you understood.",
@@ -4098,13 +4104,16 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     answer = await ask(factsFor([], found));
     let read = readDetails({ answer, questions, answers, whatsappE164: lead.whatsappE164, region: runtime.phoneRegion });
     // New facts from what they just said (a property to look up, a detail that failed a check): Claude writes again with them.
-    const newPlace = placeQuestion && read.answers[placeQuestion.id] && read.answers[placeQuestion.id] !== answers[placeQuestion.id] ? read.answers[placeQuestion.id]! : null;
+    // Only a property named for the first time (or a different one) needs a lookup and a second pass.
+    const savedPlace = placeQuestion ? (answers[placeQuestion.id] ?? "").toLowerCase() : "";
+    const readPlace = placeQuestion ? read.answers[placeQuestion.id] ?? "" : "";
+    const newPlace = readPlace && !(savedPlace && (readPlace.toLowerCase().includes(savedPlace) || savedPlace.includes(readPlace.toLowerCase()))) ? readPlace : null;
     const extra: string[] = [...read.problems];
     if (newPlace) {
       const before = found;
       answers = { ...answers, [placeQuestion!.id]: newPlace };
       found = await lookupPlaceFor(newPlace);
-      if (found !== before || completedInProperty(newPlace, parseCompletedProjects(agent.completedProjects))) extra.push("They just named their property: the property facts above are new for this reply.");
+      if ((found && found.name !== before?.name) || completedInProperty(newPlace, parseCompletedProjects(agent.completedProjects))) extra.push("They just named their property: the property facts above are new for this reply.");
     }
     if (extra.length) {
       answer = await ask(factsFor(extra, found));
@@ -4130,7 +4139,10 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       const cleaned = cleanName(read.name, spoken.filter((message) => message.author === "PROSPECT").map((message) => message.body).join("\n"), workspace.agentName);
       if (cleaned) name = cleaned;
     }
-    if (read.phoneE164) phoneE164 = read.phoneE164;
+    if (read.phoneE164) {
+      phoneE164 = read.phoneE164;
+      phoneAgreed = true;
+    }
   } catch (error) {
     await db.aiRun.create({ data: { workspaceId: workspace.id, conversationId: conversation.id, model: claude.model, simulated: false, latencyMs: Date.now() - started, valid: false, diagnostic: `Claude brain failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}` } });
     return "done";
@@ -4142,7 +4154,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     data: {
       answers,
       ...(phoneE164 && phoneE164 !== lead.phoneE164 ? { phoneE164, phonePermission: true } : {}),
-      ...(phoneE164 && phoneE164 === lead.whatsappE164 && !lead.sameNumberConfirmed ? { sameNumberConfirmed: true } : {}),
+      ...(phoneAgreed && phoneE164 === lead.whatsappE164 && !lead.sameNumberConfirmed ? { sameNumberConfirmed: true } : {}),
     },
   });
   if (phoneE164 !== lead.phoneE164 || JSON.stringify(answers) !== JSON.stringify(answerRecord(lead.answers))) {
@@ -4150,13 +4162,14 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     await mergePersonLeads(db, conversation.contactId).catch(() => false);
   }
   const who = [name ?? conversation.contact.displayName ?? conversation.contact.username ?? "A customer", ...questions.filter((question) => ["home", "place", "possession"].includes(roleOf(question) ?? "")).map((question) => answers[question.id]).filter(Boolean)].join(" · ") + ` (${CHANNEL_NAME[conversation.channel]})`;
-  if (answer.offer_choice && !followUp) {
-    const choice = answer.offer_choice === "consultation" ? "consultation" : "experience";
-    await note(`Offer answer: ${choice} | ${latest.slice(0, 200)}`);
-    await alertTeam("meeting", `📅 ${who} wants ${choice === "experience" ? "to visit the experience centre" : "a free consultation"}`);
+  const choiceNow = answer.offer_choice === "consultation" ? "consultation" : answer.offer_choice ? "experience" : null;
+  if (choiceNow && !followUp && !offerAnswers.some((body) => body.startsWith(`Offer answer: ${choiceNow}`))) {
+    await note(`Offer answer: ${choiceNow} | ${latest.slice(0, 200)}`);
+    await alertTeam("meeting", `📅 ${who} wants ${choiceNow === "experience" ? "to visit the experience centre" : "a free consultation"}`);
   }
-  if (answer.slot && !followUp) {
-    const time = requestedTime(answer.slot, runtime.now(), agent.workingHours);
+  const time = answer.slot ? requestedTime(answer.slot, runtime.now(), agent.workingHours) : null;
+  // A slot is noted when it names a time, once per time.
+  if (answer.slot && time && !followUp && !slotNotes.some((body) => body.includes(`(${time.clock} ${time.day}`))) {
     await note(`Slot: ${answer.slot}${time ? ` (${time.clock} ${time.day}${time.inside ? "" : `, ${time.why}`})` : ""}`);
     await alertTeam("slot", `🗓️ ${who} asked for ${answer.slot}. Please confirm with them.`);
   }
@@ -4190,7 +4203,10 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
 
   // Send: the same bubbles, typing delay and voice as before.
   const fresh = await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } });
-  if (fresh.revision !== expectedRevision || fresh.owner !== "AI") return "done";
+  if (fresh.revision !== expectedRevision || fresh.owner !== "AI") {
+    await db.aiRun.create({ data: { workspaceId: workspace.id, conversationId: conversation.id, model: claude.model, simulated: false, latencyMs: Date.now() - started, valid: false, diagnostic: `${diagnostics.join("; ")}; not sent: ${fresh.owner !== "AI" ? "the team took over" : "a newer message came in, it is answered next"}`.slice(0, 1000) } });
+    return "done";
+  }
   const bubbles = answer.bubbles.map((bubble) => bubble.trim()).filter(Boolean).slice(0, 3);
   const window = replyEligibility({
     now: runtime.now(),
@@ -4202,6 +4218,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     manual: false,
   });
   let delivered = false;
+  if (bubbles.length && !window.allowed) diagnostics.push(`Not sent: ${window.reason ?? "outside the reply window"}`);
   if (bubbles.length && window.allowed) {
     const participant = await db.contactIdentity.findFirst({ where: { contactId: conversation.contactId, identityType: "MESSAGING_PARTICIPANT", channel: conversation.channel } });
     const record = async (body: string, result: SendResult, voice?: { id: string }) => {
@@ -4230,10 +4247,16 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       for (const [index, bubble] of bubbles.entries()) {
         if (agent.typingDelay) await runtime.pause?.(typingMs(bubble));
         const now = await db.conversation.findUnique({ where: { id: conversation.id }, select: { revision: true, owner: true } });
-        if (!now || now.revision !== expectedRevision || now.owner !== "AI") break;
+        if (!now || now.revision !== expectedRevision || now.owner !== "AI") {
+          diagnostics.push(`Stopped before bubble ${index + 1}: ${now?.owner !== "AI" ? "the team took over" : "a newer message came in"}`);
+          break;
+        }
         const result = await runtime.send({ connection: sendConnection(connection), purpose: "text", recipientId: participant?.externalId, text: bubble, ...(index === 0 && !followUp ? { inboundMessageId: customerMessageId(conversation.messages) } : {}) });
         await record(bubble, result);
-        if (result.status !== "ACCEPTED") break;
+        if (result.status !== "ACCEPTED") {
+          diagnostics.push(`Bubble ${index + 1} not sent: ${result.status}${"error" in result && result.error ? ` ${String(result.error).slice(0, 160)}` : ""}`);
+          break;
+        }
       }
     }
   }
