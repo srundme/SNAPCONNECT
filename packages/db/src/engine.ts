@@ -2155,10 +2155,14 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     if (offerConsultation) {
       memoryLines.push(`The must-have details are in. They have not asked for a call. Ask once, in these words or very close: "${VISIT_OFFER}" Never mention designers, 3D designs, layouts or site visits. Do not name a time. Do not say the team will call. No other question.`);
     } else if (needsTime && askedForTime) {
-      memoryLines.push("You already asked which time suits them. Do not ask it again and do not repeat a line you already sent. A bare okay, ok or sure is not a time. Wait until they name a day or a clock time.");
-    } else if (needsTime && choseVisit) {
+      memoryLines.push("You already asked which time suits them. Do not repeat a line you already sent. A bare okay, ok or sure is not a time. If they named only a day, like tomorrow or Saturday, ask once in a few words what time on that day suits them. Never say the slot is booked.");
+    }
+    if (/\b(where|location|address|located|map)\b/i.test(freshText) && /\b(experience|cent(?:re|er)|showroom|visit)\b/i.test(freshText)) {
+      memoryLines.push("They asked where the experience centre is. The knowledge base does not give its street address, so never invent one: say it is in Bengaluru and that you are sharing the experience centre page. The link is added for you.");
+    }
+    if (!offerConsultation && !(needsTime && askedForTime) && needsTime && choseVisit) {
       memoryLines.push("They want to visit the experience centre and have not named a time. Ask which day and time suits them inside working hours. Do not invent a time. Say the team will confirm it. Do not say the visit is booked.");
-    } else if (needsTime && (agreedConsultation || readyToProceed(freshText))) {
+    } else if (!offerConsultation && !(needsTime && askedForTime) && needsTime && (agreedConsultation || readyToProceed(freshText))) {
       memoryLines.push("They want the free consultation and have not named a time. Ask which time inside working hours suits them. Do not invent a time. Say the team will confirm it. Do not say the slot is booked.");
     }
     const homeOpen = blockedBhk !== null && !questions.some((question) => /\bbhk\b/i.test(question.label) && /\b[1-9]\s*-?\s*(?:bhk|rk)\b/i.test(recordedAnswers[question.id] ?? "") && !impossibleBhk(recordedAnswers[question.id] ?? ""));
@@ -2617,6 +2621,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const waited = chasingCall
       ? callWaitReply(runtime.now(), agent.workingHours, agent.holidays, spoken.some((message) => message.author === "AI" && /\b(?:check with (?:my|the) team|asked the team to check)\b/i.test(message.body)))
       : null;
+    const centreLink = (workspace.knowledgeBase ?? "").match(/experience cent(?:re|er)[^\n]*?(https?:\/\/\S+)/i)?.[1]?.replace(/[.,)]+$/, "");
+    const asksWhereCentre = /\b(where|location|address|located|map)\b/i.test(freshText) && /\b(experience|cent(?:re|er)|showroom|office|visit)\b/i.test(freshText);
     const steered = waited
       ? waited
       : smallHome && !smallAsked
@@ -2641,7 +2647,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
             ? "whenever u are ready, message here sir"
             : "no problem sir. whenever u are ready, just message here"
           : withoutShock;
-    const offered = steered && !proceeding ? dropUnaskedCallback(steered, false) : steered;
+    const offeredBase = steered && !proceeding ? dropUnaskedCallback(steered, false) : steered;
+    // They asked where the experience centre is: the link from the knowledge base answers it. Never an invented address.
+    const offered = asksWhereCentre && centreLink && offeredBase && !offeredBase.includes(centreLink)
+      ? `${offeredBase}\nhere is our experience centre: ${centreLink}`
+      : offeredBase;
     // Never a price figure in any reply. A price question gets the quote line instead.
     const unpriced = offered ? dropUnaskedPrice(offered) : offered;
     const quotedBefore = spoken.some((message) => message.author === "AI" && /quoted by our team/i.test(message.body));
@@ -2672,7 +2682,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         ? askQuestion(nextDetail)
         : believable;
     const consultAsk = VISIT_OFFER;
-    const timeAsk = `which time suits u? the team is available ${agent.workingHours || "Tuesday to Sunday, 10 AM to 7 PM"}, and they will confirm it.`;
+    const confirmSaid = /\bconfirm/i.test(welcomed ?? "");
+    const timeAsk = `${choseVisit ? "which day and time would you like to visit?" : "which day and time suits you for the consultation?"}${confirmSaid ? "" : " the team will confirm it."}`;
     const withConsult = waited
       ? waited
       : offerConsultation
