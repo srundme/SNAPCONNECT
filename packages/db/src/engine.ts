@@ -3018,7 +3018,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : null;
     const addressed = nudge > 0
       ? followUpReply(nudge, agent.followUpHours.length)
-      : review?.fixed ?? draft;
+      : oneQuestion(review?.fixed ?? draft);
     const bubbleOptions = { casual: agent.casualTexting, split: agent.splitMessages, ...(keep ? { keep } : {}) };
     const freshBubbles = addressed ? humanBubbles(addressed, earlierReplies, keepCase, bubbleOptions) : [];
     // When every sentence repeats an earlier reply, a repeat still beats leaving the customer unanswered. Follow-ups can stay quiet.
@@ -3358,7 +3358,9 @@ async function writeOpening(
     });
     const text = raw.replace(/^(?:message|reply)\s*:\s*/i, "").replace(/^["'“]+|["'”]+$/g, "").trim();
     if (!text || text.length > 700 || !text.includes("?")) return null;
-    return humanizeReply(text);
+    // The opener never volunteers budget talk, and asks one thing.
+    const trimmed = oneQuestion(askingPrice(input.comment) ? text : dropUnaskedPrice(text));
+    return humanizeReply(trimmed.includes("?") ? trimmed : text);
   } catch (error) {
     console.warn(`Opening message failed: ${error instanceof Error ? error.message : String(error)}`);
     return null;
@@ -4315,6 +4317,19 @@ function dropPlanMentions(text: string): string {
 // The client's close: no designers, layouts or 3D talk, just the two next steps.
 const VISIT_OFFER = "Shall I book a free consultation for you, or would you like to visit our experience centre?";
 const TYPE_ASK = "Is it an apartment, villa or independent house?";
+
+/**
+ * One question per reply, like a person texting. When the draft asks two things, only the last question
+ * stays: that is the detail the system wants next. The statements around it are kept.
+ */
+export function oneQuestion<T extends string | null | undefined>(text: T): T {
+  if (!text) return text;
+  const lines = text.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).map((part) => part.trim()).filter(Boolean));
+  const asks = lines.flat().filter((part) => isQuestionSentence(part));
+  if (asks.length < 2) return text;
+  const keep = asks[asks.length - 1];
+  return lines.map((parts) => parts.filter((part) => !isQuestionSentence(part) || part === keep).join(" ")).filter(Boolean).join("\n") as T;
+}
 // Prices are never revealed: the team quotes after seeing the home.
 const QUOTE_LINE = "We will share the exact budget after understanding your requirement, the scope and the materials you choose.";
 const PLAN_BUILDER_TEMPLATE = "Do you have the floor plan from the builder? A photo or PDF is fine, the designer can start planning the layout before possession.";
