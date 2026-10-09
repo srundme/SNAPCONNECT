@@ -3693,7 +3693,7 @@ async function liveZohoUpsert(
 export async function takeOver(db: Db, conversationId: string, actorId: string): Promise<void> {
   const conversation = await db.conversation.update({
     where: { id: conversationId },
-    data: { owner: "HUMAN", revision: { increment: 1 } },
+    data: { owner: "HUMAN", ownerUserId: actorId, ownerChangedAt: new Date(), revision: { increment: 1 } },
   });
   await cancelAutomation(db, conversation.workspaceId, conversation.contactId, conversation.id);
   await db.auditEvent.create({
@@ -3704,6 +3704,24 @@ export async function takeOver(db: Db, conversationId: string, actorId: string):
       entityType: "Conversation",
       entityId: conversation.id,
       summary: "Staff took over the conversation.",
+    },
+  });
+}
+
+/** Staff hand the chat back: Varun answers the next customer message again. */
+export async function handBack(db: Db, conversationId: string, actorId: string): Promise<void> {
+  const conversation = await db.conversation.update({
+    where: { id: conversationId },
+    data: { owner: "AI", ownerUserId: null, ownerChangedAt: new Date(), revision: { increment: 1 } },
+  });
+  await db.auditEvent.create({
+    data: {
+      actorId,
+      workspaceId: conversation.workspaceId,
+      action: "conversation.handback",
+      entityType: "Conversation",
+      entityId: conversation.id,
+      summary: "Staff handed the conversation back to the assistant.",
     },
   });
 }
@@ -4158,7 +4176,7 @@ function toSnapshot(lead: {
 }
 
 async function handoff(db: Db, conversationId: string, leadId: string, reason: string) {
-  await db.conversation.update({ where: { id: conversationId }, data: { owner: "HUMAN", revision: { increment: 1 } } });
+  await db.conversation.update({ where: { id: conversationId }, data: { owner: "HUMAN", ownerUserId: null, ownerChangedAt: new Date(), revision: { increment: 1 } } });
   await db.lead.update({ where: { id: leadId }, data: { handoffReason: reason } });
 }
 

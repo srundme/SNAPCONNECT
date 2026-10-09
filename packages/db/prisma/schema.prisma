@@ -392,6 +392,9 @@ model Conversation {
   contactId         String
   channel           Channel
   owner             ConversationOwner @default(AI)
+  /// The staff member who took the chat over from Varun; null while Varun has it or after an automatic handoff.
+  ownerUserId       String?
+  ownerChangedAt    DateTime?
   revision          Int               @default(0)
   lastUserMessageAt DateTime?
   sourceMediaId     String?
@@ -417,6 +420,8 @@ model Message {
   externalMessageId String?
   voice             Boolean        @default(false)
   voiceClipId       String?
+  /// Who typed a STAFF message.
+  staffUserId       String?
   createdAt         DateTime       @default(now())
   conversation      Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
