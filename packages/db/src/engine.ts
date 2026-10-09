@@ -2461,19 +2461,19 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     if (roomsOnly) {
       memoryLines.push("They want only part of the home, not the full home. Say that kindly in this reply and stop. Do not ask for the phone, photos, timeline, email or anything else. If they then say they want the whole home, continue.");
     }
-    // The KariGhars takes up full homes of 3 BHK and above only.
+    // The KariGhars takes up full homes of 2 BHK and above (client, 9 Oct 2026): a 1 BHK, 1 RK or studio is declined.
     const homeAnswer = questions.filter((question) => /\bbhk\b/i.test(question.label)).map((question) => recordedAnswers[question.id] ?? "").join(" ");
-    const smallMatch = homeAnswer.match(/(?<!\d)([12])\s*-?\s*bhk\b|\b1\s*-?\s*rk\b|\bstudio\b/i);
+    const smallMatch = homeAnswer.match(/(?<!\d)(1)\s*-?\s*bhk\b|\b1\s*-?\s*rk\b|\bstudio\b/i);
     const smallHome = smallMatch ? 1 : 0;
     const smallLabel = smallMatch ? (smallMatch[1] ? `${smallMatch[1]} BHK` : /studio/i.test(smallMatch[0]) ? "studio" : "1 RK") : "";
     // Never turn someone away on one message: confirm the size once, decline only after that.
-    const smallAsked = spoken.some((message) => message.author === "AI" && /\bjust to confirm\b/i.test(message.body) && /\b(?:[12]\s*BHK|1\s*RK|studio)\b/i.test(message.body));
+    const smallAsked = spoken.some((message) => message.author === "AI" && /\bjust to confirm\b/i.test(message.body) && /\b(?:1\s*BHK|1\s*RK|studio)\b/i.test(message.body));
     // "no" to the confirm: it is not that small, so ask the BHK instead of declining.
     const smallDenied = smallAsked && /^\s*(?:no|nope|nah|illa|nahi|not)\b/i.test(freshText) && !/\d/.test(freshText);
     if (smallDenied) memoryLines.push("They said the home is not that size. Ask only how many BHK it is, in a few words.");
     if (smallHome && !smallDenied) {
       memoryLines.push(smallAsked
-        ? "The KariGhars takes up full-home interiors only for 3 BHK homes and above. They confirmed a smaller home, so tell them that kindly in one short line, thank them for reaching out, and do not ask any more questions. Never mention a price."
+        ? "The KariGhars takes up full-home interiors only for 2 BHK homes and above. They confirmed a smaller home, so tell them that kindly in one short line, thank them for reaching out, and do not ask any more questions. Never mention a price."
         : `Their home looks like a ${smallLabel}. Ask only, kindly: just to confirm, is it a ${smallLabel} home? Nothing else.`);
     }
     const holdScript = roomsOnly || commercial || pausing || askWhichHome || Boolean(smallHome && !smallDenied);
@@ -3038,9 +3038,9 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
       : smallHome && smallDenied
       ? "ok. how many BHK is it?"
       : smallHome
-      ? spoken.some((message) => message.author === "AI" && /\b3 BHK homes and above\b/i.test(message.body))
+      ? spoken.some((message) => message.author === "AI" && /\b2 BHK homes and above\b/i.test(message.body))
         ? "thank you. if you have a bigger home to do, just message here"
-        : "thank you for reaching out. The KariGhars takes up full-home interiors only for 3 BHK homes and above, so we won't be able to take up this one"
+        : "thank you for reaching out. The KariGhars takes up full-home interiors only for 2 BHK homes and above, so we won't be able to take up this one"
       : commercial
       ? spoken.some((message) => message.author === "AI" && /\bhome interiors only\b/i.test(message.body))
         ? "if there is a home to do, just message here sir"
@@ -3049,7 +3049,7 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
         ? spoken.some((message) => message.author === "AI" && /\bfull home\b/i.test(message.body) && /\b(single room|room by room|one project)\b/i.test(message.body))
           ? (withoutShock?.split(/\n+/).map((line) => line.split(/(?<=[.!?])\s+|(?<=\.\.)(?=[^\s.])/).filter((part) => !isQuestionSentence(part)).join(" ").trim()).filter(Boolean).join("\n")
             || "whenever u want the whole home done, message here sir")
-          : "we take up only full-home interiors, for 3 BHK homes and above, not a single room. if you want the whole home done, just let me know"
+          : "we take up only full-home interiors, for 2 BHK homes and above, not a single room. if you want the whole home done, just let me know"
         : pausing
           ? spoken.some((message) => message.author === "AI" && /\bwhenever u are ready\b/i.test(message.body))
             ? "whenever u are ready, message here sir"

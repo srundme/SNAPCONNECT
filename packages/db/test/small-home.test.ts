@@ -39,7 +39,7 @@ describeDb("Riteesh small home, 9 Oct demo", () => {
     }
   }
 
-  it("answers a 2 BHK with the small-home check", async () => {
+  it("takes up a 2 BHK and checks a 1 BHK", async () => {
     await seedDemo(db);
     const stamp = `${Date.now()}`;
     const workspace = await db.workspace.create({
@@ -84,9 +84,13 @@ describeDb("Riteesh small home, 9 Oct demo", () => {
         .filter((message) => !before.has(message.id)).map((message) => message.body).join("\n");
     };
 
-    // Riteesh, 9 Oct demo: a 2 BHK gets the code's small-home check, never "How can we help you today?".
-    const small = await say("I have 2 bhk property, with 10 lakhs budget", "Got it. How can we help you today?");
-    expect(small).toMatch(/2 BHK/i);
-    expect(small).not.toMatch(/how can we help you today/i);
+    // 9 Oct: the client takes up 2 BHK homes too. A 2 BHK is welcomed and the chat carries on.
+    const two = await say("I have 2 bhk property, with 10 lakhs budget", "Got it. Which area is your home in, and what is the property name?");
+    expect(two).not.toMatch(/won't be able|3 BHK homes and above|just to confirm/i);
+    expect(two).toMatch(/property name/i);
+    // A 1 BHK still gets the small-home check, never "How can we help you today?".
+    const one = await say("Sorry, it is actually a 1 bhk", "Got it. How can we help you today?");
+    expect(one).toMatch(/1 BHK/i);
+    expect(one).not.toMatch(/how can we help you today/i);
   });
 });

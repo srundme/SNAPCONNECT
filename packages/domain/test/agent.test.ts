@@ -232,7 +232,9 @@ describe("common sense checks", () => {
     expect(rate({ home: "Villa", scope: "full home" })).toBe("HOT");
     expect(rate({ home: "3 BHK Apartment", scope: "Pura ghar" })).toBe("UNRATED");
     expect(rate({ home: "3 BHK Apartment", scope: "sirf kitchen" })).toBe("JUNK");
-    expect(rate({ home: "2 BHK Apartment", scope: "Full home" })).toBe("JUNK");
+    // 2 BHK homes are taken up since 9 Oct 2026: the team judges them; a 1 BHK is junk.
+    expect(rate({ home: "2 BHK Apartment", scope: "Full home" })).toBe("UNRATED");
+    expect(rate({ home: "1 BHK Apartment", scope: "Full home" })).toBe("JUNK");
     expect(rate({ home: "3 BHK Apartment", scope: "only kitchen and wardrobes" })).toBe("JUNK");
     expect(rate({ home: "3 BHK Apartment" })).toBe("UNRATED");
     expect(rate({ home: "3 BHK Independent house" })).toBe("HOT");

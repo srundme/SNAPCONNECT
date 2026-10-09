@@ -80,7 +80,8 @@ export function rateLead(input: { questions: LeadQuestion[]; answers: Record<str
   const estimate = `Estimated from project size (no budget ${budgetText ? "given" : "yet"})`;
   // A plain 3 BHK apartment is left UNRATED for the team to judge.
   if (full && (BIG_HOME.test(home) || bhk >= 4 || sqft >= 1500)) return { rating: "HOT", reason: `${estimate}: full home, ${home.trim() || `${sqft} sq ft`}` };
-  if (bhk && bhk <= 2) return { rating: "JUNK", reason: `${estimate}: ${bhk} BHK` };
+  // 2 BHK homes are taken up too (9 Oct 2026); only a 1 BHK is junk.
+  if (bhk && bhk <= 1) return { rating: "JUNK", reason: `${estimate}: ${bhk} BHK` };
   // A 3 BHK full home is never junk on a typed area alone: the team judges it.
   if (full && sqft && sqft < 1500 && !bhk) return { rating: "JUNK", reason: `${estimate}: ${sqft} sq ft` };
   return { rating: "UNRATED", reason: "Not enough detail yet" };
