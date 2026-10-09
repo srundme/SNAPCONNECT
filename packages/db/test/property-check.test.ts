@@ -19,9 +19,10 @@ describeDb("property check and proof", () => {
   const base = simulationRuntime();
   const runtime: Runtime = {
     ...base,
-    lookupPlace: async () => ({
-      name: "Adarsh Palm Retreat", locality: "Sarjapur Road", city: "Bengaluru", pincode: null, underConstruction: false, kind: "villa", bhkOptions: [2, 3], source: "Brave Search",
-    }),
+    // "Concord" finds a listing page, the way Brave did on 9 Oct; anything else finds Adarsh Palm Retreat.
+    lookupPlace: async (query: string) => (/concord/i.test(query)
+      ? { name: "Villas for Sale", locality: "Kanakapura Road", city: "Bengaluru", pincode: null, underConstruction: false, kind: "villa" as const, source: "Brave Search" as const }
+      : { name: "Adarsh Palm Retreat", locality: "Sarjapur Road", city: "Bengaluru", pincode: null, underConstruction: false, kind: "villa" as const, bhkOptions: [2, 3], source: "Brave Search" as const }),
     llm: {
       ...fixtureLlm(),
       async generate() {
@@ -112,5 +113,10 @@ describeDb("property check and proof", () => {
     expect(fourth).not.toMatch(/mostly villas|apartment there or a villa/i);
     const corrected = await db.lead.findFirstOrThrow({ where: { contactId: contact.id } });
     expect(JSON.stringify(corrected.answers)).toMatch(/3 BHK Apartment/i);
+
+    // A listing page is never offered as their property.
+    await db.projectLookup.deleteMany({ where: { key: { contains: "concord" } } });
+    const wrong = await say("No, actually it's Concord apartments in ecity", "Got it.");
+    expect(wrong).not.toMatch(/villas for sale|kanakapura/i);
   });
 });

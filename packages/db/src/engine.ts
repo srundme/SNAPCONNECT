@@ -1862,7 +1862,11 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
           now: runtime.now(),
         })
         : null;
-      const found = place && !("missing" in place) ? place : null;
+      // A search hit must share a real word with what they typed: "Villas for Sale" is a listing page, not "Concord apartments".
+      const GENERIC = /^(?:apartments?|villas?|flats?|homes?|houses?|project|property|properties|residency|residences|enclave|towers?|phase|bengaluru|bangalore|sale|for|the|and|road|layout|nagar|city|ecity|whitefield|sarjapur)$/i;
+      const typedWords = projectQuery.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length >= 4 && !GENERIC.test(word));
+      const sharesName = (name: string) => typedWords.length === 0 || name.toLowerCase().split(/[^a-z0-9]+/).some((word) => word.length >= 4 && !GENERIC.test(word) && typedWords.some((typed) => typed.slice(0, 4) === word.slice(0, 4)));
+      const found = place && !("missing" in place) && (place.shortForm || place.correctedFrom || sharesName(place.name)) ? place : null;
       const mapType = found?.kind ? homeTypeName(found.kind) : null;
       const advertised = advertisedBhkLine(found?.bhkOptions);
       const bareBhk = formRead ? undefined : freshText.trim().toLowerCase().match(/^(?:it(?:'s| is) )?(?:a )?([1-9]|one|two|three|four|five|six|seven|eight)(?: (?:bed ?rooms?|bedrooms|rooms))?(?: sir| ji| bro)?\.?$/)?.[1];
@@ -3551,8 +3555,12 @@ async function writeOpening(
     const text = raw.replace(/^(?:message|reply)\s*:\s*/i, "").replace(/^["'“]+|["'”]+$/g, "").trim();
     if (!text || text.length > 700 || !text.includes("?")) return null;
     // The opener never volunteers budget talk, and asks one thing.
-    const trimmed = oneQuestion(dropAskReason(dropTimelinePromise(askingPrice(input.comment) ? text : dropUnaskedPrice(text))));
-    return humanizeReply(trimmed.includes("?") ? trimmed : text);
+    const priced = askingPrice(input.comment) ? text : dropUnaskedPrice(text).split(/(?<=[.!?])\s+/).filter((part) => !/\b(budget|price|cost|quote)\b/i.test(part)).join(" ");
+    const trimmed = oneQuestion(dropAskReason(dropTimelinePromise(priced)));
+    // Instagram and Facebook allow one private reply to a comment until they write back, so it is one
+    // message, but each thought on its own line, the way it reads on WhatsApp.
+    const lines = humanizeReply(trimmed.includes("?") ? trimmed : text).split(/(?<=[.!?])\s+/).map((part) => part.trim()).filter(Boolean);
+    return lines.join("\n");
   } catch (error) {
     console.warn(`Opening message failed: ${error instanceof Error ? error.message : String(error)}`);
     return null;
