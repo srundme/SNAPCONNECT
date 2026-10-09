@@ -1,3 +1,4 @@
+import { isQuestionSentence } from "./qualify";
 const SAMPLE_NUMBERS = new Set(["9876543210", "1234567890", "0123456789", "9123456789", "9898989898"]);
 
 /** Says what is actually wrong with a number, so the reply is specific instead of a generic "looks incorrect". */
@@ -212,14 +213,28 @@ export function dropIndicSentences(text: string): string {
 }
 
 /** Drops a first line that is only "sure sir" or "nice" when the reply still says something after it. */
+const EMPTY_OPENER = /^(?:sure|nice|got it|sounds good|alright|okay|ok|great|perfect|wonderful|awesome|lovely|good)(?:\s+(?:sir|mam|madam|bro))?$/i;
+// Commentary on what they said, which no salesperson types: "that is a comfortable size", "sounds like a lovely project".
+const PRAISE_WORDS = "comfortable|lovely|nice|great|good|wonderful|beautiful|perfect|convenient|spacious|amazing|fantastic|excellent|exciting|smart|wise|solid|ideal|practical|popular|premium|prime|good choice|great choice";
+const COMMENTARY = new RegExp([
+  `^(?:that|this|it)(?:'s|\\s+is|\\s+sounds|\\s+looks|\\s+seems)\\s+(?:like\\s+)?(?:a\\s+|an\\s+|really\\s+|very\\s+|quite\\s+|such\\s+a\\s+)*(?:${PRAISE_WORDS})\\b`,
+  `^(?:a|an|your|the)\\s+[^.?!]{0,60}\\b(?:sounds|looks|is)\\s+(?:like\\s+)?(?:a\\s+|an\\s+|really\\s+|very\\s+)*(?:${PRAISE_WORDS})\\b`,
+  `^(?:good|glad|happy|nice|great)\\s+to\\s+(?:know|hear)\\b`,
+  `^(?:what\\s+a|such\\s+a)\\s+(?:${PRAISE_WORDS})\\b`,
+].join("|"), "i");
+
+/** Drops "Sure sir." openers and sentences that only comment on their answer, as long as something is left. */
 export function dropEmptyPraise(text: string): string {
-  const parts = sentencesOf(text);
-  if (parts.length < 2) return text;
-  const opener = parts[0]!.replace(/[.!\s]+$/g, "");
-  if (/^(?:sure|nice|got it|sounds good|alright|okay|ok|great|perfect|wonderful|awesome|lovely)(?:\s+(?:sir|mam|madam|bro))?$/i.test(opener)) {
-    return parts.slice(1).join(" ");
-  }
-  return text;
+  const lines = text.split(/\n+/).map((line) => {
+    const parts = sentencesOf(line);
+    return parts.filter((part, index) => {
+      const plain = part.replace(/[.!\s]+$/g, "").trim();
+      if (isQuestionSentence(part)) return true;
+      if (index === 0 && EMPTY_OPENER.test(plain)) return false;
+      return !COMMENTARY.test(plain);
+    }).join(" ").trim();
+  }).filter(Boolean);
+  return lines.length ? lines.join("\n") : text;
 }
 
 /** People say sir once in a message, not in every sentence, and not in every reply. */

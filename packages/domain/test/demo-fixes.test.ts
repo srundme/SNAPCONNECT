@@ -116,3 +116,13 @@ describe("the home question needs a BHK count", () => {
     expect(screenLead({ questions, answers: { kind: "5 bedroom villa" }, name: "Gopi", phoneE164: "+919999999999" }).ready).toBe(true);
   });
 });
+
+describe("no compliments on their answers", () => {
+  it("drops commentary but keeps facts and questions", async () => {
+    const { dropEmptyPraise } = await import("../src/index");
+    expect(dropEmptyPraise("That is a comfortable size sir. Which day and time suits you?")).toBe("Which day and time suits you?");
+    expect(dropEmptyPraise("Good to know sir\nA villa in Concord sounds like a lovely project. How many bedrooms does it have?")).toBe("How many bedrooms does it have?");
+    expect(dropEmptyPraise("For kitchens we use Century Ply Club Prime BWP plywood which handles moisture well.")).toBe("For kitchens we use Century Ply Club Prime BWP plywood which handles moisture well.");
+    expect(dropEmptyPraise("That is a comfortable size sir.")).toBe("That is a comfortable size sir.");
+  });
+});
