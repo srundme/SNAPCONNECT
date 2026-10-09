@@ -132,11 +132,11 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
         ) : null}
       </header>
       {error ? <Notice tone="stop">{error}</Notice> : null}
-      <div className="grid overflow-hidden rounded-2xl bg-white shadow-[0_1px_0_rgba(20,23,28,0.06),0_8px_24px_-12px_rgba(26,22,18,0.08)] lg:grid-cols-[300px_minmax(0,1fr)] xl:h-[calc(100dvh-11rem)] xl:min-h-[600px] xl:grid-cols-[316px_minmax(0,1fr)_300px]">
-        <div className="flex max-h-[46dvh] min-h-0 flex-col border-b border-[var(--color-line)] lg:h-[74dvh] lg:max-h-none lg:border-b-0 lg:border-r xl:h-auto">
+      <div className="grid min-w-0 grid-cols-1 overflow-hidden rounded-2xl bg-white shadow-[0_1px_0_rgba(20,23,28,0.06),0_8px_24px_-12px_rgba(26,22,18,0.08)] lg:grid-cols-[300px_minmax(0,1fr)] xl:h-[calc(100dvh-11rem)] xl:min-h-[600px] xl:grid-cols-[316px_minmax(0,1fr)_300px]">
+        <div className="flex min-w-0 max-h-[46dvh] min-h-0 flex-col border-b border-[var(--color-line)] lg:h-[74dvh] lg:max-h-none lg:border-b-0 lg:border-r xl:h-auto">
           <ConversationList rows={rows} state={state} selectedId={selectedBase?.id} hiddenTests={state.tests ? 0 : tests.length} />
         </div>
-        <div className="flex h-[78dvh] min-h-0 flex-col border-b border-[var(--color-line)] lg:h-[74dvh] xl:h-auto xl:border-b-0 xl:border-r">
+        <div className="flex min-w-0 h-[78dvh] min-h-0 flex-col border-b border-[var(--color-line)] lg:h-[74dvh] xl:h-auto xl:border-b-0 xl:border-r">
           {selectedBase ? (
             <ChatPane
               conversationId={selectedBase.id}

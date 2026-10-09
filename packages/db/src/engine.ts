@@ -2181,7 +2181,8 @@ async function runInference(db: Db, job: JobRecord, runtime: Runtime): Promise<"
     const lastAiBody = [...spoken].reverse().find((message) => message.author === "AI")?.body ?? "";
     const offerJustMade = sinceReply.length > 0 && /\b(consultation|experience cent(?:re|er))\b/i.test(lastAiBody);
     const plainYes = /^(?:yes|yeah|ya|yep|sure|ok(?:ay)?|haan|ha|please)(?:\s+(?:sir|mam|ji))?\.?$/i.test(freshText.trim());
-    const freshOfferAnswer = offerJustMade && !plainYes ? await readOfferAnswer(runtime, lastAiBody, freshText) : null;
+    // A plain yes to "Shall I book a free consultation…?" is a yes to the consultation.
+    const freshOfferAnswer = offerJustMade ? plainYes ? "consultation" as const : await readOfferAnswer(runtime, lastAiBody, freshText) : null;
     if (freshOfferAnswer && freshOfferAnswer !== "unclear") {
       await db.message.create({
         data: { workspaceId: workspace.id, connectionId: conversation.connectionId, conversationId, author: "SYSTEM", body: `Offer answer: ${freshOfferAnswer} | ${freshText.slice(0, 200)}`, createdAt: runtime.now() },
