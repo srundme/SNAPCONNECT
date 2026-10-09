@@ -404,6 +404,11 @@ export function screenLead(input: {
       gap.push(question.label);
       continue;
     }
+    // A question that asks how many BHK is only answered once there is a count: "Villa" alone is not enough.
+    if (/\bbhk\b/i.test(question.label) && !/\d\s*-?\s*(?:bhk|rk|bed ?rooms?|br)\b|\b(?:one|two|three|four|five|six|seven|eight|nine)\s*-?\s*(?:bhk|bed ?rooms?)\b|\bstudio\b/i.test(answer)) {
+      gap.push(question.label);
+      continue;
+    }
     if (question.kind === "yesno" && NO_ANSWER.test(answer) && question.required !== false) cold = true;
     if (question.kind === "yesno" && !YES_ANSWER.test(answer) && !NO_ANSWER.test(answer)) gap.push(question.label);
   }

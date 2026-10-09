@@ -106,3 +106,13 @@ describe("no designer talk", () => {
     expect(dropDesignTalk("Nice, a villa in HSR Layout. How many BHK is it?")).toBe("Nice, a villa in HSR Layout. How many BHK is it?");
   });
 });
+
+describe("the home question needs a BHK count", () => {
+  it("is not answered by a home type alone", async () => {
+    const { screenLead } = await import("../src/index");
+    const questions = [{ id: "kind", kind: "text" as const, label: "What kind of home is it: apartment, villa or independent house, and how many BHK?", required: true, zohoField: null }];
+    expect(screenLead({ questions, answers: { kind: "Villa" }, name: "Gopi", phoneE164: "+919999999999" }).ready).toBe(false);
+    expect(screenLead({ questions, answers: { kind: "4 BHK Villa" }, name: "Gopi", phoneE164: "+919999999999" }).ready).toBe(true);
+    expect(screenLead({ questions, answers: { kind: "5 bedroom villa" }, name: "Gopi", phoneE164: "+919999999999" }).ready).toBe(true);
+  });
+});
