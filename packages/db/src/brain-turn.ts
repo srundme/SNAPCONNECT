@@ -21,7 +21,7 @@ import {
 /** What Claude returns through the reply tool. */
 export type BrainAnswer = {
   bubbles: string[];
-  details: Partial<Record<"name" | "property" | "area" | "home_type" | "bhk" | "possession" | "phone" | "email" | "style" | "carpet_area" | "budget" | "timeline", string | null>>;
+  details: Partial<Record<"name" | "property" | "area" | "home_type" | "bhk" | "possession" | "phone" | "email" | "style" | "carpet_area" | "budget" | "timeline" | "lives_in", string | null>>;
   declined?: string[];
   /** "Call me later": when they asked to be contacted again, as an India date-time (2026-10-10T18:00), or null. */
   follow_up_at?: string | null;
@@ -43,7 +43,7 @@ export const BRAIN_TOOL_SCHEMA = {
     details: {
       type: "object",
       description: "Details the customer gave in their latest messages, in their words, cleaned up. Leave out anything not given.",
-      properties: Object.fromEntries(["name", "property", "area", "home_type", "bhk", "possession", "phone", "email", "style", "carpet_area", "budget", "timeline"].map((key) => [key, { type: ["string", "null"] }])),
+      properties: Object.fromEntries(["name", "property", "area", "home_type", "bhk", "possession", "phone", "email", "style", "carpet_area", "budget", "timeline", "lives_in"].map((key) => [key, { type: ["string", "null"] }])),
     },
     follow_up_at: { type: ["string", "null"], description: "If they are busy and say when to reach them, that time in India as YYYY-MM-DDTHH:MM, else null." },
     new_home: { type: "boolean", description: "True when they are now talking about a different home from the one already noted." },

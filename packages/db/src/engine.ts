@@ -1635,6 +1635,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   const addressNote = [...notes].reverse().find((body) => body.startsWith("Address: "))?.slice("Address: ".length).trim() ?? null;
   const savedAddress = addressNote?.startsWith("none") && name && !addressNote.includes(`(${name})`) ? null : addressNote?.split(" ")[0] ?? null;
   const profileName = conversation.contact.displayName ?? conversation.contact.username ?? null;
+  const livesIn = [...notes].reverse().find((body) => body.startsWith("Lives in: "))?.slice("Lives in: ".length).trim() ?? null;
   const abroad = numberAbroad(lead.whatsappE164 ?? lead.phoneE164, runtime.now());
   const languageSample = chatLanguageSample(spoken.filter((message) => message.author === "PROSPECT").map((message) => message.body));
   const elsewhere = await otherChannelLine(db, conversation, lead.phoneE164).catch(() => "");
@@ -1676,6 +1677,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       timeline,
       festivalToday(runtime.now(), agent.holidays) ? `Today is ${festivalToday(runtime.now(), agent.holidays)}.` : "",
       `Channel: ${CHANNEL_NAME[conversation.channel]}.${spoken.some((message) => message.author === "AI") ? "" : " You have not replied in this chat yet: this is your first reply."}`,
+      livesIn ? `Where they live or are now (they said): ${livesIn}. Use this, not their number, for the offer and for time zones.` : "",
       abroad ? `Their number is from ${abroad.country}${abroad.localTime ? `: it is ${abroad.localTime} there now` : " (several time zones: ask which city they are in if a time matters)"}. Time checks below are in India time.` : "",
       conversation.channel === "WHATSAPP" && lead.whatsappE164 ? `They are chatting from WhatsApp number ${lead.whatsappE164}${lead.sameNumberConfirmed ? " (they agreed we can call on it)" : ""}.` : "",
       name ? `Their name: ${name}${conversation.channel !== "WHATSAPP" && notes.some((body) => body.startsWith("Name from profile:")) && name === conversation.contact.chosenName ? " (from their profile; use it, do not ask)" : ""}.` : "Their name: not known yet.",
@@ -1861,6 +1863,9 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     await alertTeam("slot", `🗓️ ${who} asked for ${answer.slot}. Please confirm with them.`);
   }
   if (agent.addressSirMam && !savedAddress && (answer.address === "sir" || answer.address === "ma'am" || (answer.address === "none" && name))) await note(`Address: ${answer.address}${answer.address === "none" ? ` (${name ?? ""})` : ""}`);
+  // Where they live, when they say it: kept for the next turns, the team and Zoho.
+  const saidLivesIn = (answer.details?.lives_in ?? "").trim().slice(0, 80);
+  if (saidLivesIn && saidLivesIn.toLowerCase() !== (livesIn ?? "").toLowerCase()) await note(`Lives in: ${saidLivesIn}`);
   if (answer.flag) await alertTeam("flag", `⚠️ ${who}: ${answer.flag.slice(0, 160)}`);
 
   // Rating and Zoho, from the saved answers.
@@ -2097,6 +2102,11 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
       orderBy: { createdAt: "desc" },
       select: { body: true },
     })));
+    const livesInNote = await db.message.findFirst({
+      where: { author: "SYSTEM", body: { startsWith: "Lives in: " }, conversation: { contactId: { in: [lead.contactId, ...siblings.map((item) => item.contactId)] } } },
+      orderBy: { createdAt: "desc" },
+      select: { body: true },
+    });
     const visitAt = visitNote?.body.slice("Visit at: ".length).trim() ?? "";
     const visitKind = offerNote?.body.includes("consultation") ? "Video consultation" : "Experience centre visit";
     if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00\+05:30$/.test(visitAt) && leadAgent.zohoVisitField) record[leadAgent.zohoVisitField] = visitAt;
@@ -2113,6 +2123,7 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
       ...placed.lines,
       ...(projectCheck ? [`Project check: ${projectCheck.body.split(" | ").slice(1).join(" | ")}`] : []),
       ...(lead.timeframeRaw ? [`Preferred call time: ${lead.timeframeRaw}`] : []),
+      ...(livesInNote ? [livesInNote.body] : []),
       ...(visitAt ? [`${visitKind} requested: ${new Date(visitAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" })} (please confirm with them)`] : []),
       ...(concern
         ? [concern.kind === "public_figure"
