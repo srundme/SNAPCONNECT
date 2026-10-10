@@ -94,6 +94,20 @@ export async function linkContacts(
       select: { id: true },
     });
     if (refused) return false;
+    // Same number or email but clearly different names (Riteesh on Instagram, Arvind on WhatsApp): it may be a
+    // family member's number, so it is never joined on its own; the team sees it as a possible match instead.
+    const [first, second] = await Promise.all([one.id, two.id].map((id) => db.contact.findUnique({ where: { id }, select: { chosenName: true, displayName: true, username: true } })));
+    const namesOne = nameTokens(first?.chosenName, first?.displayName, first?.username);
+    const namesTwo = nameTokens(second?.chosenName, second?.displayName, second?.username);
+    if (namesOne.size && namesTwo.size && ![...namesOne].some((token) => namesTwo.has(token))) {
+      const label = (item: typeof first) => item?.chosenName ?? item?.displayName ?? item?.username ?? "unknown";
+      await db.personMatch.upsert({
+        where: { contactId_candidateId: { contactId: one.id, candidateId: two.id } },
+        update: {},
+        create: { workspaceId: input.workspaceId, contactId: one.id, candidateId: two.id, score: 3, reasons: `same ${input.evidence === "PHONE" ? "phone number" : "email"}, different names (${label(first)} and ${label(second)})` },
+      });
+      return false;
+    }
   }
   const personId = two.personId ?? one.personId ?? randomUUID();
   const members = [one.id, two.id];
