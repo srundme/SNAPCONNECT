@@ -483,6 +483,17 @@ export function officeNow(now: Date, workingHours: string, holidays = ""): Offic
 }
 
 /** Fed on every turn so a reply can say "open until 7" or "hours have passed, tomorrow" instead of a vague "working hours". */
+/** Whether the office is open now, as facts only: what to say is the system prompt's job. */
+export function officeFacts(now: Date, workingHours: string, holidays = ""): string {
+  if (holidayOn(istDate(now).iso, holidays)) return "Today is a holiday: the team is off";
+  const status = officeNow(now, workingHours, holidays);
+  if (status.kind === "unknown") return "";
+  if (status.kind === "open") return `The office is open now, until ${status.closeLabel}`;
+  if (status.kind === "before") return `The office is closed now and opens at ${status.openLabel} today`;
+  if (status.kind === "off") return `Today is the weekly off. The office opens ${status.next === "tomorrow" ? "tomorrow" : `on ${status.next}`} at ${status.openLabel}`;
+  return `The office closed at ${status.closeLabel} and opens ${status.next === "tomorrow" ? "tomorrow" : `on ${status.next}`} at ${status.openLabel}`;
+}
+
 export function officeNowLine(now: Date, workingHours: string, holidays = ""): string {
   if (holidayOn(istDate(now).iso, holidays)) {
     return "The team is off today for a holiday. Do not say they will call today or during working hours. If someone is waiting for a call, say you will check with the team, and that maybe they will call on the next working day.";

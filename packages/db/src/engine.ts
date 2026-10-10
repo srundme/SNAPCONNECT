@@ -33,6 +33,7 @@ import {
   requestedTimeReply,
   dayOffLine,
   officeNowLine,
+  officeFacts,
   waitingOnCall,
   callWaitReply,
   askSameNumber,
@@ -4075,7 +4076,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     const known = questions.filter((question) => valueOf(question)?.trim()).map((question) => `- ${question.label} ${valueOf(question)}`);
     const missing = questions.filter((question) => question.required !== false && !valueOf(question)?.trim()).map((question) => `- ${question.label}`);
     return [
-      `Now in India: ${indiaTime(runtime.now())}. ${officeNowLine(runtime.now(), agent.workingHours, agent.holidays)}. Tomorrow is ${tomorrow}${openSet && !openSet.has(tomorrow) ? ", our weekly off" : ""}.`,
+      `Now in India: ${indiaTime(runtime.now())}. ${officeFacts(runtime.now(), agent.workingHours, agent.holidays)}. Tomorrow is ${tomorrow}${openSet && !openSet.has(tomorrow) ? ", our weekly off" : ""}.`,
       timeline,
       festivalToday(runtime.now(), agent.holidays) ? `Today is ${festivalToday(runtime.now(), agent.holidays)}.` : "",
       `Channel: ${CHANNEL_NAME[conversation.channel]}.${spoken.some((message) => message.author === "AI") ? "" : " You have not replied in this chat yet: this is your first reply."}`,
