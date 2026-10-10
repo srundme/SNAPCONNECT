@@ -1671,6 +1671,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   const consentLine = permissionPending ? `You asked whether we may share their enquiry details with ${permissionPending}. Read their answer and set consent (yes or no). If they ask who it is, say only the name.` : "";
   // A message Varun starts himself in this chat, because of something in the other chat.
   const crossChat = typeof payload.crossChat === "string" ? payload.crossChat : "";
+  let freshMatch: { id: string } | null = null;
   const comment = notes.find((body) => body.startsWith("Their comment:"));
   const emailChecks = notes.filter((body) => body.startsWith("Email check:")).length;
   const offerAnswers = notes.filter((body) => body.startsWith("Offer answer:"));
@@ -1792,6 +1793,25 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     const readPlace = placeQuestion ? read.answers[placeQuestion.id] ?? "" : "";
     const newPlace = readPlace && !(savedPlace && (readPlace.toLowerCase().includes(savedPlace) || savedPlace.includes(readPlace.toLowerCase()))) ? readPlace : null;
     const extra: string[] = [...read.problems];
+    // A number that is already used in another chat is spotted now, so Varun asks about it in this very reply.
+    const myPhone = read.phoneE164 ?? lead.phoneE164;
+    if (!pendingMatch && myPhone && spoken.some((message) => message.author === "AI")) {
+      const group = await personContactIds(db, conversation.contactId);
+      const elsewhereSamePhone = await db.lead.count({ where: { workspaceId: workspace.id, archivedAt: null, phoneE164: myPhone, contactId: { notIn: group } } });
+      if (elsewhereSamePhone) {
+        if (read.phoneE164 && read.phoneE164 !== lead.phoneE164) await db.lead.update({ where: { id: lead.id }, data: { phoneE164: read.phoneE164 } });
+        await linkByPhoneOrEmail(db, workspace.id, conversation.contactId).catch(() => false);
+        const justMatched = await db.personMatch.findFirst({ where: { status: "SUGGESTED", askedAt: null, OR: [{ contactId: conversation.contactId }, { candidateId: conversation.contactId }] }, orderBy: { createdAt: "desc" } });
+        const theirId = justMatched ? (justMatched.contactId === conversation.contactId ? justMatched.candidateId : justMatched.contactId) : null;
+        const them = theirId ? await db.contact.findUnique({ where: { id: theirId } }) : null;
+        if (justMatched && them) {
+          freshMatch = justMatched;
+          const theirChannel = CHANNEL_NAME[them.channel as keyof typeof CHANNEL_NAME] ?? them.channel;
+          const theirName = them.chosenName ?? them.displayName ?? them.username ?? "someone";
+          extra.push(`The number they just gave is also used in our ${theirChannel} chat with ${theirName}. In this reply, after responding to what they said, ask once, naturally: "Just to check sir, did you chat with us on ${theirChannel} as ${theirName} a little while ago?". Ask nothing else in this reply and share nothing from that chat.`);
+        }
+      }
+    }
     // The same-number check, step by step. Nothing from the other chat is shared until its owner agrees.
     const stage = async (value: string) => { await note(`Match ${pendingMatch!.id}: ${value}`); };
     if (pendingMatch && otherId && answer.same_person === "yes") {
@@ -2120,6 +2140,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   } else if (delivered && agent.followUps) {
     await scheduleFollowUp(db, runtime, conversation.id, Number(payload.followUp ?? 0));
   }
+  if (delivered && freshMatch) await db.personMatch.update({ where: { id: freshMatch.id }, data: { askedAt: runtime.now() } });
   if (delivered && pendingMatch && !pendingMatch.askedAt && matchLine) await db.personMatch.update({ where: { id: pendingMatch.id }, data: { askedAt: runtime.now() } });
   await refreshMemory(db, runtime, conversation.contact, spoken);
   return "done";
