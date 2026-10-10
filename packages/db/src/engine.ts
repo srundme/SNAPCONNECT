@@ -428,21 +428,14 @@ async function joinAcrossChannels(db: Db, conversationId: string, expectedRevisi
 async function otherChannelLine(
   db: Db,
   conversation: { id: string; contactId: string; workspaceId: string; channel: Channel },
-  phoneE164: string | null,
 ): Promise<string> {
-  const samePhone = phoneE164
-    ? await db.lead.findMany({
-        where: { workspaceId: conversation.workspaceId, archivedAt: null, phoneE164, contactId: { not: conversation.contactId } },
-        select: { contactId: true },
-        take: 3,
-      })
-    : [];
+  // Only chats joined to this person: a number shared with someone else never brings their chat here.
   const person = await personContactIds(db, conversation.contactId);
   const others = await db.conversation.findMany({
     where: {
       id: { not: conversation.id },
       channel: { not: conversation.channel },
-      contactId: { in: [...new Set([...person, ...samePhone.map((lead) => lead.contactId)])] },
+      contactId: { in: person },
     },
     include: { messages: { where: { author: { in: ["PROSPECT", "AI"] } }, orderBy: { createdAt: "desc" }, take: 8 } },
     orderBy: { updatedAt: "desc" },
@@ -1638,7 +1631,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   const livesIn = [...notes].reverse().find((body) => body.startsWith("Lives in: "))?.slice("Lives in: ".length).trim() ?? null;
   const abroad = numberAbroad(lead.whatsappE164 ?? lead.phoneE164, runtime.now());
   const languageSample = chatLanguageSample(spoken.filter((message) => message.author === "PROSPECT").map((message) => message.body));
-  let elsewhere = await otherChannelLine(db, conversation, lead.phoneE164).catch(() => "");
+  let elsewhere = await otherChannelLine(db, conversation).catch(() => "");
   // The same number or email under another name or channel: Varun asks once, and their answer joins or separates.
   const pendingMatch = await db.personMatch.findFirst({ where: { status: "SUGGESTED", OR: [{ contactId: conversation.contactId }, { candidateId: conversation.contactId }] }, orderBy: { createdAt: "desc" } });
   const otherId = pendingMatch ? (pendingMatch.contactId === conversation.contactId ? pendingMatch.candidateId : pendingMatch.contactId) : null;
@@ -1778,12 +1771,16 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
         answers = { ...answerRecord(merged.answers), ...read.answers };
         phoneE164 = phoneE164 ?? merged.phoneE164;
       }
-      elsewhere = await otherChannelLine(db, conversation, phoneE164).catch(() => "");
+      elsewhere = await otherChannelLine(db, conversation).catch(() => "");
       matchLine = "";
       extra.push(`They confirmed they also chatted with us on ${otherChannel}. Everything from that chat is now in Already known and Other channels: acknowledge it warmly in a few words and continue from where that chat left off, never asking anything again.`);
     } else if (pendingMatch && answer.same_person === "no") {
+      // Not them: the number may be a family member's, a typo or made up, so Varun confirms it once.
       await rejectMatch(db, workspace.id, pendingMatch.id, "CUSTOMER");
       matchLine = "";
+      if (pendingMatch.reasons.startsWith("same phone")) {
+        extra.push(`They said it was not them, but the number they gave is also used in another chat. Say "no worries" and confirm once that our team can reach them on the number they gave, reading it back (${phoneE164 ?? "the number they gave"}). Never say anyone else used it. If it is theirs or a family member's, carry on and set flag to "number also used in another chat"; if it was a mistake, ask for the right number.`);
+      }
     }
     if (newPlace) {
       const before = found;
