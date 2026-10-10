@@ -444,7 +444,7 @@ async function otherChannelLine(
   const chats = others.filter((other) => other.messages.length);
   if (!chats.length) return "";
   return [
-    "This same person also chatted with you on another channel. Treat it as one ongoing conversation and continue from where it was left: never ask again for anything they already told you there, their name included. They already know you: never introduce yourself again. If this is their first message here, a warm 'welcome back' fits. Do not repeat their earlier details back to them (their number, address, project or budget) unless they bring them up first, and do not quote the other chat.",
+    "This same person also chatted with you on another channel (if a different name was used there, it may be a family member's number: always call them by the name they use in this chat). Treat it as one ongoing conversation and continue from where it was left: never ask again for anything they already told you there, their name included. They already know you: never introduce yourself again. If this is their first message here, a warm 'welcome back' fits. Do not repeat their earlier details back to them (their number, address, project or budget) unless they bring them up first, and do not quote the other chat.",
     ...chats.map((other) => `Their ${channelLabel(other.channel)} chat, latest last:\n${other.messages.reverse().map((message) => `${message.author === "AI" ? "You" : "They"}: ${message.body.replace(/\s+/g, " ").slice(0, 200)}`).join("\n")}`),
   ].join("\n");
 }
