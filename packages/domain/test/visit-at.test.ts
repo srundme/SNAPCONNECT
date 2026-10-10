@@ -9,3 +9,14 @@ describe("requested visit time", () => {
     expect(requestedTime("tomorrow 11 am", now, "Tuesday to Sunday, 10 AM to 7 PM")?.at).toBe("2026-10-11T11:00:00+05:30");
   });
 });
+
+describe("number abroad", () => {
+  it("names the country and the time there, and nothing for an Indian number", async () => {
+    const { numberAbroad } = await import("../src/parse");
+    const now = new Date("2026-10-10T05:30:00Z");
+    expect(numberAbroad("+447400123456", now)).toEqual({ country: "United Kingdom", localTime: expect.stringMatching(/6:30 am/i) });
+    expect(numberAbroad("+12125551234", now)?.country).toBe("United States");
+    expect(numberAbroad("+12125551234", now)?.localTime).toBeNull();
+    expect(numberAbroad("+919845012345", now)).toBeNull();
+  });
+});

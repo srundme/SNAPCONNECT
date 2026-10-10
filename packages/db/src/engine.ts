@@ -19,6 +19,7 @@ import {
   chatLanguageSample,
   commentLeadSignal,
   languageName,
+  numberAbroad,
   humanizeReply,
   zohoValuesFromQuestions,
   openingEligibility,
@@ -1634,6 +1635,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   const addressNote = [...notes].reverse().find((body) => body.startsWith("Address: "))?.slice("Address: ".length).trim() ?? null;
   const savedAddress = addressNote?.startsWith("none") && name && !addressNote.includes(`(${name})`) ? null : addressNote?.split(" ")[0] ?? null;
   const profileName = conversation.contact.displayName ?? conversation.contact.username ?? null;
+  const abroad = numberAbroad(lead.whatsappE164 ?? lead.phoneE164, runtime.now());
   const languageSample = chatLanguageSample(spoken.filter((message) => message.author === "PROSPECT").map((message) => message.body));
   const elsewhere = await otherChannelLine(db, conversation, lead.phoneE164).catch(() => "");
   const comment = notes.find((body) => body.startsWith("Their comment:"));
@@ -1674,6 +1676,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       timeline,
       festivalToday(runtime.now(), agent.holidays) ? `Today is ${festivalToday(runtime.now(), agent.holidays)}.` : "",
       `Channel: ${CHANNEL_NAME[conversation.channel]}.${spoken.some((message) => message.author === "AI") ? "" : " You have not replied in this chat yet: this is your first reply."}`,
+      abroad ? `Their number is from ${abroad.country}${abroad.localTime ? `: it is ${abroad.localTime} there now` : " (several time zones: ask which city they are in if a time matters)"}. Time checks below are in India time.` : "",
       conversation.channel === "WHATSAPP" && lead.whatsappE164 ? `They are chatting from WhatsApp number ${lead.whatsappE164}${lead.sameNumberConfirmed ? " (they agreed we can call on it)" : ""}.` : "",
       name ? `Their name: ${name}${conversation.channel !== "WHATSAPP" && notes.some((body) => body.startsWith("Name from profile:")) && name === conversation.contact.chosenName ? " (from their profile; use it, do not ask)" : ""}.` : "Their name: not known yet.",
       !agent.addressSirMam ? "Do not use sir or ma'am."
@@ -1847,7 +1850,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   const choiceNow = answer.offer_choice === "consultation" ? "consultation" : answer.offer_choice ? "experience" : null;
   if (choiceNow && !followUp && !offerAnswers.some((body) => body.startsWith(`Offer answer: ${choiceNow}`))) {
     await note(`Offer answer: ${choiceNow} | ${latest.slice(0, 200)}`);
-    await alertTeam("meeting", `📅 ${who} wants ${choiceNow === "experience" ? "to visit the experience centre" : "a free consultation"}`);
+    await alertTeam("meeting", `📅 ${who} wants ${choiceNow === "experience" ? "to visit the experience centre" : "a video call with the team"}`);
   }
   const time = answer.slot ? requestedTime(answer.slot, runtime.now(), agent.workingHours) : null;
   // A slot is noted when it names a time, once per time.
@@ -2095,7 +2098,7 @@ async function syncLead(db: Db, leadId: string, runtime: Runtime): Promise<"done
       select: { body: true },
     })));
     const visitAt = visitNote?.body.slice("Visit at: ".length).trim() ?? "";
-    const visitKind = offerNote?.body.includes("consultation") ? "Consultation call" : "Experience centre visit";
+    const visitKind = offerNote?.body.includes("consultation") ? "Video consultation" : "Experience centre visit";
     if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00\+05:30$/.test(visitAt) && leadAgent.zohoVisitField) record[leadAgent.zohoVisitField] = visitAt;
     const concern = nameConcern(lead.contact.chosenName, lead.channel === "WHATSAPP" ? [] : [lead.contact.displayName, lead.contact.username]);
     const projectChecks = await db.message.findMany({

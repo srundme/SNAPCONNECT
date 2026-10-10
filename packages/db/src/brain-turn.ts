@@ -195,10 +195,9 @@ export function placeFacts(input: {
     ].join(""));
     // A home outside the city we serve: Varun takes the details and the team confirms.
     const served = input.agent.serviceArea.split(/[,\n]+/).map((place) => place.trim().toLowerCase()).filter(Boolean);
-    const ourCity = input.agent.serviceArea.split(/[,\n]+/)[0]?.trim() ?? "";
     const city = (found.city ?? "").toLowerCase();
     if (city && served.length && !served.some((place) => city.includes(place) || place.includes(city))) {
-      facts.push(`This property is in ${found.city}, outside ${ourCity}. Follow the rule for a home outside ${ourCity}.`);
+      facts.push(`This property is in ${found.city}, outside the cities we take up (${input.agent.serviceArea}). Follow the rule for a home elsewhere.`);
     }
     if (found.shortForm || found.correctedFrom) facts.push(`They typed "${found.shortForm ?? found.correctedFrom}": confirm they mean ${found.name}.`);
     else facts.push("Confirm once that this is their property (location and type), unless they already confirmed it in the chat.");

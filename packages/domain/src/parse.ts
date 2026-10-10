@@ -175,3 +175,20 @@ export function emailProblem(raw: string): EmailProblem | null {
   if (letters.length >= 7 && (vowels / letters.length < 0.15 || longestConsonants >= 6 || keyboard)) return { kind: "gibberish" };
   return null;
 }
+
+/** One time zone per country we see most; countries with several zones have none, so Claude asks. */
+const COUNTRY_ZONE: Record<string, string> = {
+  GB: "Europe/London", GG: "Europe/London", JE: "Europe/London", IM: "Europe/London", IE: "Europe/Dublin", AE: "Asia/Dubai", QA: "Asia/Qatar", SA: "Asia/Riyadh", KW: "Asia/Kuwait", OM: "Asia/Muscat", BH: "Asia/Bahrain",
+  SG: "Asia/Singapore", MY: "Asia/Kuala_Lumpur", HK: "Asia/Hong_Kong", JP: "Asia/Tokyo", NZ: "Pacific/Auckland", DE: "Europe/Berlin", FR: "Europe/Paris",
+  NL: "Europe/Amsterdam", CH: "Europe/Zurich", SE: "Europe/Stockholm", IT: "Europe/Rome", ES: "Europe/Madrid", LK: "Asia/Colombo", NP: "Asia/Kathmandu",
+};
+
+/** Where a phone number is from, when it is not an Indian number: the country and the time there now. */
+export function numberAbroad(e164: string | null | undefined, now: Date): { country: string; localTime: string | null } | null {
+  const code = e164 ? parsePhoneNumberFromString(e164)?.country : undefined;
+  if (!code || code === "IN") return null;
+  const country = new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code;
+  const zone = COUNTRY_ZONE[code];
+  const localTime = zone ? new Intl.DateTimeFormat("en-IN", { timeZone: zone, weekday: "long", hour: "numeric", minute: "2-digit", hour12: true }).format(now) : null;
+  return { country, localTime };
+}
