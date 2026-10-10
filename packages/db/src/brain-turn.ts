@@ -241,6 +241,11 @@ export function ruleBreaks(bubbles: string[], context: RuleContext): string[] {
   if (/\b(?:is|has been|are)\s+(?:now\s+)?(?:booked|confirmed|scheduled)\b|\bbooking (?:is )?confirmed\b/i.test(text)) {
     breaks.push("It says a visit or meeting is booked or confirmed. It is only a request; our team calls to confirm.");
   }
+  // "Your video call tomorrow", "see you on Sunday": a requested time spoken of as fixed.
+  if (/\b(?:the|your|our)\s+(?:video\s+)?(?:call|visit|meeting|consultation)\s+(?:tomorrow|today|tonight|this\s+\w+|on\s+(?:mon|tue|wed|thu|fri|sat|sun)\w*|at\s+\d)/i.test(text)
+    || /\bsee(?:ing)?\s+you\s+(?:tomorrow|today|tonight|this\s+\w+|on\s+(?:mon|tue|wed|thu|fri|sat|sun)\w*|at\s+\d|then)\b/i.test(text)) {
+    breaks.push("It speaks of the call or visit as if it is fixed. Nothing is fixed until our team confirms: say \"when our team connects with you\" or \"once our team confirms a time with you\".");
+  }
   if (bubbles.length > 3 || bubbles.some((bubble) => bubble.length > 500)) breaks.push("It is too long. 1 to 3 short messages.");
   // Links, phone numbers and emails only from what we know.
   for (const link of text.match(/https?:\/\/[^\s)]+/gi) ?? []) {

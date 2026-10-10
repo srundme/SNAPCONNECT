@@ -87,3 +87,17 @@ describe("property outside the city we serve", () => {
     expect(at("Bengaluru")).not.toMatch(/outside/);
   });
 });
+
+describe("nothing is fixed until the team confirms", () => {
+  const base = { latest: "", allowedText: "", allowedPhones: [], allowedEmails: [], previousAi: [], otherFirm: null };
+  it("stops a requested time spoken of as fixed", () => {
+    for (const reply of ["Our team will take you through every material on the video call tomorrow", "They will speak about it during your visit on Sunday", "We look forward to seeing you at 4 PM", "See you tomorrow sir"]) {
+      expect(ruleBreaks([reply], base).some((rule) => rule.includes("as if it is fixed"))).toBe(true);
+    }
+  });
+  it("lets Varun note a time and say the team will confirm", () => {
+    for (const reply of ["Noted Sunday at 11 AM sir, our team will call you to confirm", "Our team will take you through every material when they connect with you", "We look forward to welcoming you at the experience centre"]) {
+      expect(ruleBreaks([reply], base)).toEqual([]);
+    }
+  });
+});
