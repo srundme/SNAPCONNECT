@@ -163,6 +163,15 @@ export function requestedTime(text: string, now: Date, workingHours: string): Re
   let addDays = 0;
   const relative = text.match(/\b(?:in|within|after|next)\s+(?:the\s+)?(?:next\s+)?(\d+|an?|one|two|three|four|five|six|half an?)\s*(hours?|hrs?|minutes?|mins?)\b/i);
   const absolute = text.match(/\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b/i);
+  // A 24-hour time like "13:00" or "@ 18.30"; 1:00 to 7:59 without am or pm means the afternoon.
+  const clock24 = absolute ? null : text.match(/(?:^|[^\d])([01]?\d|2[0-3])[:.]([0-5]\d)(?![\d.]|\s*(?:am|pm))/i);
+  // A date like "16 Oct", "16th October 2026", "Oct 16" or "16/10".
+  const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  const named = text.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:of\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?:,?\s*(\d{4}))?/i)
+    ?? (() => { const m = text.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?/i); return m ? [m[0], m[2], m[1], m[3]] as unknown as RegExpMatchArray : null; })();
+  const numeric = named ? null : text.match(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b/);
+  const onDate = named ? { day: Number(named[1]), month: MONTHS.indexOf(String(named[2]).slice(0, 3).toLowerCase()), year: named[3] ? Number(named[3]) : null }
+    : numeric ? { day: Number(numeric[1]), month: Number(numeric[2]) - 1, year: numeric[3] ? Number(numeric[3].length === 2 ? `20${numeric[3]}` : numeric[3]) : null } : null;
   if (relative) {
     const word = relative[1]!.toLowerCase();
     const amount = word.startsWith("half") ? 0.5 : NUMBER_WORDS[word] ?? Number(word);
@@ -170,10 +179,20 @@ export function requestedTime(text: string, now: Date, workingHours: string): Re
     const target = nowMinutes + Math.round(delta);
     addDays = Math.floor(target / 1440);
     minutes = target % 1440;
-  } else if (absolute) {
-    minutes = ((Number(absolute[1]) % 12) + (absolute[3]!.toLowerCase() === "pm" ? 12 : 0)) * 60 + Number(absolute[2] ?? 0);
+  } else if (absolute || clock24) {
+    if (absolute) minutes = ((Number(absolute[1]) % 12) + (absolute[3]!.toLowerCase() === "pm" ? 12 : 0)) * 60 + Number(absolute[2] ?? 0);
+    else {
+      const hour = Number(clock24![1]);
+      minutes = (hour >= 1 && hour <= 7 ? hour + 12 : hour) * 60 + Number(clock24![2]);
+    }
     const weekday = text.match(/\b(sun|mon|tue|wed|thu|fri|sat)(?:s|nes|rs|ur)?(?:day)?\b/i);
-    if (/\btomorrow\b|\bkal\b|\bnaalai\b|\bnaale\b/i.test(text)) addDays = 1;
+    if (onDate && onDate.month >= 0 && onDate.day >= 1 && onDate.day <= 31) {
+      // An exact date: days from today in India. A date already gone is left to the reply to point out.
+      const todayUtc = Date.UTC(india.getUTCFullYear(), india.getUTCMonth(), india.getUTCDate());
+      const target = Date.UTC(onDate.year ?? india.getUTCFullYear(), onDate.month, onDate.day);
+      addDays = Math.round((target - todayUtc) / 86_400_000);
+      if (addDays < 0 || (addDays === 0 && minutes <= nowMinutes)) return null;
+    } else if (/\btomorrow\b|\bkal\b|\bnaalai\b|\bnaale\b/i.test(text)) addDays = 1;
     else if (weekday && !/\btoday\b/i.test(text)) {
       // "Saturday 11 am" means the coming Saturday, not today.
       const target = WEEK.findIndex((day) => day.toLowerCase().startsWith(weekday[1]!.toLowerCase()));

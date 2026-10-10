@@ -38,6 +38,8 @@ export function casualText(text: string, keepCase: string[] = []): string {
   const keep = new Set(keepCase.map((word) => word.toLowerCase()).filter(Boolean));
   const links: string[] = [];
   let out = text
+    // "Mr. Shetty" is one name, not two sentences.
+    .replace(/\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|Rd|No)\.(?=\s)/g, "$1")
     .replace(/https?:\/\/\S+?(?=[.,!?]*(?:\s|$))/g, (link) => `\u0000${links.push(link) - 1}\u0000`)
     .replace(/(\d),(?=\d)/g, "$1")
     .replace(/\b(?:you're|youre)\b/gi, "you are")

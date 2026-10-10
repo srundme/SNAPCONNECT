@@ -912,3 +912,10 @@ describe("photos, videos and other attachments", () => {
     expect(whatsapp[0]).toMatchObject({ mediaKind: "document", document: { mediaId: "doc-1", fileName: "plan.pdf", mimeType: "application/pdf" } });
   });
 });
+
+describe("titles in texting style", () => {
+  it("keeps Mr. Shetty as one name", async () => {
+    const { casualText } = await import("../src/style");
+    expect(casualText("Thank you Mr. Shetty. Can our team call you?")).toBe("thank you Mr Shetty...can our team call you?");
+  });
+});
