@@ -34,6 +34,10 @@ export type BrainAnswer = {
   opt_out: boolean;
   quiet?: boolean;
   same_person?: "yes" | "no" | null;
+  related?: "yes" | "no" | null;
+  share_request?: boolean;
+  consent?: "yes" | "no" | null;
+  preferred_channel?: "here" | "other" | null;
   address?: "sir" | "ma'am" | "none" | null;
 };
 
@@ -55,6 +59,10 @@ export const BRAIN_TOOL_SCHEMA = {
     flag: { type: ["string", "null"] },
     opt_out: { type: "boolean" },
     address: { type: ["string", "null"], enum: ["sir", "ma'am", "none", null], description: "Only when FACTS says sir or ma'am is not decided yet: sir, ma'am, or none if the name does not tell. Otherwise null." },
+    related: { type: ["string", "null"], enum: ["yes", "no", null], description: "Only after you asked whether the other chat is someone related to them or who messaged for them." },
+    share_request: { type: "boolean", description: "True when they want the details the related person already shared; their permission is asked first." },
+    consent: { type: ["string", "null"], enum: ["yes", "no", null], description: "Only after you asked whether we may share their enquiry details with someone: their answer." },
+    preferred_channel: { type: ["string", "null"], enum: ["here", "other", null], description: "Only after you asked whether to continue here or on their other channel: here or other." },
     same_person: { type: ["string", "null"], enum: ["yes", "no", null], description: "Only after you asked whether they messaged us on another channel: yes or no from their answer. Otherwise null." },
     quiet: { type: "boolean", description: "True only when their latest is just a reaction after your closing line: nothing is sent." },
   },

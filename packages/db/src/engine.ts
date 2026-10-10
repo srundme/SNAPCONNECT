@@ -451,6 +451,19 @@ async function otherChannelLine(
 
 const META_WINDOW_MS = 23.5 * 3_600_000;
 
+/** Varun starts a message in another chat (a permission question, a channel switch); the fact says what about. */
+async function crossChatTurn(db: Db, runtime: Runtime, conversationId: string, fact: string): Promise<void> {
+  const target = await db.conversation.update({ where: { id: conversationId }, data: { revision: { increment: 1 } }, select: { id: true, workspaceId: true, revision: true, contactId: true } });
+  await db.outboxJob.create({
+    data: {
+      workspaceId: target.workspaceId,
+      type: "INFERENCE",
+      payload: { conversationId: target.id, expectedRevision: target.revision, contactId: target.contactId, crossChat: fact },
+      availableAt: new Date(runtime.now().getTime() + 1_000),
+    },
+  });
+}
+
 /** A follow-up never lands at night: 9 PM to 9:30 AM in India moves to 10 AM. */
 function awakeTime(when: Date): Date {
   const ist = new Date(when.getTime() + 330 * 60_000);
@@ -1638,11 +1651,26 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   const other = otherId ? await db.contact.findUnique({ where: { id: otherId }, include: { conversations: { orderBy: { updatedAt: "desc" }, take: 1, select: { updatedAt: true } } } }) : null;
   const otherChannel = other ? CHANNEL_NAME[other.channel as keyof typeof CHANNEL_NAME] ?? other.channel : "";
   const otherAgo = other?.conversations[0] ? since(runtime.now().getTime() - other.conversations[0].updatedAt.getTime()) : "a while";
-  let matchLine = pendingMatch && other
-    ? `Possibly the same person: someone chatted with us on ${otherChannel} ${otherAgo} ago (${pendingMatch.reasons}). ${pendingMatch.askedAt
-      ? "You already asked whether that was them: read their answer and set same_person."
-      : `Ask once, naturally, whether they messaged us on ${otherChannel} a little while ago, close to: "Just to check sir, did you message us on ${otherChannel} a few minutes back?". Never mention the number, the other name or how you know. Set same_person when they answer.`}`
-    : "";
+  const otherName = other ? other.chosenName ?? other.displayName ?? other.username ?? "someone" : "";
+  const thisName = name ?? conversation.contact.displayName ?? conversation.contact.username ?? "a customer";
+  const thisChannel = CHANNEL_NAME[conversation.channel as keyof typeof CHANNEL_NAME] ?? conversation.channel;
+  // Where this conversation is in the same-number check: asked, told the number matches, related, permission asked.
+  const matchStage = pendingMatch ? [...notes].reverse().find((body) => body.startsWith(`Match ${pendingMatch.id}: `))?.split(": ")[1] ?? null : null;
+  const otherChat = otherId ? await db.conversation.findFirst({ where: { contactId: otherId }, orderBy: { updatedAt: "desc" } }) : null;
+  const otherOpen = Boolean(otherChat?.lastUserMessageAt && otherChat.owner === "AI" && runtime.now().getTime() < otherChat.lastUserMessageAt.getTime() + META_WINDOW_MS);
+  let matchLine = !pendingMatch || !other ? ""
+    : matchStage === "told" ? `You told them the number they shared is the same one used in our ${otherChannel} chat with ${otherName}, and asked whether that is someone related to them or someone who messaged us for them. Read their answer and set related (yes or no). Share nothing from that chat.`
+    : matchStage === "related" ? `They said ${otherName} is related to them or messaged for them. Ask whether we should continue the enquiry with them here, and whether they would like the details ${otherName} already shared with us; we would first ask ${otherName}'s permission. If they want them, set share_request to true. Share nothing from that chat before ${otherName} agrees.`
+    : matchStage === "permission" ? `We asked ${otherName} on ${otherChannel} whether we may share their enquiry details. Until they agree, share nothing from that chat; carry on with this person's own enquiry.`
+    : pendingMatch.askedAt ? `You asked whether they chatted with us on ${otherChannel} as ${otherName}: read their answer and set same_person.`
+    : `The number they shared is also used in our ${otherChannel} chat with ${otherName} (${otherAgo} ago). Ask once, naturally, close to: "Just to check sir, did you chat with us on ${otherChannel} as ${otherName} a little while ago?". Share nothing from that chat. Set same_person when they answer.`;
+  // In the chat whose details someone else asked for: their permission is asked, and their answer decides.
+  const permissionAsked = [...notes].reverse().find((body) => body.startsWith("Permission asked "));
+  const permissionMatchId = permissionAsked?.slice("Permission asked ".length).split(":")[0] ?? null;
+  const permissionPending = permissionMatchId && !notes.some((body) => body.startsWith(`Permission answered ${permissionMatchId}`)) ? permissionAsked!.split(": ").slice(1).join(": ") : null;
+  const consentLine = permissionPending ? `You asked whether we may share their enquiry details with ${permissionPending}. Read their answer and set consent (yes or no). If they ask who it is, say only the name.` : "";
+  // A message Varun starts himself in this chat, because of something in the other chat.
+  const crossChat = typeof payload.crossChat === "string" ? payload.crossChat : "";
   const comment = notes.find((body) => body.startsWith("Their comment:"));
   const emailChecks = notes.filter((body) => body.startsWith("Email check:")).length;
   const offerAnswers = notes.filter((body) => body.startsWith("Offer answer:"));
@@ -1701,6 +1729,8 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       comment ? `They came from a comment on our post: "${comment.replace(/^Their comment:\s*/, "")}".` : "",
       elsewhere ? `Other channels:\n${elsewhere}` : "",
       matchLine,
+      crossChat ? `Start a message now (nothing new from them): ${crossChat}` : "",
+      consentLine,
       conversation.contact.memory ? `Earlier in this chat (summary): ${conversation.contact.memory}` : "",
       typeof payload.editedTo === "string" ? `They edited an earlier message from "${String(payload.editedFrom ?? "")}" to "${payload.editedTo}".` : "",
       followUp && lastAiAt ? `They have not replied for ${since(runtime.now().getTime() - lastAiAt.getTime())}. This is follow-up ${Number(payload.followUp) + 1}: one short, gentle nudge, never pushy.` : "",
@@ -1762,7 +1792,8 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     const readPlace = placeQuestion ? read.answers[placeQuestion.id] ?? "" : "";
     const newPlace = readPlace && !(savedPlace && (readPlace.toLowerCase().includes(savedPlace) || savedPlace.includes(readPlace.toLowerCase()))) ? readPlace : null;
     const extra: string[] = [...read.problems];
-    // Their answer to "did you message us on WhatsApp?": a yes joins the chats and brings that context here.
+    // The same-number check, step by step. Nothing from the other chat is shared until its owner agrees.
+    const stage = async (value: string) => { await note(`Match ${pendingMatch!.id}: ${value}`); };
     if (pendingMatch && otherId && answer.same_person === "yes") {
       await linkContacts(db, { workspaceId: workspace.id, contactId: conversation.contactId, otherId, evidence: "CUSTOMER_CONFIRMED" });
       await mergePersonLeads(db, conversation.contactId);
@@ -1773,13 +1804,61 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       }
       elsewhere = await otherChannelLine(db, conversation).catch(() => "");
       matchLine = "";
-      extra.push(`They confirmed they also chatted with us on ${otherChannel}. Everything from that chat is now in Already known and Other channels: acknowledge it warmly in a few words and continue from where that chat left off, never asking anything again.`);
-    } else if (pendingMatch && answer.same_person === "no") {
-      // Not them: the number may be a family member's, a typo or made up, so Varun confirms it once.
+      extra.push(`They confirmed they also chatted with us on ${otherChannel}. Everything from that chat is now in Already known and Other channels: welcome them back warmly in a few words, never ask anything again, and ask whether they would like to continue here on ${thisChannel} or on ${otherChannel}, so we keep one place to talk. Set preferred_channel when they answer.`);
+    } else if (pendingMatch && answer.same_person === "no" && !matchStage) {
+      await stage("told");
+      matchLine = "";
+      extra.push(`They said no. Say kindly but clearly that you just checked: the number they shared is the same one used in our ${otherChannel} chat with ${otherName}. Ask whether that is someone related to them, or someone who messaged us for them. Share nothing from that chat. Set related when they answer.`);
+    } else if (pendingMatch && matchStage === "told" && answer.related === "yes") {
+      await stage("related");
+      matchLine = "";
+      extra.push(`They said ${otherName} is related to them or messaged for them. Ask whether we should continue the enquiry with them here, and whether they would like the details ${otherName} already shared; we would first ask ${otherName}'s permission. Set share_request to true if they want them. Share nothing before that.`);
+    } else if (pendingMatch && matchStage === "told" && answer.related === "no") {
+      // Not them and nobody they know: likely a mistyped or someone else's number.
       await rejectMatch(db, workspace.id, pendingMatch.id, "CUSTOMER");
       matchLine = "";
-      if (pendingMatch.reasons.startsWith("same phone")) {
-        extra.push(`They said it was not them, but the number they gave is also used in another chat. Say "no worries" and confirm once that our team can reach them on the number they gave, reading it back (${phoneE164 ?? "the number they gave"}). Never say anyone else used it. If it is theirs or a family member's, carry on and set flag to "number also used in another chat"; if it was a mistake, ask for the right number.`);
+      extra.push(`They do not know ${otherName}. Confirm once that our team can reach them on the number they gave, reading it back (${phoneE164 ?? "the number they gave"}). If it was a mistake, ask for the right number. Set flag to "number also used by someone else".`);
+    }
+    if (pendingMatch && otherChat && answer.share_request === true && matchStage !== "permission") {
+      // The other chat's owner decides: Varun asks them on their own channel, if it is still open.
+      await stage("permission");
+      matchLine = "";
+      if (otherOpen) {
+        await db.message.create({ data: { workspaceId: workspace.id, connectionId: otherChat.connectionId, conversationId: otherChat.id, author: "SYSTEM", body: `Permission asked ${pendingMatch.id}: ${thisName} on ${thisChannel}`, createdAt: runtime.now() } });
+        await crossChatTurn(db, runtime, otherChat.id, `${thisName} is chatting with us on ${thisChannel}, shared your number, and says they are related to you or messaged for you. Ask politely, in one short message, whether we may share the enquiry details you gave us with them. Set consent when they answer.`);
+        extra.push(`Tell them you will check with ${otherName} and get back to them, and meanwhile carry on with their enquiry.`);
+      } else {
+        await alertTeam("person", `🙋 ${thisName} (${thisChannel}) shared the number used by ${otherName} (${otherChannel}) and wants their enquiry details. Please ask ${otherName} before sharing anything.`);
+        extra.push(`Say our team will check with ${otherName} and get back to them, and meanwhile carry on with their enquiry.`);
+      }
+    }
+    if (permissionPending && permissionMatchId && (answer.consent === "yes" || answer.consent === "no")) {
+      await note(`Permission answered ${permissionMatchId}: ${answer.consent}`);
+      const asking = await db.personMatch.findUnique({ where: { id: permissionMatchId } });
+      const askerId = asking ? (asking.contactId === conversation.contactId ? asking.candidateId : asking.contactId) : null;
+      const askerChat = askerId ? await db.conversation.findFirst({ where: { contactId: askerId }, orderBy: { updatedAt: "desc" } }) : null;
+      if (asking && askerId && answer.consent === "yes") {
+        await linkContacts(db, { workspaceId: workspace.id, contactId: conversation.contactId, otherId: askerId, evidence: "CUSTOMER_CONFIRMED" });
+        await mergePersonLeads(db, conversation.contactId);
+        if (askerChat) await crossChatTurn(db, runtime, askerChat.id, `${thisName} agreed to share their enquiry details: they are now in Already known and Other channels. Tell them warmly in a few words, and continue the enquiry from there without asking anything again.`);
+        extra.push("They agreed. Thank them in a few words and carry on.");
+      } else if (asking) {
+        await rejectMatch(db, workspace.id, asking.id, "CUSTOMER");
+        if (askerChat) await crossChatTurn(db, runtime, askerChat.id, `${thisName} would prefer to keep their enquiry details private. Tell them kindly, without any detail, and continue their own enquiry fresh.`);
+        extra.push("They prefer not to share. Say that is absolutely fine, nothing will be shared, and carry on.");
+      }
+    }
+    if (answer.preferred_channel === "other") {
+      // They would rather continue on the other channel: Varun picks it up there if the chat is open.
+      const person = await personContactIds(db, conversation.contactId);
+      const there = await db.conversation.findFirst({ where: { contactId: { in: person.filter((id) => id !== conversation.contactId) }, channel: { not: conversation.channel } }, orderBy: { updatedAt: "desc" } });
+      const thereOpen = Boolean(there?.lastUserMessageAt && there.owner === "AI" && runtime.now().getTime() < there.lastUserMessageAt.getTime() + META_WINDOW_MS);
+      const thereName = there ? CHANNEL_NAME[there.channel as keyof typeof CHANNEL_NAME] ?? there.channel : "the other channel";
+      if (there && thereOpen) {
+        await crossChatTurn(db, runtime, there.id, `They asked to continue here instead of ${thisChannel}. Greet them briefly ("Continuing here as you asked, sir") and carry on with the next missing detail.`);
+        extra.push(`They want to continue on ${thereName}. Say you are messaging them there now.`);
+      } else if (there) {
+        extra.push(`They want to continue on ${thereName}, but we can message them there only after they send us a message. Ask them to send a quick hi on ${thereName}, and you will continue there.`);
       }
     }
     if (newPlace) {
@@ -1970,7 +2049,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     let voiceSent = false;
     if (clip) {
       if (agent.typingDelay) await runtime.pause?.(typingMs(spokenText));
-      const result = await runtime.send({ connection: sendConnection(connection), purpose: "text", recipientId: participant?.externalId, text: spokenText, audioUrl: clip.url, inboundMessageId: followUp ? undefined : customerMessageId(conversation.messages) });
+      const result = await runtime.send({ connection: sendConnection(connection), purpose: "text", recipientId: participant?.externalId, text: spokenText, audioUrl: clip.url, inboundMessageId: followUp || crossChat ? undefined : customerMessageId(conversation.messages) });
       if (result.status === "ACCEPTED" || result.status === "UNKNOWN") {
         voiceSent = true;
         await record(spokenText, result, clip);
@@ -1996,7 +2075,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
           diagnostics.push(`Stopped before bubble ${index + 1}: ${now?.owner !== "AI" ? "the team took over" : "a newer message came in"}`);
           break;
         }
-        const result = await runtime.send({ connection: sendConnection(connection), purpose: "text", recipientId: participant?.externalId, text: bubble, ...(index === 0 && !followUp ? { inboundMessageId: customerMessageId(conversation.messages) } : {}) });
+        const result = await runtime.send({ connection: sendConnection(connection), purpose: "text", recipientId: participant?.externalId, text: bubble, ...(index === 0 && !followUp && !crossChat ? { inboundMessageId: customerMessageId(conversation.messages) } : {}) });
         await record(bubble, result);
         if (result.status !== "ACCEPTED") {
           diagnostics.push(`Bubble ${index + 1} not sent: ${result.status}${"error" in result && result.error ? ` ${String(result.error).slice(0, 160)}` : ""}`);
