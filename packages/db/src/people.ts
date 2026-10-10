@@ -99,13 +99,13 @@ export async function linkContacts(
     const [first, second] = await Promise.all([one.id, two.id].map((id) => db.contact.findUnique({ where: { id }, select: { chosenName: true, displayName: true, username: true } })));
     const namesOne = nameTokens(first?.chosenName, first?.displayName, first?.username);
     const namesTwo = nameTokens(second?.chosenName, second?.displayName, second?.username);
-    // A phone number is a strong signal and always joins; an email under a clearly different name is shown as a possible match.
-    if (input.evidence === "EMAIL" && namesOne.size && namesTwo.size && ![...namesOne].some((token) => [...namesTwo].some((other) => sameName(token, other)))) {
+    // Close names (Gopi and Gopin) join straight away; clearly different names wait for Varun to ask the customer.
+    if (namesOne.size && namesTwo.size && ![...namesOne].some((token) => [...namesTwo].some((other) => sameName(token, other)))) {
       const label = (item: typeof first) => item?.chosenName ?? item?.displayName ?? item?.username ?? "unknown";
       await db.personMatch.upsert({
         where: { contactId_candidateId: { contactId: one.id, candidateId: two.id } },
         update: {},
-        create: { workspaceId: input.workspaceId, contactId: one.id, candidateId: two.id, score: 3, reasons: `same email, different names (${label(first)} and ${label(second)})` },
+        create: { workspaceId: input.workspaceId, contactId: one.id, candidateId: two.id, score: 3, reasons: `same ${input.evidence === "PHONE" ? "phone number" : "email"}, different names (${label(first)} and ${label(second)})` },
       });
       return false;
     }

@@ -61,7 +61,7 @@ import { randomBytes } from "node:crypto";
 import type { Db } from "./client";
 import { applyProjectAliases, lookupProject } from "./projects";
 import { raiseAlert, type AlertKind } from "./alerts";
-import { linkByPhoneOrEmail, linkContacts, mergePersonLeads, personContactIds, personLeads, primaryOf, rejectMatch } from "./people";
+import { linkByPhoneOrEmail, linkContacts, mergePersonLeads, personContactIds, personLeads, primaryOf, rejectMatch, unlinkContact } from "./people";
 import type { Prisma } from "./generated/prisma/client";
 
 export type SendConnection = {
@@ -444,7 +444,7 @@ async function otherChannelLine(
   const chats = others.filter((other) => other.messages.length);
   if (!chats.length) return "";
   return [
-    "This same person also chatted with you on another channel (if a different name was used there, it may be a family member's number: always call them by the name they use in this chat). Treat it as one ongoing conversation and continue from where it was left: never ask again for anything they already told you there, their name included. They already know you: never introduce yourself again. If this is their first message here, a warm 'welcome back' fits. Do not repeat their earlier details back to them (their number, address, project or budget) unless they bring them up first, and do not quote the other chat.",
+    "This same person also chatted with you on another channel (if a different name was used there, it may be a family member's number: always call them by the name they use in this chat). The first time you use anything from that chat, say lightly that you see they also chatted with us there. If they say they never did, set same_person to no. Treat it as one ongoing conversation and continue from where it was left: never ask again for anything they already told you there, their name included. They already know you: never introduce yourself again. If this is their first message here, a warm 'welcome back' fits. Do not repeat their earlier details back to them (their number, address, project or budget) unless they bring them up first, and do not quote the other chat.",
     ...chats.map((other) => `Their ${channelLabel(other.channel)} chat, latest last:\n${other.messages.reverse().map((message) => `${message.author === "AI" ? "You" : "They"}: ${message.body.replace(/\s+/g, " ").slice(0, 200)}`).join("\n")}`),
   ].join("\n");
 }
@@ -1819,6 +1819,21 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       matchLine = "";
       extra.push(`They do not know ${otherName}. Confirm once that our team can reach them on the number they gave, reading it back (${phoneE164 ?? "the number they gave"}). If it was a mistake, ask for the right number. Set flag to "number also used by someone else".`);
     }
+    // Joined by phone, but they say they never chatted with us there: separate the chats and start fresh here.
+    if (!pendingMatch && elsewhere && answer.same_person === "no") {
+      const group = await personContactIds(db, conversation.contactId);
+      await unlinkContact(db, workspace.id, conversation.contactId, "CUSTOMER");
+      for (const contactId of group) {
+        const chat = await db.conversation.findFirst({ where: { contactId }, orderBy: { updatedAt: "desc" }, include: { messages: { where: { author: "SYSTEM", body: { startsWith: "Answers before join: " } }, orderBy: { createdAt: "desc" }, take: 1 } } });
+        const saved = chat?.messages[0]?.body.slice("Answers before join: ".length);
+        if (!saved) continue;
+        const restored = JSON.parse(saved) as Record<string, string>;
+        await db.lead.updateMany({ where: { contactId, archivedAt: null }, data: { answers: restored } });
+        if (contactId === conversation.contactId) answers = restored;
+      }
+      elsewhere = "";
+      extra.push("They said they never chatted with us on the other channel, so the chats are now separate. Say no worries in a few words, treat this as a fresh enquiry using only what they told you here, and continue with the next missing detail.");
+    }
     if (pendingMatch && otherChat && answer.share_request === true && matchStage !== "permission") {
       // The other chat's owner decides: Varun asks them on their own channel, if it is still open.
       await stage("permission");
@@ -1949,6 +1964,16 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     },
   });
   if (phoneE164 !== lead.phoneE164 || JSON.stringify(answers) !== JSON.stringify(answerRecord(lead.answers))) {
+    // Before a phone match joins two chats, each keeps a copy of its own answers, so a "that was not me" can undo it.
+    if (phoneE164) {
+      const sameNumber = await db.lead.findMany({ where: { workspaceId: workspace.id, archivedAt: null, phoneE164 }, select: { contactId: true, answers: true, contact: { select: { personId: true } } } });
+      if (sameNumber.length > 1) {
+        for (const item of sameNumber.filter((entry) => !entry.contact.personId)) {
+          const chat = await db.conversation.findFirst({ where: { contactId: item.contactId }, orderBy: { updatedAt: "desc" }, select: { id: true, connectionId: true } });
+          if (chat) await db.message.create({ data: { workspaceId: workspace.id, connectionId: chat.connectionId, conversationId: chat.id, author: "SYSTEM", body: `Answers before join: ${JSON.stringify(answerRecord(item.answers))}`, createdAt: runtime.now() } });
+        }
+      }
+    }
     await linkByPhoneOrEmail(db, workspace.id, conversation.contactId).catch(() => false);
     await mergePersonLeads(db, conversation.contactId).catch(() => false);
   }

@@ -82,13 +82,15 @@ describeDb("one person across channels", () => {
     expect(waContact.chosenName).toBe("Riteesh Shetty");
   });
 
-  it("joins the same number even under different names", async () => {
+  it("waits for Varun to ask when the same number comes under clearly different names", async () => {
     const { workspace, ig, wa, person } = await setup();
     const insta = await person(ig.id, "INSTAGRAM", { username: "riteesh_shetty", chosenName: "Riteesh" }, { answers: { where: "Sobha Royal Pavilion" }, phoneE164: "+916361977902" });
     const whats = await person(wa.id, "WHATSAPP", { displayName: "Arvind", chosenName: "Arvind" }, { answers: { home: "2 BHK Apartment" }, phoneE164: "+916361977902" });
-    expect(await linkByPhoneOrEmail(db, workspace.id, insta.contact.id)).toBe(true);
-    const contacts = await db.contact.findMany({ where: { id: { in: [insta.contact.id, whats.contact.id] } } });
-    expect(new Set(contacts.map((item) => item.personId)).size).toBe(1);
+    expect(await linkByPhoneOrEmail(db, workspace.id, insta.contact.id)).toBe(false);
+    const match = await db.personMatch.findFirstOrThrow({ where: { contactId: insta.contact.id, candidateId: whats.contact.id } });
+    expect(match.status).toBe("SUGGESTED");
+    expect(match.reasons).toMatch(/same phone number, different names \(Riteesh and Arvind\)/);
+    expect((await db.lead.findUniqueOrThrow({ where: { id: insta.lead.id } })).answers).toEqual({ where: "Sobha Royal Pavilion" });
   });
 
   it("joins the same number when the names are close (Gopi and Gopin)", async () => {
