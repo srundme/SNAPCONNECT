@@ -221,7 +221,7 @@ export function ruleBreaks(bubbles: string[], context: RuleContext): string[] {
   const lower = text.toLowerCase();
   const allowed = context.allowedText.toLowerCase();
   const breaks: string[] = [];
-  if (/₹|\brs\.?\s*\d|\b\d[\d,.]*\s*(?:lakhs?|lacs?|crores?|cr)\b|\bper\s*sq\.?\s*ft\b/i.test(text) && !/₹|\b\d[\d,.]*\s*(?:lakhs?|lacs?|crores?)\b/i.test(context.latest)) {
+  if (/₹|\brs\.?\s*\d|\b\d[\d,.]*\s*(?:lakhs?|lacs?|crores?|cr)\b|\d[\d,.]*\s*(?:\/|per)\s*sq\.?\s*ft\b/i.test(text) && !/₹|\b\d[\d,.]*\s*(?:lakhs?|lacs?|crores?)\b/i.test(context.latest)) {
     breaks.push("It gives a price or money figure. Never give any price, figure, range or estimate.");
   }
   if (/\b\d+\s*(?:(?:-|to|or)\s*\d+\s*)?(?:days?|weeks?|months?)\b/i.test(text) && /\b(take|takes|finish|complete|done|deliver|handover|within)\b/i.test(text)) {
@@ -251,7 +251,10 @@ export function ruleBreaks(bubbles: string[], context: RuleContext): string[] {
   const rival = text.match(COMPETITORS)?.[0] ?? (context.otherFirm && lower.includes(context.otherFirm.toLowerCase()) ? context.otherFirm : null);
   if (rival) breaks.push(`It mentions another company (${rival}). Never name or describe another company.`);
   // Offers we never make.
-  if (/\b(discount|% ?off|offer price|special price|no[- ]cost emi|emi|cashback|free (?:site visit|3d|design|delivery|installation)|guaranteed?)\b/i.test(text)) {
+  // Saying no to a discount or EMI they asked about is not offering one; a figure like "10%" always is.
+  const offer = text.match(/\b(discount|% ?off|offer price|special price|no[- ]cost emi|emi|cashback|free (?:site visit|3d|design|delivery|installation)|guaranteed?)\b/i)?.[1];
+  const theyAsked = offer ? new RegExp(`\\b${offer.replace(/[^a-z ]/gi, "").trim().split(" ")[0]}`, "i").test(context.latest) : false;
+  if (offer && (!theyAsked || /\d\s*%/.test(text))) {
     breaks.push("It mentions a discount, EMI, free extra or guarantee. Never invent offers or promises.");
   }
   // The machinery never shows.

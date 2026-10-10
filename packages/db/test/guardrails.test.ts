@@ -42,3 +42,16 @@ describe("question count", () => {
     expect(ruleBreaks(["We have done a villa there: https://www.youtube.com/watch?v=tSh1xAt-Tmg", "May I know your name?"], context)).toEqual([]);
   });
 });
+
+describe("refusals are not offers", () => {
+  const base = { allowedText: "", allowedPhones: [], allowedEmails: [], previousAi: [], otherFirm: null };
+  it("lets Varun say no to a per sq ft rate or a discount they asked about", () => {
+    expect(ruleBreaks(["We don't work with a per sq ft rate, sir. It depends on your home and materials."], { ...base, latest: "what is your per sqft rate" })).toEqual([]);
+    expect(ruleBreaks(["I am not able to confirm any discount here, our team will discuss it with you."], { ...base, latest: "any discount if I sign this week?" })).toEqual([]);
+  });
+  it("still stops a rate or a discount figure", () => {
+    expect(ruleBreaks(["It is about 1800 per sq ft."], { ...base, latest: "rate?" }).length).toBe(1);
+    expect(ruleBreaks(["We can give a 10% discount."], { ...base, latest: "any discount?" }).length).toBe(1);
+    expect(ruleBreaks(["We have a festive discount running now."], { ...base, latest: "hello" }).length).toBe(1);
+  });
+});
