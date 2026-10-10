@@ -26,22 +26,16 @@ export default async function AiPage({ searchParams }: { searchParams: Promise<{
             brandName={workspace.brandName}
             agentName={workspace.agentName ?? ""}
             services={workspace.services}
-            tone={workspace.tone}
             persona={workspace.agentPersona ?? ""}
-            systemPrompt={workspace.systemPrompt ?? ""}
             externalKey={externalKey}
             knowledgeBase={workspace.knowledgeBase}
             maxQuestions={MAX_LEAD_QUESTIONS}
             settings={{
               projectAliases: settings.projectAliases,
-              goal: settings.goal,
-              pricingAnswer: settings.pricingAnswer,
               workingHours: settings.workingHours,
               serviceArea: settings.serviceArea,
               holidays: settings.holidays,
               complaintContact: settings.complaintContact,
-              rules: settings.rules,
-              realityChecks: settings.realityChecks,
               designKnowledge: settings.designKnowledge,
               zohoCompanyFallback: settings.zohoCompanyFallback,
               hotBudgetLakhs: settings.hotBudgetLakhs,
@@ -65,7 +59,6 @@ export default async function AiPage({ searchParams }: { searchParams: Promise<{
           <div><dt className="font-semibold">Brand</dt><dd>{workspace.brandName}</dd></div>
           <div><dt className="font-semibold">Agent</dt><dd>{workspace.agentName || "Not set"}</dd></div>
           <div><dt className="font-semibold">Persona</dt><dd>{workspace.agentPersona || "Not set"}</dd></div>
-          <div><dt className="font-semibold">Goal</dt><dd>{settings.goal}</dd></div>
           <div><dt className="font-semibold">Knowledge base</dt><dd>{workspace.knowledgeBase ? `${workspace.knowledgeBase.length.toLocaleString("en-IN")} characters` : "Not set"}</dd></div>
           {questions.map((question) => <div key={question.id}><dt className="font-semibold">{question.label}</dt><dd>{question.zohoField ?? "Description"}{question.required ? "" : " (nice to have)"}</dd></div>)}
         </dl>

@@ -11,14 +11,12 @@ export * from "./csv";
 export * from "./analytics";
 export * from "./webhooks";
 export * from "./crm";
-export * from "./briefing";
 export * from "./identity";
 export * from "./style";
 export * from "./agent";
 export * from "./sense";
 export * from "./situations";
 export * from "./rating";
-export * from "./prompt";
 export * from "./materials";
 
 export function pausesBlock(flags: {

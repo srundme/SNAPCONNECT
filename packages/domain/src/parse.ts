@@ -1,5 +1,5 @@
 import { parsePhoneNumberFromString } from "libphonenumber-js";
-import type { BudgetParse, PhoneParse, ProjectType, WorkType } from "./types";
+import type { BudgetParse, PhoneParse, WorkType } from "./types";
 
 const DECLINED = /\b(not sure|don't know|do not know|prefer not|rather not|won't share|will not share|skip|no budget|don't want to share|do not want to share)\b/i;
 
@@ -114,22 +114,6 @@ function digitRuns(text: string, minDigits: number): string[] {
     .filter((run) => run.replace(/\D/g, "").length >= minDigits);
 }
 
-export function swapNumber(text: string, oldE164: string, newE164: string): string {
-  const local = oldE164.replace(/\D/g, "").slice(-10);
-  if (local.length < 8) return text;
-  const pattern = new RegExp(`(?:\\+?\\d{1,3}[\\s-]?)?${local.split("").join("[\\s-]?")}(?!\\d)`, "g");
-  return text.replace(pattern, newE164);
-}
-
-export function wrongPhoneIn(text: string, defaultRegion = "IN", minDigits = 6): string | null {
-  // Digits inside an email ("karthik1990@gmail.com") are not a phone number.
-  const runs = digitRuns(text.replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, " "), minDigits);
-  if (!runs.length) return null;
-  if (runs.some((run) => parsePhone(run, defaultRegion).kind === "valid")) return null;
-  const first = runs[0]!;
-  return `${/^\+|^00/.test(first) ? "+" : ""}${first.replace(/\D/g, "").replace(/^00/, "")}`;
-}
-
 export function validPhonesIn(text: string, defaultRegion = "IN"): string[] {
   return digitRuns(text, 6).flatMap((run) => {
     const parsed = parsePhone(run, defaultRegion);
@@ -150,23 +134,10 @@ export function confirmsSameNumber(text: string): boolean {
   return /\b(same number|whatsapp (is |uses )?the same|same for whatsapp|yes,? same)\b/i.test(text);
 }
 
-export function projectTypeFromText(text: string): ProjectType | null {
-  if (/\b(creator|influencer|personal|individual)\b/i.test(text)) return "other";
-  if (/\b(home|house|residential|apartment|flat|villa|bhk)\b/i.test(text)) return "residential";
-  if (/\b(commercial|office|shop|retail|showroom|business|agency|brand|company|studio|clinic|restaurant|store|hotel)\b/i.test(text)) return "commercial";
-  return null;
-}
-
 export function workTypeFromText(text: string): WorkType | null {
   if (/\brenovat/i.test(text)) return "renovation";
   if (/\bnew (work|home|build|construction)\b/i.test(text)) return "new";
   return null;
-}
-
-export function evidenceInMessage(evidence: string, message: string): boolean {
-  const needle = evidence.trim().toLowerCase();
-  if (needle.length < 2) return false;
-  return message.toLowerCase().includes(needle);
 }
 
 const PLACEHOLDER_LOCAL = /^(test|testing|abc|abcd|xyz|xyzz|asdf|asd|qwerty|sample|example|demo|none|na|nil|noemail|no|dummy|fake|user|admin|email|mail|name|aaa+|xxx+|123+|1234|12345)$/i;

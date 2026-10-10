@@ -34,14 +34,10 @@ function toRow(question: { label: string; zohoField: string | null; required: bo
 
 export type AgentFormSettings = {
   projectAliases: string;
-  goal: string;
-  pricingAnswer: string;
   workingHours: string;
   serviceArea: string;
   holidays: string;
   complaintContact: string;
-  rules: string;
-  realityChecks: string;
   designKnowledge: string;
   zohoCompanyFallback: string;
   hotBudgetLakhs: number;
@@ -62,13 +58,9 @@ export type AgentFormSettings = {
 const BEHAVIOUR: Array<[string, string, string]> = [
   ["voiceReplies", "Voice replies", "Answers a voice note with a voice note."],
   ["photoReading", "Read photos and documents", "Understands photos, floor plans and PDFs customers send, and what each post shows."],
-  ["laughter", "Laughter", "May write haha, and laughs in voice notes. Off means never."],
-  ["emojis", "Emojis", "May use an emoji now and then. Off removes every emoji."],
   ["casualTexting", "Casual texting", "Types like a person: no commas, u and ok, dots between thoughts. Off writes clean, polite sentences."],
-  ["splitMessages", "Split into messages", "Sends two short messages instead of one block."],
   ["typingDelay", "Human timing", "Waits to read and type like a person before replying."],
   ["addressSirMam", "Sir or mam", "Calls the customer sir or mam once in a while. Off uses their name."],
-  ["expertAdvice", "Expert advice", "Advises like an experienced designer from the AI's own knowledge plus the design notes. Company facts, prices and promises still come only from the knowledge base."],
 ];
 
 function FollowUps({ on, hours }: { on: boolean; hours: number[] }) {
@@ -92,7 +84,6 @@ function FollowUps({ on, hours }: { on: boolean; hours: number[] }) {
       <div className={`grid gap-3 ${enabled ? "" : "opacity-50"}`}>
         {slots.map((value, index) => {
           const sending = planned.some((slot) => slot.index === index);
-          const message = !sending ? "Leave this blank to skip it." : index === last ? "no rush. whenever u are ready, message here" : "just checking in. whenever u want to continue, message here";
           return (
             <label key={index} className="grid gap-1 sm:grid-cols-[180px_120px_minmax(0,1fr)] sm:items-center">
               <span className="text-sm font-semibold">Check-in {index + 1}</span>
@@ -107,7 +98,7 @@ function FollowUps({ on, hours }: { on: boolean; hours: number[] }) {
                 placeholder={index === 0 ? "3" : index === 1 ? "20" : ""}
                 onChange={(event) => setSlots((current) => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))}
               />
-              <span className="text-[12px] leading-5 text-[var(--color-muted)]">{sending ? `After ${Number(value)} hours. “${message}”` : message}</span>
+              <span className="text-[12px] leading-5 text-[var(--color-muted)]">{sending ? `After ${Number(value)} hours, Varun writes a short check-in${index === last ? " that leaves the door open" : ""}.` : "Leave this blank to skip it."}</span>
             </label>
           );
         })}
@@ -152,9 +143,7 @@ export function AgentForm({
   brandName,
   agentName,
   services,
-  tone,
   persona,
-  systemPrompt,
   questions,
   externalKey,
   knowledgeBase,
@@ -165,9 +154,7 @@ export function AgentForm({
   brandName: string;
   agentName: string;
   services: string;
-  tone: string;
   persona: string;
-  systemPrompt: string;
   questions: Array<{ label: string; zohoField: string | null; required: boolean }>;
   externalKey: string;
   knowledgeBase: string;
@@ -215,7 +202,6 @@ export function AgentForm({
             <label>Brand<input name="brandName" defaultValue={brandName} /></label>
             <label>Agent name<input name="agentName" defaultValue={agentName} maxLength={40} placeholder="Varun" /></label>
             <label>Services<input name="services" defaultValue={services} maxLength={1000} /></label>
-            <label>Tone<input name="tone" defaultValue={tone} /></label>
             <label className="sm:col-span-2">
               Persona
               <textarea name="agentPersona" rows={3} maxLength={2000} defaultValue={persona} placeholder="Varun from the sales team. A premium, calm, sharp sales consultant who knows homes and design." />
@@ -249,16 +235,8 @@ export function AgentForm({
             <p className="text-[12px] text-[var(--color-muted)]">Used for design suggestions only. Company facts, prices and promises come from the knowledge base above.</p>
           </div>
         </Section>
-        <Section title="3. How it sells" detail="Goal, price answer, hours and the rules it must always follow. One rule per line.">
+        <Section title="3. Hours and area" detail="When the team works, where it works, and the short forms customers use for projects.">
           <div className="grid gap-4 p-5 sm:grid-cols-2">
-            <label className="sm:col-span-2">
-              Goal of the chat
-              <textarea name="goal" rows={2} maxLength={600} defaultValue={settings.goal} placeholder="Understand their interior requirement and help them request a design consultation or callback." />
-            </label>
-            <label className="sm:col-span-2">
-              When they ask the price
-              <textarea name="pricingAnswer" rows={2} maxLength={600} defaultValue={settings.pricingAnswer} />
-            </label>
             <label>Working hours<input name="workingHours" maxLength={200} defaultValue={settings.workingHours} placeholder="Tuesday to Sunday, 10 AM to 7 PM" /></label>
             <label>Complaints go to<input name="complaintContact" maxLength={300} defaultValue={settings.complaintContact} placeholder="+91 70227 25656 or support@company.com" /></label>
             <label className="sm:col-span-2">Service area<input name="serviceArea" maxLength={300} defaultValue={settings.serviceArea} placeholder="Bengaluru, Bangalore" /><span className="text-[12px] text-[var(--color-muted)]">City names, comma separated. A home in another city is flagged for the team instead of promised.</span></label>
@@ -267,14 +245,6 @@ export function AgentForm({
               Holidays
               <textarea name="holidays" rows={3} maxLength={2000} defaultValue={settings.holidays} placeholder={"2026-11-08 Deepavali\n11-01 Kannada Rajyotsava"} />
               <span className="text-[12px] text-[var(--color-muted)]">One per line: date (YYYY-MM-DD, or MM-DD for every year) and name. On these days the agent wishes them and says the team calls the next working day.</span>
-            </label>
-            <label className="sm:col-span-2">
-              Rules
-              <textarea name="rules" rows={8} maxLength={6000} defaultValue={settings.rules} placeholder={"Never promise a discount or EMI.\nNever confirm a visit slot."} />
-            </label>
-            <label className="sm:col-span-2">
-              Common sense checks
-              <textarea name="realityChecks" rows={4} maxLength={3000} defaultValue={settings.realityChecks} placeholder={"A full 3 BHK for under 5 lakh is not realistic, so check lightly and offer a team review."} />
             </label>
           </div>
         </Section>
@@ -333,18 +303,10 @@ export function AgentForm({
             </label>
           </div>
         </Section>
-        <Section title="6. Extra notes" detail="Anything else for every chat. A post can add its own notes under Replies.">
-          <div className="p-5">
-            <label>
-              Extra notes
-              <textarea name="systemPrompt" rows={4} defaultValue={systemPrompt} placeholder="Current offers, seasonal notes, anything temporary." />
-            </label>
-          </div>
-        </Section>
         <Panel>
           <div className="flex items-end justify-between gap-3 border-b border-[var(--color-line)] px-5 py-4">
             <div>
-              <h2 className="text-[17px] font-semibold tracking-tight">7. What it asks</h2>
+              <h2 className="text-[17px] font-semibold tracking-tight">6. What it asks</h2>
               <p className="mt-1 text-sm text-[var(--color-muted)]">Must-have details send the lead to Zoho once they are all in. Nice-to-have ones are asked only if the chat flows, and added to Zoho later.</p>
             </div>
             <button className="shrink-0 border-[var(--color-line)] text-sm" type="button" disabled={rows.length >= maxQuestions} onClick={() => setRows((current) => [...current, { label: "", zoho: "", custom: "", required: true }])}>

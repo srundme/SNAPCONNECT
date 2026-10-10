@@ -36,15 +36,6 @@ export function selectedRoomsOnly(scope: string): boolean {
   return !FULL_SCOPE.test(scope) && /\b(selected|some|few|only|just|one|single|kitchen|wardrobes?|bed ?rooms?|living|bathrooms?|rooms?|sirf|kuch|bas|mattum)\b/i.test(scope);
 }
 
-/** They said on their own that they want only part of the home. */
-export function volunteeredRoomsOnly(text: string): boolean {
-  const plain = text.replace(/^\(Replied to:[\s\S]*?\)\s*/, "");
-  if (FULL_SCOPE.test(plain)) return false;
-  return /\b(?:only|just|sirf|bas|mattum)\b.{0,40}\b(?:the |a |my )?(?:kitchen|wardrobes?|bed ?rooms?|living(?: room)?|bathrooms?|pooja|one room|single room|a room|some rooms|few rooms)\b/i.test(plain)
-    || /\b(?:kitchen|wardrobe|one room|single room)\s+only\b/i.test(plain)
-    || /\bselected rooms\b/i.test(plain);
-}
-
 const BIG_HOME = /\b(villa|independent house|individual house|bungalow|row house|duplex|penthouse|triplex)\b/i;
 
 function answerFor(questions: LeadQuestion[], answers: Record<string, string>, pattern: RegExp): string {
