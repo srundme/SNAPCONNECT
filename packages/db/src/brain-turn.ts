@@ -33,6 +33,7 @@ export type BrainAnswer = {
   flag: string | null;
   opt_out: boolean;
   quiet?: boolean;
+  address?: "sir" | "ma'am" | "none" | null;
 };
 
 export const BRAIN_TOOL_SCHEMA = {
@@ -52,6 +53,7 @@ export const BRAIN_TOOL_SCHEMA = {
     handoff: { type: "boolean" },
     flag: { type: ["string", "null"] },
     opt_out: { type: "boolean" },
+    address: { type: ["string", "null"], enum: ["sir", "ma'am", "none", null], description: "Only when FACTS says sir or ma'am is not decided yet: sir, ma'am, or none if the name does not tell. Otherwise null." },
     quiet: { type: "boolean", description: "True only when their latest is just a reaction after your closing line: nothing is sent." },
   },
   required: ["bubbles", "details", "declined", "follow_up_at", "new_home", "offer_choice", "slot", "handoff", "flag", "opt_out"],

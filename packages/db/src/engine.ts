@@ -1629,7 +1629,11 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     return looked;
   };
 
-  const address = agent.addressSirMam && name && runtime.llm.addressFor ? await runtime.llm.addressFor(name).catch(() => null) : null;
+  // Sir or ma'am: Claude decides once from their name or profile name, and it is kept for the whole chat.
+  // "none" from a profile name is decided again once they type a real name.
+  const addressNote = [...notes].reverse().find((body) => body.startsWith("Address: "))?.slice("Address: ".length).trim() ?? null;
+  const savedAddress = addressNote?.startsWith("none") && name && !addressNote.includes(`(${name})`) ? null : addressNote?.split(" ")[0] ?? null;
+  const profileName = conversation.contact.displayName ?? conversation.contact.username ?? null;
   const languageSample = chatLanguageSample(spoken.filter((message) => message.author === "PROSPECT").map((message) => message.body));
   const elsewhere = await otherChannelLine(db, conversation, lead.phoneE164).catch(() => "");
   const comment = notes.find((body) => body.startsWith("Their comment:"));
@@ -1672,7 +1676,10 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       `Channel: ${CHANNEL_NAME[conversation.channel]}.${spoken.some((message) => message.author === "AI") ? "" : " You have not replied in this chat yet: this is your first reply."}`,
       conversation.channel === "WHATSAPP" && lead.whatsappE164 ? `They are chatting from WhatsApp number ${lead.whatsappE164}${lead.sameNumberConfirmed ? " (they agreed we can call on it)" : ""}.` : "",
       name ? `Their name: ${name}${conversation.channel !== "WHATSAPP" && notes.some((body) => body.startsWith("Name from profile:")) && name === conversation.contact.chosenName ? " (from their profile; use it, do not ask)" : ""}.` : "Their name: not known yet.",
-      address === "sir" || address === "mam" ? `Address them as ${address === "mam" ? "ma'am" : "sir"}.` : "Do not use sir or ma'am.",
+      !agent.addressSirMam ? "Do not use sir or ma'am."
+        : savedAddress === "sir" || savedAddress === "ma'am" ? `Address them as ${savedAddress}.`
+        : savedAddress === "none" ? "Do not use sir or ma'am (their name does not tell)."
+        : `Sir or ma'am is not decided yet. Their name: ${name ?? "not known"}. Their ${CHANNEL_NAME[conversation.channel]} profile name: ${profileName ?? "not known"}. Decide it now and set address.`,
       `They write in: ${languageSample ? languageName(languageSample) : "English"}.`,
       known.length ? `Already known:\n${known.join("\n")}` : "Already known: nothing yet.",
       missing.length ? `Still missing (must-haves):\n${missing.join("\n")}` : "All must-have details are in.",
@@ -1850,6 +1857,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     if (time.inside) await note(`Visit at: ${time.at}`);
     await alertTeam("slot", `🗓️ ${who} asked for ${answer.slot}. Please confirm with them.`);
   }
+  if (agent.addressSirMam && !savedAddress && (answer.address === "sir" || answer.address === "ma'am" || answer.address === "none")) await note(`Address: ${answer.address}${answer.address === "none" ? ` (${name ?? ""})` : ""}`);
   if (answer.flag) await alertTeam("flag", `⚠️ ${who}: ${answer.flag.slice(0, 160)}`);
 
   // Rating and Zoho, from the saved answers.
