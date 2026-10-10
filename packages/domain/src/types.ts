@@ -70,7 +70,6 @@ export const leadFields = [
   "phonePermission",
   "whatsappPermission",
 ] as const;
-export type LeadField = (typeof leadFields)[number];
 
 export type ProjectType = "residential" | "commercial" | "other";
 export type WorkType = "new" | "renovation" | "unknown";

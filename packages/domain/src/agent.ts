@@ -2,24 +2,16 @@ import { parseMaterials, parseWarranty, type MaterialEntry, type WarrantyTerms }
 
 /** Everything staff can change about how the agent behaves, edited on the Agent page. */
 export type AgentSettings = {
-  goal: string;
-  pricingAnswer: string;
   workingHours: string;
   serviceArea: string;
   holidays: string;
   complaintContact: string;
-  rules: string;
-  realityChecks: string;
   designKnowledge: string;
   voiceReplies: boolean;
   photoReading: boolean;
-  laughter: boolean;
-  emojis: boolean;
   casualTexting: boolean;
-  splitMessages: boolean;
   typingDelay: boolean;
   addressSirMam: boolean;
-  expertAdvice: boolean;
   followUps: boolean;
   followUpHours: number[];
   zohoCompanyFallback: string;
@@ -43,7 +35,7 @@ export type AgentSettings = {
   summaryTemplate: string;
   /** Homes the firm has done, one per line: "Adarsh Palm Retreat | Bellandur | 4 BHK villa | https://…". */
   completedProjects: string;
-  /** "live": Claude writes every reply (needs ANTHROPIC_API_KEY). "off": the older coded pipeline. */
+  /** "live": Claude writes every reply (needs ANTHROPIC_API_KEY). "off": no replies, every chat goes to the team. */
   brain: "live" | "off";
   /** The owner's own version of Varun's system prompt; empty means the built-in default. */
   brainPrompt: string;
@@ -52,24 +44,16 @@ export type AgentSettings = {
 };
 
 export const defaultAgentSettings: AgentSettings = {
-  goal: "Understand what they need, answer their questions, and collect what the team needs to call them back.",
-  pricingAnswer: "Pricing depends on their exact requirement. The team shares exact pricing on the call. Never quote a number.",
   workingHours: "Monday to Saturday, 10 AM to 7 PM",
   serviceArea: "",
   holidays: "",
   complaintContact: "",
-  rules: "",
-  realityChecks: "",
   designKnowledge: "",
   voiceReplies: true,
   photoReading: true,
-  laughter: true,
-  emojis: true,
   casualTexting: true,
-  splitMessages: true,
   typingDelay: true,
   addressSirMam: true,
-  expertAdvice: true,
   followUps: false,
   followUpHours: [3, 20],
   zohoCompanyFallback: "",
@@ -93,13 +77,9 @@ export const defaultAgentSettings: AgentSettings = {
 const TOGGLES = [
   "voiceReplies",
   "photoReading",
-  "laughter",
-  "emojis",
   "casualTexting",
-  "splitMessages",
   "typingDelay",
   "addressSirMam",
-  "expertAdvice",
   "followUps",
 ] as const satisfies ReadonlyArray<keyof AgentSettings>;
 
@@ -107,14 +87,10 @@ export type AgentToggle = (typeof TOGGLES)[number];
 export const agentToggles: readonly AgentToggle[] = TOGGLES;
 
 const TEXTS = {
-  goal: 600,
-  pricingAnswer: 600,
   workingHours: 200,
   serviceArea: 300,
   holidays: 2000,
   complaintContact: 300,
-  rules: 6000,
-  realityChecks: 3000,
   designKnowledge: 20000,
   zohoCompanyFallback: 80,
   zohoRatingField: 80,
@@ -161,24 +137,3 @@ export function parseAgentSettings(value: unknown): AgentSettings {
   return settings;
 }
 
-/** One rule per line, so staff can paste a list. */
-export function ruleLines(text: string): string[] {
-  return text.split(/\n+/).map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim()).filter(Boolean);
-}
-
-const LAUGHTER = /(?:^|\s)(?:ha(?:ha)+h?|he(?:he)+|lol|lmao|😂|🤣)(?=[\s.,!?…]|$)[.,!…]*/gi;
-const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}]/gu;
-const ADDRESS = /(\s*,?\s*)\b(?:sir|mam|ma'am|madam|bro)\b/gi;
-
-/** Applies the switched-off behaviours to a reply in code, so the agent cannot slip past them. */
-export function applyReplySwitches(text: string, settings: Pick<AgentSettings, "laughter" | "emojis" | "addressSirMam">): string {
-  let out = text;
-  if (!settings.laughter) out = out.replace(LAUGHTER, " ");
-  if (!settings.emojis) out = out.replace(EMOJI, "");
-  if (!settings.addressSirMam) out = out.replace(ADDRESS, "");
-  return out
-    .split("\n")
-    .map((line) => line.replace(/\s+([.,!?])/g, "$1").replace(/^[\s.,!…]+/, "").replace(/ {2,}/g, " ").trim())
-    .filter(Boolean)
-    .join("\n");
-}

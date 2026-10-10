@@ -19,6 +19,7 @@ const credentialKey = Buffer.from(config.CREDENTIAL_ENCRYPTION_KEY, "base64");
 // Claude writes every reply and reads photos and floor plans when the key is set; Sarvam stays for voice and documents.
 const claude = config.ANTHROPIC_API_KEY ? claudeClient({ apiKey: config.ANTHROPIC_API_KEY }) : null;
 if (claude) console.log(`Claude brain on: ${claude.model}`);
+else console.warn("No ANTHROPIC_API_KEY: Varun will not reply; every chat goes to the team.");
 const runtime = simulationRuntime({
   llm: config.LLM_MODE === "sarvam"
     ? sarvamLlm({

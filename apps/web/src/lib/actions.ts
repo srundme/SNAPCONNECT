@@ -356,9 +356,6 @@ export async function saveAiSettings(formData: FormData) {
       agentName: String(formData.get("agentName") ?? "").trim().slice(0, 40) || null,
       agentPersona: String(formData.get("agentPersona") ?? "").trim().slice(0, 2000) || null,
       services: String(formData.get("services") ?? "").trim().slice(0, 1000),
-      tone: String(formData.get("tone") ?? "").trim().slice(0, 200),
-      systemPrompt: String(formData.get("systemPrompt") ?? "").trim().slice(0, 4000) || null,
-      agentPrompt: null,
       knowledgeBase: knowledgeBase.replace(/\r\n/g, "\n").trim().slice(0, 60_000),
       agentSettings: parseAgentSettings(settings),
       leadQuestions: questionsFromRows(
