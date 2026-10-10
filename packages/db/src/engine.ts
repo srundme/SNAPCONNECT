@@ -1638,7 +1638,18 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   const livesIn = [...notes].reverse().find((body) => body.startsWith("Lives in: "))?.slice("Lives in: ".length).trim() ?? null;
   const abroad = numberAbroad(lead.whatsappE164 ?? lead.phoneE164, runtime.now());
   const languageSample = chatLanguageSample(spoken.filter((message) => message.author === "PROSPECT").map((message) => message.body));
-  const elsewhere = await otherChannelLine(db, conversation, lead.phoneE164).catch(() => "");
+  let elsewhere = await otherChannelLine(db, conversation, lead.phoneE164).catch(() => "");
+  // The same number or email under another name or channel: Varun asks once, and their answer joins or separates.
+  const pendingMatch = await db.personMatch.findFirst({ where: { status: "SUGGESTED", OR: [{ contactId: conversation.contactId }, { candidateId: conversation.contactId }] }, orderBy: { createdAt: "desc" } });
+  const otherId = pendingMatch ? (pendingMatch.contactId === conversation.contactId ? pendingMatch.candidateId : pendingMatch.contactId) : null;
+  const other = otherId ? await db.contact.findUnique({ where: { id: otherId }, include: { conversations: { orderBy: { updatedAt: "desc" }, take: 1, select: { updatedAt: true } } } }) : null;
+  const otherChannel = other ? CHANNEL_NAME[other.channel as keyof typeof CHANNEL_NAME] ?? other.channel : "";
+  const otherAgo = other?.conversations[0] ? since(runtime.now().getTime() - other.conversations[0].updatedAt.getTime()) : "a while";
+  let matchLine = pendingMatch && other
+    ? `Possibly the same person: someone chatted with us on ${otherChannel} ${otherAgo} ago (${pendingMatch.reasons}). ${pendingMatch.askedAt
+      ? "You already asked whether that was them: read their answer and set same_person."
+      : `Ask once, naturally, whether they messaged us on ${otherChannel} a little while ago, close to: "Just to check sir, did you message us on ${otherChannel} a few minutes back?". Never mention the number, the other name or how you know. Set same_person when they answer.`}`
+    : "";
   const comment = notes.find((body) => body.startsWith("Their comment:"));
   const emailChecks = notes.filter((body) => body.startsWith("Email check:")).length;
   const offerAnswers = notes.filter((body) => body.startsWith("Offer answer:"));
@@ -1696,6 +1707,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       ...extra,
       comment ? `They came from a comment on our post: "${comment.replace(/^Their comment:\s*/, "")}".` : "",
       elsewhere ? `Other channels:\n${elsewhere}` : "",
+      matchLine,
       conversation.contact.memory ? `Earlier in this chat (summary): ${conversation.contact.memory}` : "",
       typeof payload.editedTo === "string" ? `They edited an earlier message from "${String(payload.editedFrom ?? "")}" to "${payload.editedTo}".` : "",
       followUp && lastAiAt ? `They have not replied for ${since(runtime.now().getTime() - lastAiAt.getTime())}. This is follow-up ${Number(payload.followUp) + 1}: one short, gentle nudge, never pushy.` : "",
@@ -1757,6 +1769,22 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     const readPlace = placeQuestion ? read.answers[placeQuestion.id] ?? "" : "";
     const newPlace = readPlace && !(savedPlace && (readPlace.toLowerCase().includes(savedPlace) || savedPlace.includes(readPlace.toLowerCase()))) ? readPlace : null;
     const extra: string[] = [...read.problems];
+    // Their answer to "did you message us on WhatsApp?": a yes joins the chats and brings that context here.
+    if (pendingMatch && otherId && answer.same_person === "yes") {
+      await linkContacts(db, { workspaceId: workspace.id, contactId: conversation.contactId, otherId, evidence: "CUSTOMER_CONFIRMED" });
+      await mergePersonLeads(db, conversation.contactId);
+      const merged = await db.lead.findFirst({ where: { contactId: conversation.contactId, archivedAt: null } });
+      if (merged) {
+        answers = { ...answerRecord(merged.answers), ...read.answers };
+        phoneE164 = phoneE164 ?? merged.phoneE164;
+      }
+      elsewhere = await otherChannelLine(db, conversation, phoneE164).catch(() => "");
+      matchLine = "";
+      extra.push(`They confirmed they also chatted with us on ${otherChannel}. Everything from that chat is now in Already known and Other channels: acknowledge it warmly in a few words and continue from where that chat left off, never asking anything again.`);
+    } else if (pendingMatch && answer.same_person === "no") {
+      await rejectMatch(db, workspace.id, pendingMatch.id, "CUSTOMER");
+      matchLine = "";
+    }
     if (newPlace) {
       const before = found;
       answers = { ...answers, [placeQuestion!.id]: newPlace };
@@ -1991,6 +2019,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   } else if (delivered && agent.followUps) {
     await scheduleFollowUp(db, runtime, conversation.id, Number(payload.followUp ?? 0));
   }
+  if (delivered && pendingMatch && !pendingMatch.askedAt && matchLine) await db.personMatch.update({ where: { id: pendingMatch.id }, data: { askedAt: runtime.now() } });
   await refreshMemory(db, runtime, conversation.contact, spoken);
   return "done";
 }

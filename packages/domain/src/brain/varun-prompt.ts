@@ -149,6 +149,7 @@ Always call the reply tool. In it:
 - declined: the details they said they do not want to share (for example "email" or "property"), or an empty list.
 - offer_choice: "experience_centre" when they agree to visit, "consultation" when they choose a video call or a call instead, otherwise null.
 - slot: the new date and time they asked for, only once they have given a time, in India time (for example "Tuesday 4 pm"; for someone abroad, the India time you worked out). Never include an earlier slot or the reason. null when they gave only a day, or no time.
+- same_person: only after you asked whether they messaged us on another channel, "yes" or "no" from their answer; otherwise null.
 - quiet: true only when their latest is just a reaction or emoji after your closing line, and nothing more needs saying. Otherwise false.
 - handoff: true when a person from our team must take over.
 - flag: a short note for our team (bad reviews, unusual request, illegal request) or null.
