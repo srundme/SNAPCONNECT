@@ -3,13 +3,14 @@ import { normalizeMetaPayload } from "@snapsocial/domain";
 import { readSimulationCrm } from "@snapsocial/integrations";
 import { createPrisma } from "../src/client";
 import { deleteContactData, ingestEvents, processAvailableJobs, seedDemo, setConnectionPaused, simulationRuntime, takeOver, type Runtime } from "../src/index";
+import { fakeClaude } from "./fake-claude";
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeDb = databaseUrl ? describe : describe.skip;
 
 describeDb("two-channel simulation", () => {
   const db = createPrisma(databaseUrl ?? "postgresql://unused");
-  const runtime = simulationRuntime();
+  const runtime = simulationRuntime({ claude: fakeClaude() });
 
   afterAll(async () => {
     await db.$disconnect();

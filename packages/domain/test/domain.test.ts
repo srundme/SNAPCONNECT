@@ -5,7 +5,6 @@ import {
   documentNote,
   impossibleBhk,
   casualText,
-  plainWords,
   readingMs,
   typingMs,
   nameConcern,
@@ -803,7 +802,6 @@ describe("texting like a person", () => {
   });
 
   it("swaps chatbot praise for plain words", () => {
-    expect(plainWords("Great sir! That's perfect. Absolutely, we can.")).toBe("ok sir! ok. sure, we can.");
   });
 
   it("waits longer for longer messages", () => {

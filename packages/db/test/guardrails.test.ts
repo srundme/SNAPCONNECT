@@ -55,3 +55,23 @@ describe("refusals are not offers", () => {
     expect(ruleBreaks(["We have a festive discount running now."], { ...base, latest: "hello" }).length).toBe(1);
   });
 });
+
+describe("phone agreed in words", () => {
+  it("saves the WhatsApp number when they say same number in any wording", async () => {
+    const { readDetails } = await import("../src/brain-turn");
+    const questions = [{ id: "phone", kind: "phone", label: "Phone number", required: true }] as never;
+    for (const said of ["Same WhatsApp number", "yes this one", "same"]) {
+      const read = readDetails({ answer: { bubbles: [], details: { phone: said } } as never, questions, answers: {}, whatsappE164: "+919845012345", region: "IN" });
+      expect(read.phoneE164).toBe("+919845012345");
+      expect(read.problems).toEqual([]);
+    }
+  });
+});
+
+describe("lead question roles", () => {
+  it("reads the place question by its label even when it is saved as a name question", async () => {
+    const { roleOf } = await import("../src/brain-turn");
+    expect(roleOf({ id: "p", kind: "name", label: "Where is the home: which area, and what is the property name?", required: true } as never)).toBe("place");
+    expect(roleOf({ id: "n", kind: "name", label: "May I know your name?", required: true } as never)).toBe("name");
+  });
+});

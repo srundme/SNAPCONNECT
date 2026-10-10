@@ -15,16 +15,6 @@ export function withoutPrices(text: string): string {
     .join("\n");
 }
 
-const AI_PRAISE = "great|perfect|excellent|wonderful|fantastic|amazing|awesome|brilliant|superb|lovely";
-
-/** Swaps the polished words a chatbot reaches for with the plain ones people actually type. */
-export function plainWords(text: string): string {
-  return text
-    .replace(new RegExp(`\\b(?:that'?s|that is|sounds|it'?s|it is)\\s+(?:really\\s+|so\\s+)?(?:${AI_PRAISE})\\b`, "gi"), "ok")
-    .replace(new RegExp(`(^|[.!?\\n]\\s*)(?:${AI_PRAISE})(?:\\s+(?:question|choice|news))?\\b`, "gi"), "$1ok")
-    .replace(/(^|[.!?\n]\s*)(?:absolutely|certainly|of course|definitely)\b/gi, "$1sure");
-}
-
 /**
  * Rewrites one message the way people text on their phone: no commas or full stops, "..." between
  * short thoughts, u / ur / ok / pls, and lower case starts. Question marks stay so a question still reads as one.
@@ -47,7 +37,7 @@ export function fullWords(text: string): string {
 export function casualText(text: string, keepCase: string[] = []): string {
   const keep = new Set(keepCase.map((word) => word.toLowerCase()).filter(Boolean));
   const links: string[] = [];
-  let out = plainWords(text)
+  let out = text
     .replace(/https?:\/\/\S+?(?=[.,!?]*(?:\s|$))/g, (link) => `\u0000${links.push(link) - 1}\u0000`)
     .replace(/(\d),(?=\d)/g, "$1")
     .replace(/\b(?:you're|youre)\b/gi, "you are")

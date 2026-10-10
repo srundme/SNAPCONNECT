@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { normalizeMetaPayload } from "@snapsocial/domain";
 import { createPrisma } from "../src/client";
 import { ingestEvents } from "../src/index";
+import { fakeClaude } from "./fake-claude";
 import { linkByPhoneOrEmail, linkContacts, mergePersonLeads, personLeads, processAvailableJobs, seedDemo, simulationRuntime, suggestMatches, unlinkContact, type Runtime } from "../src/index";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -19,7 +20,7 @@ const QUESTIONS = [
 describeDb("one person across channels", () => {
   const db = createPrisma(databaseUrl ?? "postgresql://unused");
   const upserts: Array<{ key: string | undefined; existingId: string | null | undefined; description: string | undefined }> = [];
-  const base = simulationRuntime();
+  const base = simulationRuntime({ claude: fakeClaude() });
   const runtime: Runtime = {
     ...base,
     zoho: {

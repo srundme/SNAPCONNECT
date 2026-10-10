@@ -1890,7 +1890,8 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   // How it looks on the phone, like a person texting: no commas, full stops or hyphens, "you" in full, a capital first.
   // Only punctuation and case change; every word is Claude's.
   const keepCase = [workspace.brandName, workspace.agentName ?? "", ...workspace.brandName.split(/\s+/), "BHK", "AM", "PM"];
-  const texted = (bubble: string) => fullWords(casualText(humanizeReply(bubble).replace(/(?<=[a-z])-(?=[a-z])/gi, " "), keepCase));
+  // Hyphens become spaces in words, never inside a link.
+  const texted = (bubble: string) => fullWords(casualText(humanizeReply(bubble).split(/(https?:\/\/\S+)/).map((part, index) => index % 2 ? part : part.replace(/(?<=[a-z])-(?=[a-z])/gi, " ")).join(""), keepCase));
   // A bare reaction to the closing line needs no answer: the chat already ended with ours.
   const onlyReactions = latest.split("\n").every((line) => /^\(Reacted .* to your message\)$/.test(line.trim()));
   const quiet = answer.quiet === true && onlyReactions;

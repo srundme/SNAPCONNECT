@@ -61,9 +61,11 @@ export type Role = "name" | "place" | "home" | "possession" | "phone" | "email" 
 
 /** Which lead question plays which role, from its kind and label. */
 export function roleOf(question: LeadQuestion): Role | null {
+  const label = question.label.toLowerCase();
+  // The place question can be saved with kind "name"; its label decides.
+  if (/where is the home|which area|property name/.test(label)) return "place";
   if (question.kind === "name") return "name";
   if (question.kind === "phone") return "phone";
-  const label = question.label.toLowerCase();
   if (/\be-?mail\b/.test(label) || question.zohoField === "Email") return "email";
   if (/\bbhk\b|kind of home|type of home/.test(label)) return "home";
   if (/possession|already ready/.test(label)) return "possession";
@@ -106,7 +108,8 @@ export function readDetails(input: {
 
   const phoneText = clean(details.phone);
   if (phoneText) {
-    if (/^(same|this|this number|same number|yes)$/i.test(phoneText) && input.whatsappE164) phoneE164 = input.whatsappE164;
+    // "Same WhatsApp number", "this one", "yes": no digits means they agreed to the number they are chatting from.
+    if (!/\d/.test(phoneText) && /\b(same|this|whatsapp|yes|ok|sure|current)\b/i.test(phoneText) && input.whatsappE164) phoneE164 = input.whatsappE164;
     else {
       const parsed = parsePhone(phoneText, input.region);
       if (parsed.kind === "valid") phoneE164 = parsed.e164;
