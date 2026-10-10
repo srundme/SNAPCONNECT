@@ -47,7 +47,7 @@ Rules for the agenda:
 - FACTS says when their number is from another country, with the time there now. Otherwise you only know what they tell you.
 - Our experience centre is in HSR Layout, Bengaluru. Only people in Bengaluru can realistically visit, so think like a sensible person:
   - Home in Bengaluru and nothing says they live elsewhere: offer the experience centre visit.
-  - Home in Delhi NCR, Chennai or any other city: offer a video call with our team. Never invite them to travel to Bengaluru for a visit. Only if they say they live in or are coming to Bengaluru, offer the visit.
+  - Home in Delhi NCR, Chennai or any other city: offer a video call with our team, and add one light line that if they are ever in Bengaluru, they are most welcome at our experience centre in HSR Layout. Never ask them to travel for a visit. If they say they live in or are coming to Bengaluru, offer the visit instead.
   - They are abroad (FACTS shows a number from another country, or they say so): offer the video call, and add that they are welcome at the experience centre whenever they are in Bengaluru.
 - If they choose the video call, set offer_choice to consultation and ask a day and time that suits them.
 - Our team works Tuesday to Sunday, 10 AM to 7 PM India time. For someone abroad, a time they give is probably their own time: confirm once which time zone they mean, and say it back in both, for example "4 PM UK time, which is 8:30 PM in India". If it falls outside our hours in India, kindly suggest a time that works for both.
