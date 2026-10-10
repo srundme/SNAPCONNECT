@@ -173,7 +173,7 @@ export function checksOnLatest(input: { latest: string; now: Date; agent: AgentS
 /** What the place answer says about the property, before or after the web lookup. */
 export function placeFacts(input: {
   place: string;
-  found: { name: string; locality: string | null; kind?: "apartment" | "villa" | null; bhkOptions?: number[]; readyToMove?: boolean; possessionYear?: number | null; underConstruction?: boolean; confirm?: boolean; shortForm?: string | null; correctedFrom?: string | null } | null;
+  found: { name: string; locality: string | null; city?: string | null; kind?: "apartment" | "villa" | null; bhkOptions?: number[]; readyToMove?: boolean; possessionYear?: number | null; underConstruction?: boolean; confirm?: boolean; shortForm?: string | null; correctedFrom?: string | null } | null;
   agent: AgentSettings;
 }): string[] {
   const facts: string[] = [];
@@ -187,12 +187,19 @@ export function placeFacts(input: {
   const found = input.found;
   if (found) {
     facts.push([
-      `Property lookup: ${found.name}${found.locality ? `, ${found.locality}` : ""}`,
+      `Property lookup: ${found.name}${found.locality ? `, ${found.locality}` : ""}${found.city ? `, ${found.city}` : ""}`,
       found.kind ? `, listed as ${found.kind === "apartment" ? "an apartment" : "a villa"} project` : "",
       found.bhkOptions?.length ? `, advertised as ${found.bhkOptions.join(", ")} BHK (that is the project, not their home)` : "",
       found.readyToMove ? ", listed as ready to move" : found.underConstruction ? ", listed as under construction" : found.possessionYear ? `, listing mentions possession around ${found.possessionYear}` : "",
       ".",
     ].join(""));
+    // A home outside the city we serve: Varun takes the details and the team confirms.
+    const served = input.agent.serviceArea.split(/[,\n]+/).map((place) => place.trim().toLowerCase()).filter(Boolean);
+    const ourCity = input.agent.serviceArea.split(/[,\n]+/)[0]?.trim() ?? "";
+    const city = (found.city ?? "").toLowerCase();
+    if (city && served.length && !served.some((place) => city.includes(place) || place.includes(city))) {
+      facts.push(`This property is in ${found.city}, outside ${ourCity}. Follow the rule for a home outside ${ourCity}.`);
+    }
     if (found.shortForm || found.correctedFrom) facts.push(`They typed "${found.shortForm ?? found.correctedFrom}": confirm they mean ${found.name}.`);
     else facts.push("Confirm once that this is their property (location and type), unless they already confirmed it in the chat.");
   }

@@ -75,3 +75,15 @@ describe("lead question roles", () => {
     expect(roleOf({ id: "n", kind: "name", label: "May I know your name?", required: true } as never)).toBe("name");
   });
 });
+
+describe("property outside the city we serve", () => {
+  it("says so for Chennai, never for Bangalore or Bengaluru", async () => {
+    const { placeFacts } = await import("../src/brain-turn");
+    const { defaultAgentSettings } = await import("@snapsocial/domain");
+    const agent = { ...defaultAgentSettings, serviceArea: "Bengaluru, Bangalore" };
+    const at = (city: string) => placeFacts({ place: "x", found: { name: "P", locality: null, city }, agent }).join(" ");
+    expect(at("Chennai")).toMatch(/outside Bengaluru/);
+    expect(at("Bangalore")).not.toMatch(/outside/);
+    expect(at("Bengaluru")).not.toMatch(/outside/);
+  });
+});

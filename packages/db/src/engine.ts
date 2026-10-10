@@ -1857,7 +1857,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
     if (time.inside) await note(`Visit at: ${time.at}`);
     await alertTeam("slot", `🗓️ ${who} asked for ${answer.slot}. Please confirm with them.`);
   }
-  if (agent.addressSirMam && !savedAddress && (answer.address === "sir" || answer.address === "ma'am" || answer.address === "none")) await note(`Address: ${answer.address}${answer.address === "none" ? ` (${name ?? ""})` : ""}`);
+  if (agent.addressSirMam && !savedAddress && (answer.address === "sir" || answer.address === "ma'am" || (answer.address === "none" && name))) await note(`Address: ${answer.address}${answer.address === "none" ? ` (${name ?? ""})` : ""}`);
   if (answer.flag) await alertTeam("flag", `⚠️ ${who}: ${answer.flag.slice(0, 160)}`);
 
   // Rating and Zoho, from the saved answers.

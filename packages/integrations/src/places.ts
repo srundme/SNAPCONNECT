@@ -461,11 +461,11 @@ export function claudePlaceLookup(options: { claude: import("./claude").Claude }
   const schema = {
     type: "object",
     properties: {
-      found: { type: "boolean", description: "True only if you are confident this is one real residential property in or near the city." },
+      found: { type: "boolean", description: "True only if you are confident this is one real residential property, in any Indian city." },
       confidence: { type: "string", enum: ["high", "medium", "low"] },
       name: { type: ["string", "null"], description: "The property's proper name, like 'Adarsh Palm Retreat'." },
       locality: { type: ["string", "null"], description: "The area or main road, like 'Sarjapur Road' or 'Bellandur'." },
-      city: { type: ["string", "null"] },
+      city: { type: ["string", "null"], description: "The city the property is really in, even if it is not the hinted city." },
       kind: { type: ["string", "null"], enum: ["apartment", "villa", null], description: "Mostly apartments or mostly villas." },
       bhk_options: { type: "array", items: { type: "integer" }, description: "BHK sizes the project offers, if known." },
       ready_to_move: { type: ["boolean", "null"] },
@@ -484,12 +484,12 @@ export function claudePlaceLookup(options: { claude: import("./claude").Claude }
       bhk_options: number[]; ready_to_move: boolean | null; under_construction: boolean | null; possession_year: number | null; builder: string | null;
       url: string | null; short_form: string | null; corrected_from: string | null;
     }>({
-      system: "You identify residential properties (apartment complexes, villa communities, gated layouts) in Indian cities for a home interiors company. Search the web, then report what you found. A listing page title (like 'Villas for Sale') is not a property. A builder name alone is not a property. If you are not confident it is one real property, set found to false.",
-      messages: [{ role: "user", content: `A customer wrote this as the property of their home: "${query}"${city ? `. City: ${city}` : ""}. Which property is it?` }],
+      system: "You identify residential properties (apartment complexes, villa communities, gated layouts) in Indian cities for a home interiors company. Customers type fast on their phones: names are often misspelt, shortened or missing a word (\"TVS Avolan\" is TVS Emerald Avalon, \"godrejflorenne\" is Godrej Florence). Search for likely spellings, not only the exact text. Most customers are in the hinted city, but the home can be in any Indian city: search beyond it and report the city it is really in. A listing page title (like 'Villas for Sale') is not a property. A builder name alone is not a property. If you are not confident it is one real property, set found to false.",
+      messages: [{ role: "user", content: `A customer wrote this as the property of their home: "${query}"${city ? `. Hinted city: ${city}` : ""}. Which property is it?` }],
       name: "report_property",
       description: "Report the property you identified.",
       schema,
-      serverTools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3, user_location: { type: "approximate", city: city ?? "Bengaluru", country: "IN" } }],
+      serverTools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4, user_location: { type: "approximate", city: city ?? "Bengaluru", country: "IN" } }],
       maxTokens: 2000,
       timeoutMs: 90_000,
     });
