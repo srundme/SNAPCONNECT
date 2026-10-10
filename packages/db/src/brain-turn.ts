@@ -175,7 +175,7 @@ export function checksOnLatest(input: { latest: string; now: Date; agent: AgentS
   if (passed) facts.push(`Time check: ${passed.split(". Say")[0]}.`);
   else {
     const asked = requestedTime(input.latest, input.now, input.agent.workingHours);
-    if (asked) facts.push(asked.inside ? `Time check: ${asked.clock} ${asked.day} is inside working hours.` : `Time check: ${asked.clock} ${asked.day} is outside our hours (${asked.why}). Follow the rule for a time outside our hours: never a no.`);
+    if (asked) facts.push(asked.inside ? `Time check: ${asked.clock} ${asked.day} is inside working hours.` : `Time check: ${asked.clock} ${asked.day} is outside our hours (${asked.why}). Follow the time rules: a little outside or a Monday goes to the team with no promise; far outside, ask for a time within our hours.`);
   }
   return facts;
 }
