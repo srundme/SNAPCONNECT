@@ -1659,7 +1659,7 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
   const otherChat = otherId ? await db.conversation.findFirst({ where: { contactId: otherId }, orderBy: { updatedAt: "desc" } }) : null;
   const otherOpen = Boolean(otherChat?.lastUserMessageAt && otherChat.owner === "AI" && runtime.now().getTime() < otherChat.lastUserMessageAt.getTime() + META_WINDOW_MS);
   let matchLine = !pendingMatch || !other ? ""
-    : matchStage === "told" ? `You told them the number they shared is the same one used in our ${otherChannel} chat with ${otherName}, and asked whether that is someone related to them or someone who messaged us for them. Read their answer and set related (yes or no). Share nothing from that chat.`
+    : matchStage === "told" ? `You told them the number they shared is the same one used in our ${otherChannel} chat with ${otherName}, and asked whether that was them, someone related to them, or someone who messaged us for them. Read their answer: set same_person to yes if it was them, otherwise set related (yes or no). Share nothing from that chat.`
     : matchStage === "related" ? `They said ${otherName} is related to them or messaged for them. Ask whether we should continue the enquiry with them here, and whether they would like the details ${otherName} already shared with us; we would first ask ${otherName}'s permission. If they want them, set share_request to true. Share nothing from that chat before ${otherName} agrees.`
     : matchStage === "permission" ? `We asked ${otherName} on ${otherChannel} whether we may share their enquiry details. Until they agree, share nothing from that chat; carry on with this person's own enquiry.`
     : pendingMatch.askedAt ? `You asked whether they chatted with us on ${otherChannel} as ${otherName}: read their answer and set same_person.`
@@ -1825,6 +1825,11 @@ async function brainReply(db: Db, runtime: Runtime, input: PromptedInput): Promi
       elsewhere = await otherChannelLine(db, conversation).catch(() => "");
       matchLine = "";
       extra.push(`They confirmed they also chatted with us on ${otherChannel}. Everything from that chat is now in Already known and Other channels: welcome them back warmly in a few words, never ask anything again, and ask whether they would like to continue here on ${thisChannel} or on ${otherChannel}, so we keep one place to talk. Set preferred_channel when they answer.`);
+    } else if (pendingMatch && answer.same_person === "unsure" && !matchStage) {
+      // A vague answer ("I might"): Varun says plainly why he asks and checks once more.
+      await stage("told");
+      matchLine = "";
+      extra.push(`Their answer was not clear. Say kindly that the number they shared is the same one used in our ${otherChannel} chat with ${otherName}, and ask once more whether that was them, someone related to them, or someone who messaged us for them. Share nothing from that chat. Set same_person to yes if it was them, or related when they answer.`);
     } else if (pendingMatch && answer.same_person === "no" && !matchStage) {
       await stage("told");
       matchLine = "";

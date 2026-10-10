@@ -33,7 +33,7 @@ export type BrainAnswer = {
   flag: string | null;
   opt_out: boolean;
   quiet?: boolean;
-  same_person?: "yes" | "no" | null;
+  same_person?: "yes" | "no" | "unsure" | null;
   related?: "yes" | "no" | null;
   share_request?: boolean;
   consent?: "yes" | "no" | null;
@@ -63,7 +63,7 @@ export const BRAIN_TOOL_SCHEMA = {
     share_request: { type: "boolean", description: "True when they want the details the related person already shared; their permission is asked first." },
     consent: { type: ["string", "null"], enum: ["yes", "no", null], description: "Only after you asked whether we may share their enquiry details with someone: their answer." },
     preferred_channel: { type: ["string", "null"], enum: ["here", "other", null], description: "Only after you asked whether to continue here or on their other channel: here or other." },
-    same_person: { type: ["string", "null"], enum: ["yes", "no", null], description: "Only after you asked whether they messaged us on another channel: yes or no from their answer. Otherwise null." },
+    same_person: { type: ["string", "null"], enum: ["yes", "no", "unsure", null], description: "After you asked whether they chatted with us on another channel: yes, no, or unsure when the answer is vague (\"I might\", \"maybe\", \"not sure\"). Also no when they say they never chatted there. Otherwise null." },
     quiet: { type: "boolean", description: "True only when their latest is just a reaction after your closing line: nothing is sent." },
   },
   required: ["bubbles", "details", "declined", "follow_up_at", "new_home", "offer_choice", "slot", "handoff", "flag", "opt_out"],

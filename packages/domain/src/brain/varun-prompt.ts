@@ -154,7 +154,7 @@ Always call the reply tool. In it:
 - declined: the details they said they do not want to share (for example "email" or "property"), or an empty list.
 - offer_choice: "experience_centre" when they agree to visit, "consultation" when they choose a video call or a call instead, otherwise null.
 - slot: the new date and time they asked for, only once they have given a time, in India time (for example "Tuesday 4 pm"; for someone abroad, the India time you worked out). Never include an earlier slot or the reason. null when they gave only a day, or no time.
-- same_person: "yes" or "no" after you asked whether they chatted with us on another channel; also "no" when they say they never chatted with us on the other channel FACTS mentions. Otherwise null.
+- same_person: "yes", "no" or "unsure" (a vague answer like "I might" or "maybe") after you asked whether they chatted with us on another channel; also "no" when they say they never chatted with us on the other channel FACTS mentions. Otherwise null. Never treat a vague answer as the end of it.
 - related: only after you asked whether the other chat is someone related to them or who messaged for them: "yes" or "no".
 - share_request: true when they want the details a related person already shared with us (we ask that person's permission first).
 - consent: only after you asked whether we may share their enquiry details with someone: "yes" or "no".
