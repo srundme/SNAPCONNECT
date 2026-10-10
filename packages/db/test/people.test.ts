@@ -64,12 +64,15 @@ describeDb("one person across channels", () => {
     }
   }
 
-  it("joins Instagram and WhatsApp on the same phone number and shares every answer", async () => {
+  it("joins Instagram and WhatsApp once the customer confirms, and shares every answer", async () => {
     const { workspace, ig, wa, person } = await setup();
     const insta = await person(ig.id, "INSTAGRAM", { username: "riteesh.shetty_93", chosenName: "Riteesh Shetty" }, { answers: { where: "Adarsh Palm Retreat", home: "4 BHK Villa" }, phoneE164: "+919663918221" });
     const whats = await person(wa.id, "WHATSAPP", { displayName: "Riteesh" }, { answers: { when: "Ready" }, phoneE164: "+919663918221" });
 
-    expect(await linkByPhoneOrEmail(db, workspace.id, whats.contact.id)).toBe(true);
+    // The number alone never joins them; the customer's yes to Varun's question does.
+    expect(await linkByPhoneOrEmail(db, workspace.id, whats.contact.id)).toBe(false);
+    expect(await linkContacts(db, { workspaceId: workspace.id, contactId: whats.contact.id, otherId: insta.contact.id, evidence: "CUSTOMER_CONFIRMED" })).toBe(true);
+    await mergePersonLeads(db, whats.contact.id);
     const contacts = await db.contact.findMany({ where: { id: { in: [insta.contact.id, whats.contact.id] } } });
     expect(new Set(contacts.map((item) => item.personId)).size).toBe(1);
     expect(contacts[0]!.personId).toBeTruthy();
@@ -93,13 +96,14 @@ describeDb("one person across channels", () => {
     expect((await db.lead.findUniqueOrThrow({ where: { id: insta.lead.id } })).answers).toEqual({ where: "Sobha Royal Pavilion" });
   });
 
-  it("joins the same number when the names are close (Gopi and Gopin)", async () => {
+  it("asks before joining even when the names are close (Gopi and Gopin)", async () => {
     const { workspace, ig, wa, person } = await setup();
     const insta = await person(ig.id, "INSTAGRAM", { username: "gopin_k", chosenName: "Gopin" }, { phoneE164: "+918904887300" });
     const whats = await person(wa.id, "WHATSAPP", { displayName: "Gopi", chosenName: "Gopi" }, { answers: { home: "3 BHK Apartment" }, phoneE164: "+918904887300" });
-    expect(await linkByPhoneOrEmail(db, workspace.id, insta.contact.id)).toBe(true);
-    const contacts = await db.contact.findMany({ where: { id: { in: [insta.contact.id, whats.contact.id] } } });
-    expect(new Set(contacts.map((item) => item.personId)).size).toBe(1);
+    expect(await linkByPhoneOrEmail(db, workspace.id, insta.contact.id)).toBe(false);
+    const match = await db.personMatch.findFirstOrThrow({ where: { contactId: insta.contact.id, candidateId: whats.contact.id } });
+    expect(match.status).toBe("SUGGESTED");
+    expect(match.reasons).toBe("same phone number (Gopin and Gopi)");
   });
 
   it("joins on the same email, newest answer wins", async () => {
@@ -137,7 +141,7 @@ describeDb("one person across channels", () => {
     const firstMapping = await db.crmMapping.findUniqueOrThrow({ where: { leadId: insta.lead.id } });
 
     const whats = await person(wa.id, "WHATSAPP", { displayName: "Ravi", chosenName: "Ravi Kumar" }, { answers: { when: "In 2 months" }, phoneE164: "+919845011111" });
-    await linkContacts(db, { workspaceId: workspace.id, contactId: whats.contact.id, otherId: insta.contact.id, evidence: "PHONE" });
+    await linkContacts(db, { workspaceId: workspace.id, contactId: whats.contact.id, otherId: insta.contact.id, evidence: "CUSTOMER_CONFIRMED" });
     upserts.length = 0;
     await db.outboxJob.create({ data: { workspaceId: workspace.id, type: "CRM_SYNC", payload: { leadId: whats.lead.id, contactId: whats.contact.id } } });
     await drain();
