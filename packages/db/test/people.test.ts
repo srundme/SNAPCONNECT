@@ -96,6 +96,15 @@ describeDb("one person across channels", () => {
     expect((await db.lead.findUniqueOrThrow({ where: { id: insta.lead.id } })).answers).toEqual({ where: "Sobha Royal Pavilion" });
   });
 
+  it("joins the same number when the names are close (Gopi and Gopin)", async () => {
+    const { workspace, ig, wa, person } = await setup();
+    const insta = await person(ig.id, "INSTAGRAM", { username: "gopin_k", chosenName: "Gopin" }, { phoneE164: "+918904887300" });
+    const whats = await person(wa.id, "WHATSAPP", { displayName: "Gopi", chosenName: "Gopi" }, { answers: { home: "3 BHK Apartment" }, phoneE164: "+918904887300" });
+    expect(await linkByPhoneOrEmail(db, workspace.id, insta.contact.id)).toBe(true);
+    const contacts = await db.contact.findMany({ where: { id: { in: [insta.contact.id, whats.contact.id] } } });
+    expect(new Set(contacts.map((item) => item.personId)).size).toBe(1);
+  });
+
   it("joins on the same email, newest answer wins", async () => {
     const { workspace, fb, ig, person } = await setup();
     const older = await person(fb.id, "FACEBOOK", { displayName: "Priya Nair", chosenName: "Priya" }, { answers: { email: "priya@example.com", home: "3 BHK Apartment" } });

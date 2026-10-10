@@ -99,7 +99,7 @@ export async function linkContacts(
     const [first, second] = await Promise.all([one.id, two.id].map((id) => db.contact.findUnique({ where: { id }, select: { chosenName: true, displayName: true, username: true } })));
     const namesOne = nameTokens(first?.chosenName, first?.displayName, first?.username);
     const namesTwo = nameTokens(second?.chosenName, second?.displayName, second?.username);
-    if (namesOne.size && namesTwo.size && ![...namesOne].some((token) => namesTwo.has(token))) {
+    if (namesOne.size && namesTwo.size && ![...namesOne].some((token) => [...namesTwo].some((other) => sameName(token, other)))) {
       const label = (item: typeof first) => item?.chosenName ?? item?.displayName ?? item?.username ?? "unknown";
       await db.personMatch.upsert({
         where: { contactId_candidateId: { contactId: one.id, candidateId: two.id } },
@@ -205,6 +205,22 @@ export async function linkByPhoneOrEmail(db: Db, workspaceId: string, contactId:
 }
 
 const NAME_STOP = new Set(["the", "and", "sir", "mam", "official", "home", "homes", "interiors"]);
+
+/** Gopi and Gopin, Karthik and Karthikeyan, a one-letter typo: the same name. */
+function sameName(one: string, two: string): boolean {
+  if (one === two) return true;
+  const [short, long] = one.length <= two.length ? [one, two] : [two, one];
+  if (short.length >= 4 && long.startsWith(short)) return true;
+  if (short.length < 4 || long.length - short.length > 1) return false;
+  let edits = 0;
+  for (let i = 0, j = 0; i < short.length || j < long.length; ) {
+    if (short[i] === long[j]) { i += 1; j += 1; continue; }
+    edits += 1;
+    if (edits > 1) return false;
+    if (short.length === long.length) { i += 1; j += 1; } else j += 1;
+  }
+  return true;
+}
 
 function nameTokens(...values: Array<string | null | undefined>): Set<string> {
   const tokens = new Set<string>();
